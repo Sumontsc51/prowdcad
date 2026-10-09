@@ -2,7 +2,7 @@
 
 Browser-based 2D apparel CAD for pattern making, made-to-measure alteration and marker making. Single-file HTML app, no build step, no server.
 
-**Current version:** v2.0 PRO (branch `v2`). v1.10.0 remains on `main`.
+**Current version:** v2.1 PRO (branch `v2`). v1.10.0 remains on `main`.
 
 ## Run
 
@@ -22,6 +22,24 @@ Open `prowdcad.html` in Chrome or Edge.
 | Marker | Grain-aligned bottom-left auto-nest, PLT/HPGL export, plot DXF |
 | Keyboard | ProwdCAD layout or TUKAdesign layout (Tools › Keyboard) |
 
+## Pattern-making tools (2.1)
+
+| Tool | ProwdCAD key | TUKA layout | What it does |
+|---|---|---|---|
+| Draft | D | D | Draft a new piece point by point (Tab = exact length/angle); start inside a piece = internal line |
+| Add Point | A | A | Insert a grade point without changing the curve; Shift = exact distance |
+| Segment Length | Ctrl+Enter | Ctrl+Enter | New length with Curve / 1-2 Horizontal / Vertical / Diagonal methods |
+| Compare Length | Ctrl+M | Ctrl+M | Add / subtract segments, live difference |
+| Seam | E | S | Width per segment, corners: miter, square, mirror (hem fold), bevel |
+| Notch / Drill | N / B | N / B | Slit, V, T, castle notches on the cut line; drill holes (DXF layer 13) |
+| Cut piece | X | X | Split along a line between two outline points |
+| Join pieces | J | J | Rotate piece 2 onto piece 1's edge and merge |
+| Fullness | F | U | Slash & spread: parallel, pivot or both ends |
+| Dart | Ctrl+D | Ctrl+D | Dart with calculated cap, leg lines, notches, drill |
+| Round Corner | O | Shift+R | True circular arc |
+| Create Parallel | H | C | Internal line(s) parallel to a segment |
+| Align Points | I | I | Same X, same Y, or onto a line |
+
 ## Made-to-measure workflow
 
 1. Import the closest-fit base pattern (DXF-AAMA from TUKAcad), or open a `.wptn`.
@@ -35,6 +53,7 @@ Open `prowdcad.html` in Chrome or Edge.
 pip install playwright && python -m playwright install chromium
 python test/e2e.py path/to/order.xlsx     # alter / shrink / nest / DXF / PLT
 python test/ui.py                         # mouse + keyboard tools
+python test/pattern_tools.py              # 16 geometry checks for the pattern tools
 ```
 
 ## Structure

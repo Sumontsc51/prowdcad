@@ -18,7 +18,7 @@ with sync_playwright() as pw:
     pg.fill("#mv-dy","-1"); pg.screenshot(path=str(OUT/"06_movepoints.png")); pg.click("#dialog footer .primary")
     ys=pg.evaluate("()=>WP.activePattern().pieces[0].points.map(p=>+(p.y/25.4).toFixed(3))"); print("y after −1in:",ys)
     # Program by area: Shift+R, rectangle around hem, new param "Inseam", quick +Y
-    pg.keyboard.press("Shift+R"); pg.mouse.move(*a); pg.mouse.down(); pg.mouse.move(*c,steps=6); pg.mouse.up(); pg.wait_for_timeout(150)
+    pg.keyboard.press("Shift+O"); pg.mouse.move(*a); pg.mouse.down(); pg.mouse.move(*c,steps=6); pg.mouse.up(); pg.wait_for_timeout(150)
     pg.select_option("#pg-m","new:"); pg.fill("#pg-new","08 Inseam"); pg.click("#dialog [data-q='0,1']"); pg.click("#dialog footer .primary")
     print("rule:",pg.evaluate("()=>{const p=WP.activePattern();return [p.measurements.map(m=>m.name),p.pieces[0].points.map(q=>JSON.stringify(q.grade))]}"))
     # name a point via F2 after selecting it with click
