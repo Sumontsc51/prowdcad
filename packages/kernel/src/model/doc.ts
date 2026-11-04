@@ -7,7 +7,7 @@
  * and it makes every kernel op trivially undoable.
  */
 import type { Style, Piece, SizeId, SizeLine, SizeTable, Id, Contour, Anchor } from './types';
-import { resolveContour, absoluteOffset, type ResolvedContour } from './contour';
+import { resolveContour, absoluteOffset, halfOpenedPiece, type ResolvedContour } from './contour';
 import { computeCutLine } from '../ops/seam';
 import { makeStyle } from './factory';
 import type { Vec } from '../geom/vec';
@@ -32,6 +32,7 @@ export class Document {
   maxUndo = 200;
   private listeners = new Set<Listener>();
   private cache = new Map<string, ResolvedPiece>();
+  private openCache = new Map<string, Piece>();
   private rev = 0;
   /** depth counter so nested transact() calls produce a single undo step */
   private txDepth = 0;
@@ -60,7 +61,7 @@ export class Document {
       if (this.txDepth === 0) { this.touch(); this.emit({ type: 'change', label: this.txLabel }); }
     }
   }
-  private touch() { this.rev++; this.cache.clear(); this.style.updatedAt = new Date().toISOString(); }
+  private touch() { this.rev++; this.cache.clear(); this.openCache.clear(); this.style.updatedAt = new Date().toISOString(); }
 
   canUndo() { return this.undoStack.length > 0; }
   canRedo() { return this.redoStack.length > 0; }
@@ -105,11 +106,27 @@ export class Document {
   anchorIndex(contour: Contour, anchorId: Id): number { const i = contour.points.findIndex(a => a.id === anchorId); if (i < 0) throw new Error('No anchor ' + anchorId); return i; }
 
   // ───── resolution ─────
-  resolvePiece(pieceId: Id, sizeId?: SizeId): ResolvedPiece {
-    const piece = this.piece(pieceId);
+  /**
+   * The piece as it is displayed / measured (`output` false) or written by exporters (`output` true).
+   * A live half piece (`piece.half`) resolves as the full piece mirrored across its fold edge
+   * (`halfOpenedPiece`, derived on the fly, never stored). With `half.openAtOutput === false` the
+   * half is shown as authored and only exports open it.
+   */
+  effectivePiece(pieceOrId: Piece | Id, output = false): Piece {
+    const piece = typeof pieceOrId === 'string' ? this.piece(pieceOrId) : pieceOrId;
+    if (!piece.half) return piece;
+    if (!output && piece.half.openAtOutput === false) return piece;
+    const key = `${piece.id}|open`;
+    const hit = this.openCache.get(key); if (hit) return hit;
+    const open = halfOpenedPiece(piece, this.sizeLine(piece));
+    this.openCache.set(key, open);
+    return open;
+  }
+  resolvePiece(pieceId: Id, sizeId?: SizeId, opts: { output?: boolean } = {}): ResolvedPiece {
+    const piece = this.effectivePiece(pieceId, !!opts.output);
     const line = this.sizeLine(piece);
     const sid = sizeId ?? line.baseSizeId;
-    const key = `${pieceId}|${sid}`;
+    const key = `${pieceId}|${sid}|${piece === this.piece(pieceId) ? 'a' : 'o'}`;
     const hit = this.cache.get(key); if (hit) return hit;
     const sew = resolveContour(piece.sew, line, sid);
     const cut = piece.cutMode === 'manual' && piece.manualCut ? resolveContour(piece.manualCut, line, sid).pts : computeCutLine(piece, line, sid);

@@ -118,6 +118,7 @@ describe('DXF round-trip (acceptance D11)', () => {
       const p = makePiece('BY', sew, doc.style.activeSizeTableId);
       const dist = Object.fromEntries(ids.map((i, k) => [i, 100 + k * 3]));
       p.notches.push({ id: newId('n'), contourId: sew.id, type: 'slit', depth: 6, width: 0, angleDeg: 0, mode: 'cut', placement: { kind: 'fromPrev', anchorId: sew.points[0].id, dist } });
+      p.grain = { a: { x: 60, y: -350 }, b: { x: 60, y: -150 }, gradeA: {}, gradeB: {}, centered: false };
       doc.transact('a', s => s.pieces.push(p));
       const r = exportDXF(doc, { flavor });
       const imp = importDXF(r.dxf, { rul: r.rul });

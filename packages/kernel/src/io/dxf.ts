@@ -812,7 +812,8 @@ export function exportDXF(doc: Document, opt: DXFExportOptions = {}): DXFExportR
   W.g(0, 'ENDSEC');
 
   const pieceBody = (it: Item) => {
-    const { piece, d } = it;
+    const { d } = it;
+    const piece = d.piece; // opened piece for a live half piece
     const sewLayer = d.hasSeam ? '14' : '1';
     const ruleText = (p: Vec, g: Record<SizeId, GradeInc> | undefined, layer: string) => {
       if (!it.graded || !isGraded(g)) return;
@@ -850,10 +851,10 @@ export function exportDXF(doc: Document, opt: DXFExportOptions = {}): DXFExportR
       if (ic.pts.length === 2 && !ic.closed) W.line(ic.pts[0], ic.pts[1], layer); else W.poly(ic.pts, layer, ic.closed);
       ic.resolved.anchorIndex.forEach((pi, ai) => ruleText(ic.pts[pi], ic.contour.points[ai].grade, layer));
     });
-    if (piece.half) W.line(piece.half.a, piece.half.b, '6');
+    if (piece.half) W.line(piece.half.a, piece.half.b, '6'); // only when the half could not be opened
     // notches. Flat graded export: the notch's outer endpoint carries a grade rule (its per-size
     // displacement, incremental), so per-size notch distances survive the .rul round trip.
-    const notchAbs = it.graded ? perSizeNotchOuter(doc, piece) : undefined;
+    const notchAbs = it.graded ? perSizeNotchOuter(doc, it.piece) : undefined;
     for (const n of d.notches) {
       const layer = n.type === 'slit' ? '4' : n.type === 'T' ? '80' : n.type === 'castle' ? '81' : n.type === 'V' ? '82' : '83';
       W.line(n.a, n.b, layer);

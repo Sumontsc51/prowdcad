@@ -5,7 +5,7 @@
 import type { Anchor, Contour, Id, Piece, SizeId, SizeLine, Style, GradeInc } from '../model/types';
 import type { Document } from '../model/doc';
 import { newId, makePiece, makeContour, now } from '../model/factory';
-import { absoluteOffset, absoluteToIncremental } from '../model/contour';
+import { absoluteOffset, absoluteToIncremental, halfOpenedPiece, findHalfFoldEdge, MIRROR_SUFFIX } from '../model/contour';
 import { Vec, add, sub, mul, dist, norm, dot, cross, lerp, angleOf, len } from '../geom/vec';
 import { area, signedArea, pointInPolygon, segIntersect } from '../geom/poly';
 import {
@@ -334,9 +334,17 @@ function symmetryDeviation(piece: Piece, line: SizeLine, ic: Contour): number {
 // ───────────────────────── half pieces ─────────────────────────
 
 /**
- * Declare the piece a half piece mirrored about the axis a→b. With `trim`, the part beyond the axis
- * (the side not containing `keep`, default the smaller side) is cut away first. The axis must
+ * Declare the piece a LIVE half piece mirrored about the axis a→b. With `trim`, the part beyond the
+ * axis (the side not containing `keep`, default the smaller side) is cut away first. The axis must
  * coincide with a straight sew edge (after trimming).
+ *
+ * The authored half stays the editable data. `Document.resolvePiece` resolves it as the full piece
+ * mirrored across the fold edge (`halfOpenedPiece`): the fold edge becomes interior (no seam), and
+ * sew, cut, internals, notches, darts, drills and texts are mirrored. With `openAtOutput: false` the
+ * half is displayed as authored and only exporters open it.
+ *
+ * The sew contour is rotated so the fold edge is its closing edge (last anchor → first anchor): the
+ * opened contour then keeps every authored anchor at its index, followed by the mirrored ones.
  */
 export function setHalf(doc: Document, pieceId: Id, axis: { a: Vec; b: Vec }, o: { openAtOutput?: boolean; trim?: boolean; keep?: Vec } = {}): void {
   doc.transact('Set half', () => {
@@ -346,58 +354,51 @@ export function setHalf(doc: Document, pieceId: Id, axis: { a: Vec; b: Vec }, o:
       p.internals = p.internals.filter(c => c.id !== fid && !(c.type === 'fold' && c.name === 'FOLD'));
     }
     const piece = doc.piece(pieceId);
-    findFoldEdge(piece, axis);
+    const i = findFoldEdge(piece, axis);
+    const P = piece.sew.points;
+    piece.sew.points = [...P.slice(i + 1), ...P.slice(0, i + 1)];
     piece.half = { a: { ...axis.a }, b: { ...axis.b }, openAtOutput: o.openAtOutput ?? true };
   });
 }
 
 function findFoldEdge(piece: Piece, axis: { a: Vec; b: Vec }): number {
-  const P = piece.sew.points, n = P.length;
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    if (Math.abs(sideOf(P[i], axis.a, axis.b)) < 1e-4 && Math.abs(sideOf(P[j], axis.a, axis.b)) < 1e-4 && !P[i].hOut && !P[j].hIn && between(piece.sew, i, j).length === 0) return i;
-  }
-  throw new Error('Half axis does not lie on a straight sew edge');
+  const i = findHalfFoldEdge(piece.sew.points, axis.a, axis.b);
+  if (i < 0) throw new Error('Half axis does not lie on a straight sew edge');
+  return i;
 }
 
-/** Open a half piece: mirror the sew line (and internals, drills, texts, notches) across the axis into a full piece. */
+/**
+ * Open a half piece for good: the live mirror (`halfOpenedPiece`) is materialised into the piece's own
+ * data with fresh ids, and the half spec is removed. Same geometry as the live half in every size.
+ */
 export function openHalf(doc: Document, pieceId: Id): void {
   doc.transact('Open half', () => {
     const piece = doc.piece(pieceId), line = doc.sizeLine(piece);
     if (!piece.half) throw new Error('Piece is not a half piece');
-    const { a, b } = piece.half;
-    const i = findFoldEdge(piece, piece.half);
-    const P = piece.sew.points, n = P.length;
-    const run = [...P.slice(i + 1), ...P.slice(0, i + 1)]; // after-fold-edge … fold-edge start
-    const xf = xfMirror(a, b);
-    const mir = reverseAnchors(run, false).map(p => { const c = jsonClone(p); transformAnchor(c, xf); c.id = newId('p'); c.flags = { ...c.flags }; delete c.flags.startPoint; return c; });
-    // run: E1 … E0 ; mirrored reversed: E0' … E1' (E0' = E0, E1' = E1) → interior only
-    const first = run[0], last = run[run.length - 1];
-    const m0 = mir[0], m1 = mir[mir.length - 1];
-    if (m0.hOut) last.hOut = m0.hOut; else delete last.hOut;
-    if (m1.hIn) first.hIn = m1.hIn; else delete first.hIn;
-    last.seamAfter = m0.seamAfter; if (last.seamAfter === undefined) delete last.seamAfter;
-    piece.sew.points = [...run, ...mir.slice(1, -1)];
-    void n;
-    const caps = captureNotches(piece, line, [piece.sew.id]);
-    const extra = piece.internals.filter(c => c.type !== 'fold' && c.type !== 'mirror').map(c => { const m = cloneWithNewIds(c, () => 'c').value; for (const p of m.points) transformAnchor(p, xf); if (m.points.length > 1 && !m.closed) m.points = reverseAnchors(m.points, false); return m; });
-    piece.internals = piece.internals.filter(c => c.type !== 'mirror');
-    piece.internals.push(...extra.filter(m => !piece.internals.some(c => samePoly(c, m))));
-    for (const d of piece.drills.slice()) { const p = xf.pt(d); if (dist(p, d) > 1e-6) piece.drills.push({ ...jsonClone(d), id: newId('d'), x: p.x, y: p.y, grade: mirrorGrade(d.grade, xf) }); }
-    for (const t of piece.texts.slice()) { const p = xf.pt(t); if (dist(p, t) > 1e-6) piece.texts.push({ ...jsonClone(t), id: newId('t'), x: p.x, y: p.y, grade: mirrorGrade(t.grade, xf) }); }
-    const mirroredCaps = caps.filter(c => dist(xf.pt(c.pos), c.pos) > 1e-6).map(c => ({ ...c, pos: xf.pt(c.pos), notch: { ...jsonClone(c.notch), id: newId('n'), angleDeg: -c.notch.angleDeg } }));
-    piece.notches = piece.notches.filter(nn => !caps.some(c => c.notch.id === nn.id));
-    restoreNotches(piece, line, [...caps, ...mirroredCaps], 1e-3);
+    findFoldEdge(piece, piece.half);
+    const open = halfOpenedPiece(piece, line);
+    // fresh ids for every derived object
+    const ids = new Map<string, string>();
+    const fresh = (id: string) => { let v = ids.get(id); if (!v) { v = newId(id.startsWith('c') ? 'c' : id.startsWith('n') ? 'n' : id.startsWith('d') ? 'd' : id.startsWith('t') ? 't' : 'p'); ids.set(id, v); } return v; };
+    const rewrite = (o: unknown): unknown => {
+      if (typeof o === 'string') return o.endsWith(MIRROR_SUFFIX) ? fresh(o) : o;
+      if (Array.isArray(o)) return o.map(rewrite);
+      if (o && typeof o === 'object') { const r: Record<string, unknown> = {}; for (const [k, v] of Object.entries(o as Record<string, unknown>)) r[k] = rewrite(v); return r; }
+      return o;
+    };
+    const full = rewrite(jsonClone(open)) as Piece;
+    for (const c of [full.sew, ...full.internals]) for (const a of c.points) delete a.flags.derived;
+    piece.sew = full.sew;
+    piece.internals = full.internals.filter(c => c.type !== 'mirror');
+    piece.notches = full.notches.filter(nn => nn.contourId === piece.sew.id || piece.internals.some(c => c.id === nn.contourId));
+    piece.darts = full.darts; piece.drills = full.drills; piece.texts = full.texts; piece.artwork = full.artwork;
+    piece.cutMode = full.cutMode; if (!full.manualCut) delete piece.manualCut;
     delete piece.half;
     if (piece.grain.centered) recenterGrainRaw(piece, line);
   });
 }
-function samePoly(a: Contour, b: Contour): boolean { return a.points.length === b.points.length && a.points.every((p, i) => dist(p, b.points[b.points.length - 1 - i]) < 1e-6 || dist(p, b.points[i]) < 1e-6); }
-function mirrorGrade(g: Record<SizeId, GradeInc>, xf: Xf): Record<SizeId, GradeInc> {
-  const o: Record<SizeId, GradeInc> = {}; for (const k of Object.keys(g)) { const v = xf.vec({ x: g[k].dx, y: g[k].dy }); o[k] = { dx: v.x, dy: v.y }; } return o;
-}
 
-/** Remove the half spec (the piece stays as drafted). */
+/** Remove the half spec: the live mirror disappears and the piece is the authored half again. */
 export function deleteHalf(doc: Document, pieceId: Id): void { doc.transact('Delete half', () => { delete doc.piece(pieceId).half; }); }
 
 // ───────────────────────── reference block ─────────────────────────

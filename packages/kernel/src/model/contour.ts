@@ -9,7 +9,7 @@
 import { Vec, add, sub, dist } from '../geom/vec';
 import { sampleBezier, catmullRomToBezierHandles } from '../geom/curve';
 import { cumulativeLengths, dedupe } from '../geom/poly';
-import type { Anchor, Contour, GradeInc, SizeId, SizeLine } from './types';
+import type { Anchor, Contour, Dart, GradeInc, Id, Notch, Piece, SizeId, SizeLine } from './types';
 
 export interface ResolvedContour {
   /** sampled polyline (closed contours: first point NOT repeated at end) */
@@ -243,3 +243,261 @@ export function totalLength(r: ResolvedContour): number { return r.cum[r.cum.len
 
 /** Closed polygon of the resolved contour (deduped; for area/offset/nesting). */
 export function polygonOf(r: ResolvedContour): Vec[] { return dedupe(r.pts); }
+
+// ───────────────────────── live half pieces ─────────────────────────
+
+/** Suffix of the deterministic ids of the derived (mirrored) half of a live half piece. Never stored. */
+export const MIRROR_SUFFIX = '~m';
+export const mirroredId = (id: Id): Id => id + MIRROR_SUFFIX;
+
+const reflectPt = (p: Vec, a: Vec, d: Vec): Vec => {
+  const L2 = d.x * d.x + d.y * d.y; if (L2 < 1e-24) return { x: p.x, y: p.y };
+  const t = ((p.x - a.x) * d.x + (p.y - a.y) * d.y) / L2;
+  const fx = a.x + d.x * t, fy = a.y + d.y * t;
+  return { x: 2 * fx - p.x, y: 2 * fy - p.y };
+};
+const reflectVec = (v: Vec, d: Vec): Vec => reflectPt(v, { x: 0, y: 0 }, d);
+
+/**
+ * Index i of the fold edge P[i] → P[i+1] of a half piece: a straight sew edge (no handles) whose two
+ * ends lie on the axis a→b (1e-4 mm). −1 when there is none.
+ */
+export function findHalfFoldEdge(points: Anchor[], a: Vec, b: Vec): number {
+  const n = points.length;
+  const d = sub(b, a); const L = Math.hypot(d.x, d.y);
+  if (L < 1e-12 || n < 2) return -1;
+  const side = (p: Vec) => (d.x * (p.y - a.y) - d.y * (p.x - a.x)) / L;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    if (Math.abs(side(points[i])) < 1e-4 && Math.abs(side(points[j])) < 1e-4 && !points[i].hOut && !points[j].hIn) return i;
+  }
+  return -1;
+}
+
+const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x));
+const isZeroGrade = (g: Record<SizeId, GradeInc>) => Object.values(g).every(v => Math.abs(v.dx) < 1e-12 && Math.abs(v.dy) < 1e-12);
+const mirrorGradeRec = (g: Record<SizeId, GradeInc> | undefined, d: Vec): Record<SizeId, GradeInc> => {
+  const o: Record<SizeId, GradeInc> = {};
+  if (g) for (const k of Object.keys(g)) { const v = reflectVec({ x: g[k].dx, y: g[k].dy }, d); o[k] = { dx: v.x, dy: v.y }; }
+  return o;
+};
+
+/**
+ * The full (opened) piece of a live half piece, derived on the fly — never written to the document.
+ *
+ * The authored half stays the master. The half's interior anchors are reflected across the fold edge
+ * E0 → E1 and inserted between E0 and E1 in reverse order, with ids `<id>~m` and `flags.derived = true`.
+ * Authored anchors keep their order and ids (indices up to E0 are unchanged). The fold edge itself
+ * disappears (it is interior, so it carries no seam).
+ * In every size the mirror is taken across THAT size's fold edge (the resolved E0, E1), so a graded
+ * fold edge still opens without a gap: mirrored anchors whose plain reflected grading would not land
+ * there get explicit per-size grading.
+ *
+ * Mirrored with it: seam allowances (segment leaving a mirrored anchor = the mirrored segment's
+ * allowance), corner specs (boxed / turnback sides swapped), sew-line notches (fromPrev ↔ fromNext,
+ * proportional pct → 100 − pct from the other end, angle negated; notches on the fold edge are
+ * dropped), internals (except fold / mirror lines and internals that are their own mirror image),
+ * darts on the sew line, drills, texts and artwork. Pleats and fullness records are not mirrored.
+ * A manual cut cannot be mirrored and falls back to the auto cut line.
+ *
+ * Returns `piece` itself when it is not a half piece or its fold edge cannot be found.
+ */
+export function halfOpenedPiece(piece: Piece, line: SizeLine): Piece {
+  const h = piece.half;
+  if (!h || !piece.sew.closed || piece.sew.points.length < 3) return piece;
+  const i0 = findHalfFoldEdge(piece.sew.points, h.a, h.b);
+  if (i0 < 0) return piece;
+  const p: Piece = clone(piece);
+  delete p.half;
+  const n = p.sew.points.length;
+  const P = [...p.sew.points.slice(i0 + 1), ...p.sew.points.slice(0, i0 + 1)]; // E1 … E0
+  const E1 = P[0], E0 = P[n - 1];
+  const sizes = line.sizes.map(s => s.id);
+  const base = { a: { x: E0.x, y: E0.y }, d: sub(E1, E0) };
+  const axisOf = new Map<SizeId, { a: Vec; d: Vec }>();
+  const halfPos = new Map<SizeId, Vec[]>();
+  for (const s of sizes) {
+    const pos = anchorPositions(P, line, s, true);
+    halfPos.set(s, pos);
+    axisOf.set(s, { a: pos[n - 1], d: sub(pos[0], pos[n - 1]) });
+  }
+  const shared = new Set([E0.id, E1.id]);
+  const mid = (id: Id) => (shared.has(id) ? id : mirroredId(id));
+  const swapSide = (e?: 'prev' | 'next' | 'both') => (e === 'prev' ? 'next' : e === 'next' ? 'prev' : e);
+
+  // previous grade anchor (cyclic, in the half)
+  const prevGrade = (k: number): Anchor | undefined => { for (let q = 1; q <= n; q++) { const a = P[(k - q + n) % n]; if (a.kind === 'grade') return a; } return undefined; };
+  const mirrorAnchor = (q: Anchor, k: number): Anchor => {
+    const m: Anchor = clone(q);
+    m.id = mirroredId(q.id);
+    const r = reflectPt(q, base.a, base.d); m.x = r.x; m.y = r.y;
+    delete m.hIn; delete m.hOut;
+    if (q.hOut) m.hIn = reflectVec(q.hOut, base.d);
+    if (q.hIn) m.hOut = reflectVec(q.hIn, base.d);
+    m.grade = mirrorGradeRec(q.grade, base.d);
+    if (q.grade2) m.grade2 = mirrorGradeRec(q.grade2, base.d);
+    if (q.gradeAxisDeg) m.gradeAxisDeg = -q.gradeAxisDeg;
+    delete m.seamAfter;
+    if (q.kind === 'grade') { const pg = prevGrade(k); if (pg?.seamAfter !== undefined) m.seamAfter = pg.seamAfter; }
+    if (m.corner) {
+      if (m.corner.extend) m.corner.extend = swapSide(m.corner.extend);
+      if (m.corner.manualPoints) m.corner.manualPoints = m.corner.manualPoints.map(v => reflectPt(v, base.a, base.d));
+      delete m.corner.lockedPerSize;
+    }
+    m.flags = { ...q.flags, derived: true }; delete m.flags.startPoint;
+    return m;
+  };
+  const mirrored: Anchor[] = [];
+  for (let k = n - 2; k >= 1; k--) mirrored.push(mirrorAnchor(P[k], k));
+  // E0 now continues into the mirrored half: its outgoing segment mirrors its incoming one
+  const e0 = P[n - 1], e1 = P[0];
+  const pg0 = prevGrade(n - 1);
+  if (e0.kind === 'grade') { if (pg0?.seamAfter !== undefined) e0.seamAfter = pg0.seamAfter; else delete e0.seamAfter; }
+  if (e0.hIn) e0.hOut = reflectVec(e0.hIn, base.d);
+  if (e1.hOut) e1.hIn = reflectVec(e1.hOut, base.d);
+  const F = [...P, ...mirrored];
+
+  // exact per-size targets: authored anchors stay put, mirrored ones reflect across that size's fold edge
+  const target = (s: SizeId, j: number): Vec => {
+    const hp = halfPos.get(s)!;
+    if (j < n) return hp[j];
+    const ax = axisOf.get(s)!;
+    return reflectPt(hp[n - 1 - (j - n + 1)], ax.a, ax.d);
+  };
+  const materialise = (j: number) => {
+    const abs: Record<SizeId, GradeInc> = {};
+    for (const s of sizes) { const t = target(s, j); abs[s] = { dx: t.x - F[j].x, dy: t.y - F[j].y }; }
+    F[j].grade = absoluteToIncremental(abs, line); delete F[j].gradeAxisDeg;
+  };
+  for (const pass of ['grade', 'curve'] as const) {
+    const bad = new Set<number>();
+    for (const s of sizes) {
+      if (s === line.baseSizeId) continue;
+      const pos = anchorPositions(F, line, s, true);
+      F.forEach((a, j) => { if (a.kind === pass && Math.hypot(pos[j].x - target(s, j).x, pos[j].y - target(s, j).y) > 1e-9) bad.add(j); });
+    }
+    for (const j of bad) materialise(j);
+  }
+  // back to authored order: authored anchors keep their indices up to E0, the mirrored run follows E0
+  const start = F.findIndex(a => a.id === piece.sew.points[0].id);
+  p.sew.points = [...F.slice(start), ...F.slice(0, start)];
+
+  // exact per-size mirror of a graded free point
+  const mirrorObj = <T extends { x: number; y: number; grade: Record<SizeId, GradeInc> }>(o: T): T => {
+    const m: T = clone(o);
+    const r = reflectPt(o, base.a, base.d); m.x = r.x; m.y = r.y;
+    const abs: Record<SizeId, GradeInc> = {};
+    for (const s of sizes) {
+      const off = absoluteOffset(o.grade, line, s), ax = axisOf.get(s)!;
+      const t = reflectPt({ x: o.x + off.x, y: o.y + off.y }, ax.a, ax.d);
+      abs[s] = { dx: t.x - r.x, dy: t.y - r.y };
+    }
+    const g = absoluteToIncremental(abs, line);
+    m.grade = isZeroGrade(g) ? {} : g;
+    const g2 = (o as { grade2?: Record<SizeId, GradeInc> }).grade2;
+    if (g2) (m as { grade2?: Record<SizeId, GradeInc> }).grade2 = mirrorGradeRec(g2, base.d);
+    return m;
+  };
+  const offAxis = (o: Vec) => dist(reflectPt(o, base.a, base.d), o) > 1e-6;
+
+  // internals
+  const extra: Contour[] = [];
+  for (const c of p.internals) {
+    if (c.type === 'fold' || c.type === 'mirror' || c.points.length === 0) continue;
+    const m: Contour = clone(c);
+    m.id = mirroredId(c.id);
+    m.points = c.points.map(q => {
+      const a: Anchor = clone(q);
+      a.id = mirroredId(q.id);
+      const r = reflectPt(q, base.a, base.d); a.x = r.x; a.y = r.y;
+      if (q.hIn) a.hIn = reflectVec(q.hIn, base.d);
+      if (q.hOut) a.hOut = reflectVec(q.hOut, base.d);
+      a.flags = { ...q.flags, derived: true };
+      return a;
+    });
+    // exact per-size grading of every mirrored internal anchor (positions of the original, reflected per size)
+    const origPos = new Map(sizes.map(s => [s, anchorPositions(c.points, line, s, c.closed)]));
+    m.points.forEach((a, j) => {
+      const abs: Record<SizeId, GradeInc> = {};
+      for (const s of sizes) { const ax = axisOf.get(s)!; const t = reflectPt(origPos.get(s)![j], ax.a, ax.d); abs[s] = { dx: t.x - a.x, dy: t.y - a.y }; }
+      // explicit grading (zeros included for curve points, so they are never re-interpolated)
+      const g = absoluteToIncremental(abs, line);
+      a.grade = a.kind === 'grade' && isZeroGrade(g) ? {} : g; delete a.gradeAxisDeg;
+    });
+    if (!c.closed && m.points.length > 1) {
+      m.points.reverse();
+      for (const a of m.points) { const hi = a.hIn, ho = a.hOut; delete a.hIn; delete a.hOut; if (ho) a.hIn = ho; if (hi) a.hOut = hi; }
+    }
+    const self = c.points.length === m.points.length && (m.points.every((a, j) => dist(a, c.points[j]) < 1e-6) || m.points.every((a, j) => dist(a, c.points[c.points.length - 1 - j]) < 1e-6));
+    if (!self) extra.push(m);
+  }
+  const reversedInternal = new Set(extra.filter(c => !c.closed).map(c => c.id));
+  p.internals.push(...extra);
+  const extraIds = new Set(extra.map(c => c.id));
+
+  // notches
+  const nextGrade = (id: Id): Id | undefined => {
+    const k = P.findIndex(a => a.id === id); if (k < 0) return undefined;
+    for (let q = 1; q <= n; q++) { const a = P[(k + q) % n]; if (a.kind === 'grade') return a.id; }
+    return undefined;
+  };
+  const notches: Notch[] = [];
+  for (const nt of p.notches) {
+    const pl = nt.placement;
+    if (nt.contourId === p.sew.id) {
+      // on the fold edge → interior after opening
+      const onFold = (pl.kind === 'fromPrev' && pl.anchorId === E0.id) || (pl.kind === 'fromNext' && pl.anchorId === E1.id)
+        || (pl.kind === 'proportional' && pl.anchorId === E0.id && (nt.spanEndAnchorId ?? nextGrade(E0.id)) === E1.id);
+      if (onFold) continue;
+      notches.push(nt);
+      const m: Notch = clone(nt);
+      m.id = mirroredId(nt.id); m.angleDeg = -nt.angleDeg;
+      if (nt.cornerDir) m.cornerDir = nt.cornerDir === 'prev' ? 'next' : 'prev';
+      if (pl.kind === 'anchor') { if (shared.has(pl.anchorId)) continue; m.placement = { kind: 'anchor', anchorId: mid(pl.anchorId) }; }
+      else if (pl.kind === 'fromPrev') m.placement = { kind: 'fromNext', anchorId: mid(pl.anchorId), dist: { ...pl.dist } };
+      else if (pl.kind === 'fromNext') m.placement = { kind: 'fromPrev', anchorId: mid(pl.anchorId), dist: { ...pl.dist } };
+      else {
+        const end = nt.spanEndAnchorId ?? nextGrade(pl.anchorId); if (!end) continue;
+        m.placement = { kind: 'proportional', anchorId: mid(end), pct: 100 - pl.pct };
+        if (nt.spanEndAnchorId) m.spanEndAnchorId = mid(pl.anchorId); else delete m.spanEndAnchorId;
+      }
+      notches.push(m);
+    } else {
+      notches.push(nt);
+      const cid = mirroredId(nt.contourId);
+      if (!extraIds.has(cid)) continue;
+      const m: Notch = clone(nt);
+      m.id = mirroredId(nt.id); m.contourId = cid; m.angleDeg = -nt.angleDeg;
+      if (reversedInternal.has(cid)) {
+        if (pl.kind === 'fromPrev') m.placement = { kind: 'fromNext', anchorId: mirroredId(pl.anchorId), dist: { ...pl.dist } };
+        else if (pl.kind === 'fromNext') m.placement = { kind: 'fromPrev', anchorId: mirroredId(pl.anchorId), dist: { ...pl.dist } };
+        else if (pl.kind === 'anchor') m.placement = { kind: 'anchor', anchorId: mirroredId(pl.anchorId) };
+        else continue; // proportional on a reversed open internal: not mirrored
+      } else {
+        m.placement = { ...clone(pl), anchorId: mirroredId(pl.anchorId) } as Notch['placement'];
+        if (nt.spanEndAnchorId) m.spanEndAnchorId = mirroredId(nt.spanEndAnchorId);
+      }
+      notches.push(m);
+    }
+  }
+  p.notches = notches;
+
+  // darts on the sew line
+  const darts: Dart[] = [];
+  for (const d of p.darts) {
+    darts.push(d);
+    if (!P.some(a => a.id === d.legA) || !P.some(a => a.id === d.legB)) continue;
+    const m: Dart = clone(d);
+    m.id = mirroredId(d.id); m.legA = mid(d.legB); m.legB = mid(d.legA); m.fold = d.fold === 'A' ? 'B' : 'A';
+    m.apex = mirrorObj(d.apex as { x: number; y: number; grade: Record<SizeId, GradeInc> }) as Dart['apex'];
+    delete m.closedLegs;
+    if (d.axisContourId) { if (extraIds.has(mirroredId(d.axisContourId))) m.axisContourId = mirroredId(d.axisContourId); else delete m.axisContourId; }
+    darts.push(m);
+  }
+  p.darts = darts;
+  p.drills = [...p.drills, ...p.drills.filter(offAxis).map(d => ({ ...mirrorObj(d), id: mirroredId(d.id) }))];
+  p.texts = [...p.texts, ...p.texts.filter(offAxis).map(t => ({ ...mirrorObj(t), id: mirroredId(t.id) }))];
+  p.artwork = [...p.artwork, ...p.artwork.filter(offAxis).map(a => ({ ...mirrorObj(a), id: mirroredId(a.id), scaleX: -a.scaleX }))];
+  if (p.cutMode === 'manual') { p.cutMode = 'auto'; delete p.manualCut; }
+  return p;
+}

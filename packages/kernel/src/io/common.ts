@@ -540,6 +540,8 @@ export const rawPts = (p: RawPoly): Vec[] => p.pts.map(v => ({ x: v.x, y: v.y })
 
 export interface DrawnNotch { a: Vec; b: Vec; p: Vec; type: NotchType; notch: Notch }
 export interface PieceDrawing {
+  /** the piece the drawing was made from (a live half piece: its opened, derived full piece) */
+  piece: Piece;
   pieceId: Id; name: string; sizeId: SizeId; sizeName: string;
   cut: Vec[]; sew: Vec[]; hasSeam: boolean;
   sewResolved: ResolvedContour;
@@ -564,15 +566,17 @@ export function notchSegment(piece: Piece, notch: Notch, line: SizeLine, sizeId:
   return { a, b: add(a, mul(dirIn, notch.depth)), p: f.p, type: notch.type, notch };
 }
 
-export function drawPiece(doc: Document, piece: Piece, sizeId?: SizeId): PieceDrawing {
+export function drawPiece(doc: Document, authored: Piece, sizeId?: SizeId): PieceDrawing {
+  // exporters always write the opened piece of a live half piece
+  const piece = doc.effectivePiece(authored, true);
   const line = doc.sizeLine(piece);
   const sid = sizeId ?? line.baseSizeId;
-  const rp = doc.resolvePiece(piece.id, sid);
+  const rp = doc.resolvePiece(piece.id, sid, { output: true });
   const off = (g: Record<SizeId, GradeInc> | undefined, p: Vec) => add(p, absoluteOffset(g, line, sid));
   const notches: DrawnNotch[] = [];
   for (const n of piece.notches) { const s = notchSegment(piece, n, line, sid, rp.cut, rp.sew); if (s) notches.push(s); }
   return {
-    pieceId: piece.id, name: piece.name, sizeId: sid, sizeName: line.sizes.find(s => s.id === sid)?.name ?? sid,
+    piece, pieceId: piece.id, name: piece.name, sizeId: sid, sizeName: line.sizes.find(s => s.id === sid)?.name ?? sid,
     cut: rp.cut, sew: rp.sew.pts, hasSeam: !piece.noSeam, sewResolved: rp.sew,
     internals: piece.internals.map((c, i) => ({ pts: rp.internals[i].pts, closed: c.closed, type: c.type, resolved: rp.internals[i], contour: c })),
     notches,

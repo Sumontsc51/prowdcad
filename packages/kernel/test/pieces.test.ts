@@ -10,6 +10,11 @@ import {
 } from '../src/ops/pieces';
 import { movePoint } from '../src/ops/points';
 import { cutHV } from '../src/ops/cut';
+import { resolveContour } from '../src/model/contour';
+import { resolveNotch } from '../src/io/common';
+import { exportDXF, importDXF } from '../src/io/dxf';
+import type { Contour } from '../src/model/types';
+import { newId } from '../src/model/factory';
 
 function setup(w = 100, h = 50, sizes = ['S', 'M', 'L']) {
   const doc = new Document(makeStyle('t', sizes, 'M'));
@@ -19,6 +24,7 @@ function setup(w = 100, h = 50, sizes = ['S', 'M', 'L']) {
   return { doc, pid: piece.id, p: () => doc.piece(piece.id), ids: doc.sizeLine().sizes.map(s => s.id) };
 }
 const A = (doc: Document, id: string, size?: string) => area(doc.resolvePiece(id, size).sew.pts);
+const polyOf = (doc: Document, c: Contour, size?: string) => resolveContour(c, doc.sizeLine(), size ?? doc.sizeLine().baseSizeId).pts;
 function addInternal(doc: Document, pid: string, pts: [number, number][], closed = false) {
   const c = makeContour(pts.map(([x, y]) => gradePoint(x, y)), { type: 'internal', closed });
   doc.transact('internal', () => doc.piece(pid).internals.push(c));
@@ -109,7 +115,9 @@ describe('fold in / out, half (PC3)', () => {
     const { doc, pid, p } = setup();
     doc.transact('d', () => p().drills.push({ id: 'd1', x: 20, y: 25, grade: {}, diameter: 3, kind: 'drill', mode: 'draw' }));
     setHalf(doc, pid, { a: { x: 50, y: 0 }, b: { x: 50, y: 50 } }, { trim: true, keep: { x: 10, y: 10 } });
-    expect(A(doc, pid)).toBeCloseTo(2500, 9);
+    // authored half: 50×50; it resolves live as the full 100×50 piece
+    expect(area(polyOf(doc, p().sew))).toBeCloseTo(2500, 9);
+    expect(A(doc, pid)).toBeCloseTo(5000, 9);
     expect(p().half).toBeDefined();
     openHalf(doc, pid);
     expect(A(doc, pid)).toBeCloseTo(5000, 9);
@@ -118,6 +126,93 @@ describe('fold in / out, half (PC3)', () => {
     setHalf(doc, pid, { a: { x: 100, y: 0 }, b: { x: 100, y: 50 } });
     deleteHalf(doc, pid);
     expect(p().half).toBeUndefined();
+  });
+});
+
+describe('live half pieces (B3)', () => {
+  /** 150 × 300 half block, fold at x = 0, curved side seam, graded: x grows 6 / size, y grows 10 / size. */
+  function half(openAtOutput = true) {
+    const doc = new Document(makeStyle('t', ['S', 'M', 'L'], 'M'));
+    const [S, M, L] = doc.sizeLine().sizes.map(s => s.id);
+    const g = (dx: number, dy: number) => ({ [S]: { dx: 0, dy: 0 }, [M]: { dx, dy }, [L]: { dx, dy } });
+    const sew = makeContour([gradePoint(0, 0), gradePoint(150, 0, { grade: g(6, 0) }), curvePoint(170, 150), gradePoint(150, 300, { grade: g(6, 10) }), gradePoint(0, 300, { grade: g(0, 10) })]);
+    const piece = makePiece('BACK', sew, doc.style.activeSizeTableId, { seamDefault: 10 });
+    piece.notches.push({ id: newId('n'), contourId: sew.id, type: 'slit', depth: 5, width: 0, angleDeg: 0, mode: 'cut', placement: { kind: 'fromPrev', anchorId: sew.points[0].id, dist: { [S]: 40, [M]: 50, [L]: 60 } } });
+    piece.drills.push({ id: newId('d'), x: 60, y: 200, grade: g(3, 5), diameter: 4, kind: 'drill', mode: 'draw' });
+    piece.internals.push(makeContour([gradePoint(30, 100, { grade: g(1, 0) }), gradePoint(120, 120, { grade: g(5, 2) })], { type: 'internal', closed: false }));
+    doc.transact('add', s => s.pieces.push(piece));
+    setHalf(doc, piece.id, { a: { x: 0, y: -10 }, b: { x: 0, y: 400 } }, { openAtOutput });
+    return { doc, pid: piece.id, p: () => doc.piece(piece.id), S, M, L };
+  }
+
+  it('resolves as the full mirrored contour: perimeter = 2·half − 2·fold edge; fold edge gets no seam', () => {
+    const { doc, pid, p, S, M, L } = half();
+    expect(p().sew.points.length).toBe(5); // authored half untouched
+    expect(p().sew.points.every(a => !a.flags.derived)).toBe(true);
+    for (const [sz, foldLen] of [[S, 290], [M, 300], [L, 310]] as const) {
+      const halfR = resolveContour(p().sew, doc.sizeLine(), sz);
+      const halfPerim = halfR.cum[halfR.cum.length - 1];
+      const r = doc.resolvePiece(pid, sz);
+      expect(r.sew.cum[r.sew.cum.length - 1]).toBeCloseTo(2 * (halfPerim - foldLen), 9);
+      expect(area(r.sew.pts)).toBeCloseTo(2 * area(halfR.pts), 9);
+      const b = bbox(r.cut);
+      // symmetric about x = 0; the cut has seam 10 everywhere except across the (interior) fold
+      expect(b.minX).toBeCloseTo(-b.maxX, 9);
+      expect(b.minY).toBeCloseTo(-10, 9);
+      expect(b.maxY).toBeCloseTo(foldLen + 10, 9);
+    }
+    // the opened contour keeps authored anchors at their indices and appends the mirrored ones
+    const opened = doc.effectivePiece(pid);
+    expect(opened.sew.points.slice(0, 5).map(a => a.id)).toEqual(p().sew.points.map(a => a.id));
+    expect(opened.sew.points.slice(5).every(a => a.flags.derived && a.id.endsWith('~m'))).toBe(true);
+    expect(opened.sew.points.length).toBe(8);
+  });
+
+  it('mirrors notches (per size), drills and internals', () => {
+    const { doc, pid, S, M, L } = half();
+    const opened = doc.effectivePiece(pid);
+    expect(opened.notches.length).toBe(2);
+    const line = doc.sizeLine();
+    for (const [sz, d] of [[S, 40], [M, 50], [L, 60]] as const) {
+      const a = resolveNotch(opened, opened.notches[0], line, sz)!.p, b = resolveNotch(opened, opened.notches[1], line, sz)!.p;
+      expect(a.x).toBeCloseTo(d, 9); expect(a.y).toBeCloseTo(0, 9);
+      expect(b.x).toBeCloseTo(-d, 9); expect(b.y).toBeCloseTo(0, 9);
+    }
+    expect(opened.drills.length).toBe(2);
+    expect(opened.drills[1].x).toBeCloseTo(-60, 9);
+    const r = doc.resolvePiece(pid, L);
+    expect(r.internals.length).toBe(2);
+    // internal end (120,120) graded (5,2) for L (base M) → (125,122); its mirror (−125,122)
+    expect(r.internals[1].anchorPos.some(q => Math.abs(q.x + 125) < 1e-9 && Math.abs(q.y - 122) < 1e-9)).toBe(true);
+  });
+
+  it('openAtOutput false: shown as the authored half, exports open it', () => {
+    const { doc, pid, p } = half(false);
+    const r = doc.resolvePiece(pid);
+    expect(area(r.sew.pts)).toBeCloseTo(area(polyOf(doc, p().sew)), 9);
+    expect(bbox(r.cut).minX).toBeCloseTo(-10, 9); // shown as-is: the authored seam on the fold edge
+    const out = doc.resolvePiece(pid, undefined, { output: true });
+    expect(area(out.sew.pts)).toBeCloseTo(2 * area(r.sew.pts), 9);
+    const imp = importDXF(exportDXF(doc, { flavor: 'aama' }).dxf);
+    expect(bbox(imp.pieces[0].sew.points).minX).toBeCloseTo(-170, 6);
+  });
+
+  it('live half exports as the full piece; openHalf materialises the same geometry; deleteHalf reverts', () => {
+    const { doc, pid, p, L } = half();
+    const live = doc.resolvePiece(pid, L);
+    const imp = importDXF(exportDXF(doc, { flavor: 'astm' }).dxf);
+    expect(bbox(imp.pieces[0].sew.points).minX).toBeCloseTo(-170, 6);
+    openHalf(doc, pid);
+    expect(p().half).toBeUndefined();
+    expect(p().sew.points.length).toBe(8);
+    expect(p().sew.points.some(a => a.id.includes('~'))).toBe(false);
+    const after = doc.resolvePiece(pid, L);
+    expect(after.sew.cum[after.sew.cum.length - 1]).toBeCloseTo(live.sew.cum[live.sew.cum.length - 1], 9);
+    expect(area(after.cut)).toBeCloseTo(area(live.cut), 6);
+    expect(p().notches.length).toBe(2);
+    const { doc: d2, pid: p2, p: pp2 } = half();
+    deleteHalf(d2, p2);
+    expect(area(d2.resolvePiece(p2).sew.pts)).toBeCloseTo(area(polyOf(d2, pp2().sew)), 9);
   });
 });
 
