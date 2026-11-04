@@ -57,6 +57,8 @@ export interface Anchor {
   name?: string;
   /** incremental grading: inc[size_i] = abs[size_i] − abs[size_{i−1}] in size-line order (first size = 0; abs[base] = 0). Missing entry = {0,0}. */
   grade: Record<SizeId, GradeInc>;
+  /** two-axis Size Variation: incremental grading keyed by SizeTable.axis2 sizes (same convention as grade). */
+  grade2?: Record<SizeId, GradeInc>;
   /** rule library reference (number/name); grade[] holds the materialised values */
   ruleId?: string;
   /** angle-grading: local axis rotation in degrees (0 = world) */
@@ -89,7 +91,7 @@ export interface Dart {
   /** anchor ids on the SEW contour: leg A (first in contour order), leg B, apex (internal point) */
   legA: Id;
   legB: Id;
-  apex: { x: number; y: number; grade: Record<SizeId, GradeInc> };
+  apex: { x: number; y: number; grade: Record<SizeId, GradeInc>; grade2?: Record<SizeId, GradeInc> };
   /** fold direction: towards A or towards B (determines cut-line dart shape) */
   fold: 'A' | 'B';
   /** drill hole distance back from apex along dart axis (mm) */
@@ -106,8 +108,8 @@ export interface Pleat {
   id: Id;
   type: 'box' | 'knife';
   /** two anchor ids on the SEW contour bounding the pleat on the first edge; axis defined by start/end points */
-  axisStart: { x: number; y: number; grade: Record<SizeId, GradeInc> };
-  axisEnd: { x: number; y: number; grade: Record<SizeId, GradeInc> };
+  axisStart: { x: number; y: number; grade: Record<SizeId, GradeInc>; grade2?: Record<SizeId, GradeInc> };
+  axisEnd: { x: number; y: number; grade: Record<SizeId, GradeInc>; grade2?: Record<SizeId, GradeInc> };
   /** depth at start and end (variable depth = tapered) */
   depthStart: number;
   depthEnd: number;
@@ -139,12 +141,18 @@ export interface Notch {
   mode?: 'draw' | 'cut';
   /** walk-support / pleat auto notch etc. */
   source?: 'manual' | 'walk' | 'pleat' | 'dart' | 'slit' | 'cross';
+  /** proportional placement: measure pct over anchorId → spanEndAnchorId instead of anchorId → next grade anchor */
+  spanEndAnchorId?: Id;
+  /** free-form tag (e.g. 'binding-break' for binding support notches) */
+  tag?: string;
+  name?: string;
 }
 
 export interface Drill {
   id: Id;
   x: number; y: number;
   grade: Record<SizeId, GradeInc>;
+  grade2?: Record<SizeId, GradeInc>;
   diameter: number;
   kind: 'drill' | 'button' | 'buttonhole';
   mode: 'draw' | 'cut';
@@ -158,6 +166,7 @@ export interface Drill {
 export interface TextAnnotation {
   id: Id;
   x: number; y: number; grade: Record<SizeId, GradeInc>;
+  grade2?: Record<SizeId, GradeInc>;
   text: string;
   size: number;      // mm
   angleDeg: number;
@@ -167,6 +176,7 @@ export interface TextAnnotation {
 export interface Artwork {
   id: Id;
   x: number; y: number; grade: Record<SizeId, GradeInc>;
+  grade2?: Record<SizeId, GradeInc>;
   /** true source dimensions (mm) */
   width: number; height: number;
   scaleX: number; scaleY: number;
@@ -180,6 +190,9 @@ export interface GrainLine {
   a: Vec; b: Vec;
   gradeA: Record<SizeId, GradeInc>;
   gradeB: Record<SizeId, GradeInc>;
+  /** axis2 grading of a / b (two-axis Size Variation) */
+  gradeA2?: Record<SizeId, GradeInc>;
+  gradeB2?: Record<SizeId, GradeInc>;
   /** fixed to piece centre */
   centered?: boolean;
 }
@@ -274,6 +287,12 @@ export interface SizeTable {
   name: string;
   axis1: SizeLine;
   axis2?: SizeLine;
+  /** set by combineTables(): this single-axis table was flattened (one-way) from a two-axis table */
+  combinedFrom?: Id;
+  /** combined (axis1×axis2 flattened) tables are discouraged: grading can no longer be edited per axis */
+  discouraged?: boolean;
+  /** combined table: new size id → [axis1 size id, axis2 size id] of the source table */
+  combinedPairs?: Record<SizeId, [SizeId, SizeId]>;
 }
 
 export interface GradeRule {
@@ -282,6 +301,7 @@ export interface GradeRule {
   name: string;
   inc: Record<SizeId, GradeInc>;
   sizeLineId: Id;
+  description?: string;
 }
 
 export interface RuleLibrary {
