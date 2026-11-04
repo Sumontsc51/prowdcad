@@ -106,6 +106,10 @@ export interface Dart {
   axisContourId?: Id;
   /** (darts module) Fullness record / op that created this dart (Insert Dart) */
   sourceFullnessId?: Id;
+  /** (darts module) exact copies of the leg anchors taken at Close, restored by reopen */
+  closedLegs?: Anchor[];
+  /** (darts module) seam allowance kept on each leg of a Cutting Dart (default: mouth segment seam) */
+  cutSeam?: number;
 }
 
 export interface Pleat {
@@ -121,26 +125,33 @@ export interface Pleat {
   open: boolean;
   autoNotches: boolean;
   name?: string;
-  /** (pleats module) pleat-edge grade anchors on the sew contour, one entry per axis crossing (start, end) */
+  /** (pleats module) pleat-edge anchors on the sew contour, one entry per axis crossing (in axis order) */
   edges?: PleatEdge[];
+  /** (pleats module) which side of the axis (start→end) is translated when opening. Default 'right'. */
+  moveSide?: 'left' | 'right';
   /** (pleats module) id of the dashed 'pleatAxis' internal contour */
   axisContourId?: Id;
   /** (pleats module) auto-notch ids written onto piece.notches */
   notchIds?: Id[];
-  /** (pleats module) opening order (LIFO bookkeeping for exact non-destructive close) */
-  openSeq?: number;
-  /** (pleats module) original state of everything the open transform moved */
-  snapshot?: LiveSnapshot;
+  /** (pleats module) sew anchors inserted by this pleat (removed by removePleat) */
+  insertedIds?: Id[];
+  /** (pleats module) translations applied by the current open state; undone exactly on close */
+  moves?: LiveMove[];
 }
 
-/** (pleats module) anchors inserted where a pleat axis crosses the sew contour. When closed they coincide. */
+/** (pleats module) anchors inserted where a pleat axis crosses the sew contour. Coincide while closed. */
 export interface PleatEdge { fixed: Id; moving: Id; mid?: Id }
 
-/** Pre-transform copy of everything a live open/spread moved, restored verbatim on close/delete. */
-export interface LiveSnapshot {
-  anchors: Anchor[];
-  apexes: { dartId: Id; apex: { x: number; y: number; grade: Record<SizeId, GradeInc> } }[];
-  drills: { id: Id; x: number; y: number; grade: Record<SizeId, GradeInc> }[];
+/**
+ * (darts/pleats/fullness) One reversible edit applied by a live object. `before` is the full
+ * pre-edit state; reversal restores it verbatim when the item still sits at before+delta, else
+ * subtracts the delta (so later independent translations survive).
+ */
+export interface LiveMove {
+  kind: 'anchor' | 'apex' | 'drill' | 'text' | 'pleatStart' | 'pleatEnd';
+  id: Id;
+  dx: number; dy: number;
+  before: { x: number; y: number; hIn?: Vec; hOut?: Vec; grade: Record<SizeId, GradeInc>; gradeAxisDeg?: number };
 }
 
 /** Slash & spread record (fullness module). */
@@ -154,11 +165,12 @@ export interface Fullness {
   mode?: 'rotate' | 'parallel';
   /** every anchor id inserted by this record (slash + hinge anchors), removed on delete */
   insertedIds?: Id[];
+  /** hinge anchor ids (one per slash) */
+  hingeIds?: Id[];
   /** multi fullness: per-slash amounts */
   perSlash?: { openA: number; openB: number }[];
-  /** internal pivot: residual gap/overlap at the far hinge (mm, base size) */
-  hingeGap?: number;
-  snapshot?: LiveSnapshot;
+  /** reversible edits applied by the spread (restored in reverse order by deleteFullness) */
+  moves?: LiveMove[];
 }
 
 export type NotchType = 'slit' | 'T' | 'V' | 'U' | 'castle';

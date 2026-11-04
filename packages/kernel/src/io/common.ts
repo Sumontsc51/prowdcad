@@ -12,9 +12,10 @@ import { resolveContour, spanPolyline, absoluteOffset, type ResolvedContour } fr
 import { computeCutLine } from '../ops/seam';
 import { makeAnchor, makeContour, makePiece, newId, DEFAULT_NOTCH_SETUP } from '../model/factory';
 import type {
-  Anchor, Contour, ContourType, GradeInc, Id, Notch, NotchType, Piece, SizeId, SizeLine, Style, Unit,
+  Anchor, Contour, ContourType, GradeInc, Id, Notch, NotchType, Piece, RuleLibrary, SizeId, SizeLine, Style,
 } from '../model/types';
 import type { Document } from '../model/doc';
+import type { Unit } from '../units';
 
 // ───────────────────────── report ─────────────────────────
 
@@ -36,6 +37,8 @@ export interface ImportReport {
   sizeTable: { id: Id; name: string; axis1: SizeLine };
   /** grade-rule numbers found on vertices but not resolvable (no .rul or unknown number) */
   unresolvedRules?: number[];
+  /** grade-rule library built from the companion .rul file */
+  ruleLibrary?: RuleLibrary;
 }
 
 // ───────────────────────── raw intermediate ─────────────────────────
@@ -283,7 +286,16 @@ export function toAnchors(raw: RawVertex[], closed: boolean, cornerAngleDeg = 25
     else if (hasMarkers) kind = 'curve';
     else if (v.rule !== undefined && !v.curve) kind = 'grade';
     else kind = sharp ? 'grade' : 'curve';
-    const smooth = endpoint ? false : !sharp;
+    // A vertex is smooth only when it sits inside a curve: not sharp, and its two adjacent edges are of
+    // comparable length (a sampled curve is evenly spaced; a long straight edge meeting a curve is not) —
+    // otherwise Catmull-Rom would bow the straight edge.
+    let smooth = false;
+    if (!endpoint && !sharp && n >= 3) {
+      const l0 = dist(pts[(i - 1 + n) % n], v), l1 = dist(v, pts[(i + 1) % n]);
+      const ratio = Math.max(l0, l1) / Math.max(Math.min(l0, l1), 1e-12);
+      const neighCurve = (j: number) => pts[j].marker === 'curve' || (!pts[j].marker && !!pts[j].curve);
+      smooth = v.marker === 'curve' || v.curve ? ratio < 4 : ratio < 4 && (hasMarkers ? neighCurve((i - 1 + n) % n) && neighCurve((i + 1) % n) : true);
+    }
     const a = makeAnchor(v.x, v.y, { kind, smooth });
     if (v.grade) a.grade = v.grade;
     if (v.rule !== undefined) a.ruleId = String(v.rule);
