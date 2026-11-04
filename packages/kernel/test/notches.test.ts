@@ -5,7 +5,7 @@ import type { Piece } from '../src/model/types';
 import {
   addNotch, resolveNotch, addCornerNotch, crossNotch, addPointsForNotches, globalNotchGrading,
   setNotchDistance, fillAllNotchDistances, extrapolateNotchIncrement, pasteNotchGrid, notchDistanceGrid,
-  notchesOnSegment, addNotchAtPoint, notchArcLength,
+  notchesOnSpan, addNotchAtPoint, notchArcLength,
 } from '../src/ops/notches';
 
 function setup(sizes = ['S', 'M', 'L'], base = 'M') {
@@ -229,7 +229,7 @@ describe('distance grid editing', () => {
   });
 });
 
-describe('notchesOnSegment', () => {
+describe('notchesOnSpan', () => {
   it('lists notches with running distances, per size', () => {
     const { doc, piece, ids } = setup();
     const [, , L] = ids;
@@ -238,14 +238,14 @@ describe('notchesOnSegment', () => {
     addNotch(doc, piece, { placement: { kind: 'anchor', anchorId: P[1].id } });
     addNotch(doc, piece, { placement: { kind: 'proportional', anchorId: P[1].id, pct: 50 } });
     addNotchAtPoint(doc, piece, { x: 0, y: 40 }, 'fromNext');
-    const seg = notchesOnSegment(doc, piece, piece.sew.id, P[0].id, P[2].id);
+    const seg = notchesOnSpan(doc, piece, piece.sew.id, P[0].id, P[2].id);
     expect(seg.map(x => x.dist)).toEqual([100, 200, 250]);
-    const segL = notchesOnSegment(doc, piece, piece.sew.id, P[0].id, P[2].id, L);
+    const segL = notchesOnSpan(doc, piece, piece.sew.id, P[0].id, P[2].id, L);
     expect(segL.map(x => x.dist)).toEqual([105, 210, 260]);
     // wrapping span P3 → P1 crosses the start point
-    const wrap = notchesOnSegment(doc, piece, piece.sew.id, P[3].id, P[1].id);
+    const wrap = notchesOnSpan(doc, piece, piece.sew.id, P[3].id, P[1].id);
     expect(wrap.map(x => Math.round(x.dist * 1e6) / 1e6)).toEqual([60, 200, 300]);
-    const full = notchesOnSegment(doc, piece, piece.sew.id, P[0].id, P[0].id);
+    const full = notchesOnSpan(doc, piece, piece.sew.id, P[0].id, P[0].id);
     expect(full).toHaveLength(4);
     expect(notchArcLength(doc, piece, full[3].notch, ids[1])).toBeCloseTo(560, 9);
   });

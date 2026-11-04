@@ -13,7 +13,7 @@ import type { Id, Notch, Piece, SizeId, Contour } from '../model/types';
 import type { Document } from '../model/doc';
 import { absoluteToIncremental } from '../model/contour';
 import { gradePoint, makeContour, makePiece, makeAnchor } from '../model/factory';
-import { notchesOnSegment, segmentLength, livePiece, makeNotch } from './notches';
+import { notchesOnSpan, segmentLength, livePiece, makeNotch } from './notches';
 
 export interface BindingChainItem { pieceId: Id; contourId: Id; fromAnchorId: Id; toAnchorId: Id }
 
@@ -72,7 +72,7 @@ export function generateBinding(doc: Document, o: BindingOptions): BindingResult
       const p = livePiece(doc, it.pieceId);
       if (k > 0) breaksBy[sid].push(run);
       if (copy) {
-        for (const n of notchesOnSegment(doc, p, it.contourId, it.fromAnchorId, it.toAnchorId, sid)) {
+        for (const n of notchesOnSpan(doc, p, it.contourId, it.fromAnchorId, it.toAnchorId, sid)) {
           const key = `${it.pieceId}|${n.notch.id}|${k}`;
           // skip a notch already copied from the previous chain item at the shared break
           const dupKey = `${it.pieceId}|${n.notch.id}|${k - 1}`;

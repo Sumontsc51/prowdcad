@@ -606,7 +606,7 @@ export interface NotchOnSegment {
  * Notches lying on the forward span fromAnchorId → toAnchorId of a contour (inclusive ends), with
  * running distances from the start, sorted by distance. A closed contour with from == to = full loop.
  */
-export function notchesOnSegment(doc: Document, piece: Piece, contourId: Id, fromAnchorId: Id, toAnchorId: Id, sizeId?: SizeId): NotchOnSegment[] {
+export function notchesOnSpan(doc: Document, piece: Piece, contourId: Id, fromAnchorId: Id, toAnchorId: Id, sizeId?: SizeId): NotchOnSegment[] {
   const p = livePiece(doc, piece);
   const line = doc.sizeLine(p);
   const sid = sizeId ?? line.baseSizeId;
