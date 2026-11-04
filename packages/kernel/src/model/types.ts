@@ -102,6 +102,10 @@ export interface Dart {
   /** when converted to a physically cut-out shape */
   cutting?: boolean;
   name?: string;
+  /** (darts module) id of the dashed 'dartAxis' internal contour kept while the dart is closed */
+  axisContourId?: Id;
+  /** (darts module) Fullness record / op that created this dart (Insert Dart) */
+  sourceFullnessId?: Id;
 }
 
 export interface Pleat {
@@ -117,6 +121,44 @@ export interface Pleat {
   open: boolean;
   autoNotches: boolean;
   name?: string;
+  /** (pleats module) pleat-edge grade anchors on the sew contour, one entry per axis crossing (start, end) */
+  edges?: PleatEdge[];
+  /** (pleats module) id of the dashed 'pleatAxis' internal contour */
+  axisContourId?: Id;
+  /** (pleats module) auto-notch ids written onto piece.notches */
+  notchIds?: Id[];
+  /** (pleats module) opening order (LIFO bookkeeping for exact non-destructive close) */
+  openSeq?: number;
+  /** (pleats module) original state of everything the open transform moved */
+  snapshot?: LiveSnapshot;
+}
+
+/** (pleats module) anchors inserted where a pleat axis crosses the sew contour. When closed they coincide. */
+export interface PleatEdge { fixed: Id; moving: Id; mid?: Id }
+
+/** Pre-transform copy of everything a live open/spread moved, restored verbatim on close/delete. */
+export interface LiveSnapshot {
+  anchors: Anchor[];
+  apexes: { dartId: Id; apex: { x: number; y: number; grade: Record<SizeId, GradeInc> } }[];
+  drills: { id: Id; x: number; y: number; grade: Record<SizeId, GradeInc> }[];
+}
+
+/** Slash & spread record (fullness module). */
+export interface Fullness {
+  id: Id;
+  /** sew anchors inserted at the slash(es): [sA, sB] per slash, flattened */
+  slashAnchorIds: Id[];
+  /** hinge: a sew anchor id (pivot on contour) or an internal point */
+  pivot: { anchorId: Id } | { x: number; y: number };
+  amounts: { openA: number; openB: number };
+  mode?: 'rotate' | 'parallel';
+  /** every anchor id inserted by this record (slash + hinge anchors), removed on delete */
+  insertedIds?: Id[];
+  /** multi fullness: per-slash amounts */
+  perSlash?: { openA: number; openB: number }[];
+  /** internal pivot: residual gap/overlap at the far hinge (mm, base size) */
+  hingeGap?: number;
+  snapshot?: LiveSnapshot;
 }
 
 export type NotchType = 'slit' | 'T' | 'V' | 'U' | 'castle';
@@ -247,6 +289,8 @@ export interface Piece {
   internals: Contour[];
   darts: Dart[];
   pleats: Pleat[];
+  /** slash & spread records (fullness module), reversible via deleteFullness */
+  fullness?: Fullness[];
   notches: Notch[];
   drills: Drill[];
   texts: TextAnnotation[];
