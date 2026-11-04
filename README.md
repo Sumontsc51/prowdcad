@@ -1,4 +1,22 @@
-# ProwdCAD PRO
+# ProwdCAD
+
+Professional 2D apparel pattern-design + grading (+ marker-making, Phase 3) CAD.
+
+**v2 (this branch):** TypeScript kernel (`packages/kernel`, unit-tested in Node) + SVG design workspace (`apps/web`).
+See `docs/PHASE1.md` for what is implemented, `docs/KERNEL-CONTRACT.md` for the model, `docs/FILE-FORMATS.md` for files.
+
+```
+npm install
+npm run dev      # design workspace (Vite)
+npm test         # kernel test suite
+npm run build    # production build → apps/web/dist
+```
+
+---
+
+## Legacy v1 (single file)
+
+ PRO
 
 Browser-based 2D apparel CAD for pattern making, made-to-measure alteration and marker making. Single-file HTML app, no build step, no server.
 
