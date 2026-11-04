@@ -10,6 +10,24 @@ import {
   repairSeam, seamToInternal, internalToSeam, setCutModeAuto, cornerPointsForSize, segmentSeams,
 } from '../src/ops/seam';
 
+/** proper crossings between non-adjacent edges of a closed polygon */
+function selfCrossings(P: Vec[]): number {
+  let c = 0; const n = P.length;
+  for (let i = 0; i < n; i++) for (let j = i + 2; j < n; j++) {
+    if (i === 0 && j === n - 1) continue;
+    const a = P[i], b = P[(i + 1) % n], p = P[j], q = P[(j + 1) % n];
+    const d1 = cross2(sub(b, a), sub(p, a)), d2 = cross2(sub(b, a), sub(q, a)), d3 = cross2(sub(q, p), sub(a, p)), d4 = cross2(sub(q, p), sub(b, p));
+    if (d1 * d2 < -1e-12 && d3 * d4 < -1e-12) c++;
+  }
+  return c;
+}
+const cross2 = (u: Vec, w: Vec) => u.x * w.y - u.y * w.x;
+const segDist = (q: Vec, a: Vec, b: Vec) => { const ab = sub(b, a); if (dot(ab, ab) < 1e-24) return Math.hypot(q.x - a.x, q.y - a.y); const tt = Math.max(0, Math.min(1, dot(sub(q, a), ab) / dot(ab, ab))); return Math.hypot(q.x - a.x - ab.x * tt, q.y - a.y - ab.y * tt); };
+/** boundary-to-boundary distance between two non-crossing closed polygons */
+const polyDist = (P: Vec[], S: Vec[]) => Math.min(
+  ...P.map(q => Math.min(...S.map((a, i) => segDist(q, a, S[(i + 1) % S.length])))),
+  ...S.map(q => Math.min(...P.map((a, i) => segDist(q, a, P[(i + 1) % P.length])))));
+
 const close = (a: Vec[], b: Vec[], d = 9) => { expect(a.length).toBe(b.length); a.forEach((p, i) => { expect(p.x).toBeCloseTo(b[i].x, d); expect(p.y).toBeCloseTo(b[i].y, d); }); };
 
 function setup(sizes = ['S', 'M', 'L'], contour = rectangleContour(0, 0, 100, 100)) {
@@ -124,8 +142,14 @@ describe('engineered corners', () => {
     expect(Math.abs(dot(sub(r.pts[3], r.pts[2]), perp(tOut)))).toBeCloseTo(0, 12); // on the outgoing cut line
     setCorner(t.doc, t.pid, b, { type: 'boxed', extend: 'both' });
     r = cutLineForSize(t.piece(), t.line, t.line.baseSizeId);
-    expect(r.pts.length).toBe(7);
-    close([r.pts[2]], [{ x: 110, y: -10 }]); // incoming seam runs on by the outgoing allowance
+    // obtuse (101.3°) corner: union of the two squared strips — incoming runs on to x=110 and squares
+    // up; the outgoing strip runs back by 10 along its edge and squares off (B7)
+    expect(r.pts.length).toBe(8);
+    expect(r.cornerSpan[1]).toEqual([1, 5]);
+    const tO = norm({ x: -20, y: 100 }), nO = { x: tO.y, y: -tO.x };
+    const Q = { x: 100 - 10 * tO.x + 10 * nO.x, y: -10 * tO.y + 10 * nO.y };
+    close(r.pts.slice(1, 6), [A, { x: 110, y: -10 }, { x: 110, y: Q.y + (110 - Q.x) * nO.y / nO.x }, Q, B]);
+    expect(selfCrossings(r.pts)).toBe(0);
     setCorner(t.doc, t.pid, b, { type: 'angled' });
     r = cutLineForSize(t.piece(), t.line, t.line.baseSizeId);
     close(r.pts.slice(1, 3), [A, B]);
@@ -302,5 +326,148 @@ describe('Seam ⇄ Internal', () => {
     expect(internalToSeam(t.doc, t.pid, cid, 'auto')).toEqual([10, 20, 10, 10]);
     expect(t.piece().noSeam).toBe(false);
     expect(area(t.doc.resolvePiece(t.pid, L).cut)).toBeCloseTo(140 * 130, 9);
+  });
+});
+
+describe('B10 — zero-length grade segments are merged inside the seam build', () => {
+  const dupSquare = () => makeContour([gradePoint(0, 0), gradePoint(100, 0), gradePoint(100, 0), gradePoint(100, 100), gradePoint(0, 100)]);
+  it('duplicate consecutive grade points: exact 120×120 cut, never touches the sew corner', () => {
+    const t = setup(['S', 'M', 'L'], dupSquare());
+    const r = cutLineForSize(t.piece(), t.line, t.line.baseSizeId); // computeCutLine directly, no doc-level workaround
+    close(r.pts, [{ x: -10, y: -10 }, { x: 110, y: -10 }, { x: 110, y: 110 }, { x: -10, y: 110 }]);
+    expect(area(r.pts)).toBeCloseTo(14400, 9); // was 14300 with vertices (100,-10)(100,0)(110,0)
+    const sew = resolveContour(t.piece().sew, t.line, t.line.baseSizeId).pts;
+    expect(polyDist(r.pts, sew)).toBeCloseTo(10, 9);
+    // both duplicates map onto the one merged corner
+    expect(r.cornerIndex).toEqual([0, 1, 1, 2, 3]);
+    expect(t.doc.resolvePiece(t.pid).cut).toEqual(r.pts);
+  });
+  it('a corner spec on the dropped duplicate carries over; triplicates; CW', () => {
+    const c = makeContour([gradePoint(0, 0), gradePoint(100, 0), gradePoint(100, 0), gradePoint(100, 0), gradePoint(100, 100), gradePoint(0, 100)]);
+    c.points.reverse(); // CW: (0,100) (100,100) (100,0)×3 (0,0)
+    const t = setup(['S', 'M', 'L'], c);
+    // boxed:'prev' on the FIRST duplicate (its outgoing segment is zero-length)
+    setCorner(t.doc, t.pid, t.ids[2], { type: 'boxed', extend: 'prev' });
+    setSeam(t.doc, t.pid, t.ids[4], t.ids[5], 20); // bottom edge (100,0)→(0,0) = 20
+    const r = cutLineForSize(t.piece(), t.line, t.line.baseSizeId);
+    // right edge (seam 10) runs straight down to the level of the bottom cut line, squares across
+    // A (end of the right cut line) and B (start of the bottom cut line) are kept as corner points
+    close(r.pts, [{ x: -10, y: 110 }, { x: 110, y: 110 }, { x: 110, y: 0 }, { x: 110, y: -20 }, { x: 100, y: -20 }, { x: -10, y: -20 }]);
+    expect(r.cornerIndex).toEqual([0, 1, 2, 2, 2, 5]);
+    expect(r.cornerSpan[4]).toEqual([2, 4]);
+    expect(area(r.pts)).toBeCloseTo(120 * 130, 9);
+  });
+  it('duplicates in one size only (graded apart in L): every size is a clean offset', () => {
+    const t = setup(['S', 'M', 'L'], dupSquare());
+    const L = t.S[2];
+    t.doc.transact('g', s => { s.pieces[0].sew.points[2].grade = { [L]: { dx: 0, dy: 20 } }; });
+    for (const sid of t.S) {
+      const cut = computeCutLine(t.piece(), t.line, sid);
+      const sew = resolveContour(t.piece().sew, t.line, sid).pts;
+      expect(polyDist(cut, sew)).toBeCloseTo(10, 9);
+      expect(area(cut)).toBeCloseTo(14400, 9);
+    }
+  });
+});
+
+describe('acute corners on the cut line (audit B11, grade-corner miter)', () => {
+  it('5° spike, seam 10: square cap at 10 mm past the tip; the whole cut stays ≥ 10 mm', () => {
+    const h = 200 * Math.tan(5 * Math.PI / 180) / 2;
+    const tip = { x: 300, y: 50 + h };
+    const c = makeContour([gradePoint(0, 0), gradePoint(100, 0), gradePoint(100, 50), gradePoint(tip.x, tip.y), gradePoint(100, 50 + 2 * h), gradePoint(100, 100), gradePoint(0, 100)]);
+    for (const rev of [false, true]) {
+      const cc = JSON.parse(JSON.stringify(c)); if (rev) cc.points.reverse();
+      const t = setup(['S', 'M', 'L'], cc);
+      const r = cutLineForSize(t.piece(), t.line, t.line.baseSizeId);
+      const sew = resolveContour(t.piece().sew, t.line, t.line.baseSizeId).pts;
+      expect(polyDist(r.pts, sew)).toBeCloseTo(10, 9); // was 0.436 (bevel A→B)
+      // cap: x = 310 (10 mm along the bisector), between the two offset lines
+      const a = Math.atan(h / 200); // half-angle of the spike
+      const yLo = tip.y + 10 * Math.tan(a) - 10 / Math.cos(a);
+      const k = r.cornerSpan[3];
+      const cap = r.pts.slice(Math.min(...k), Math.max(...k) + 1).sort((p, q) => p.y - q.y);
+      close(cap, [{ x: 310, y: yLo }, { x: 310, y: 2 * tip.y - yLo }]);
+      expect(Math.max(...r.pts.map(q => q.x))).toBeCloseTo(310, 9);
+      expect(selfCrossings(r.pts)).toBe(0);
+    }
+  });
+  it('within the miter limit the corner is still the plain miter (trapezoid unchanged)', () => {
+    const t = setup(['S', 'M', 'L'], trap());
+    expect(cutLineForSize(t.piece(), t.line, t.line.baseSizeId).pts.length).toBe(4);
+  });
+});
+
+describe('B7 — boxed:both at non-right corners', () => {
+  const s3 = Math.sqrt(3);
+  /** corner C=(100,0), incoming along +x (seam 15), outgoing at interior angle θ (seam 10) */
+  function wedge(theta: number) {
+    const th = theta * Math.PI / 180, tOut = { x: -Math.cos(th), y: Math.sin(th) };
+    const D = { x: 100 + 100 * tOut.x, y: 100 * tOut.y };
+    const t = setup(['S', 'M', 'L'], makeContour([gradePoint(0, 0), gradePoint(100, 0), gradePoint(D.x, D.y), gradePoint(0, D.y)]));
+    setSeam(t.doc, t.pid, t.ids[0], t.ids[1], 15);
+    setCorner(t.doc, t.pid, t.ids[1], { type: 'boxed', extend: 'both' });
+    return t;
+  }
+  const expected: Record<number, Vec[]> = {
+    // acute: incoming squares up at x=110, steps out along the outgoing strip's squared end
+    60: [{ x: 100, y: -15 }, { x: 110, y: -15 }, { x: 110, y: -20 / s3 }, { x: 107.5 + 5 * s3, y: 5 - 7.5 * s3 }, { x: 100 + 5 * s3, y: 5 }],
+    90: [{ x: 100, y: -15 }, { x: 110, y: -15 }, { x: 110, y: 0 }],
+    // obtuse: the outgoing strip's squared end stands proud of the incoming cut line
+    120: [{ x: 70 + 15 * s3, y: -15 }, { x: 92.5 + 5 * s3, y: -5 - 7.5 * s3 }, { x: 100 + 5 / s3, y: -15 }, { x: 110, y: -15 }, { x: 110, y: 10 * s3 - 20 }],
+  };
+  for (const th of [60, 90, 120]) {
+    it(`${th}°: exact corner, no self-crossing, every corner point kept on the cut line`, () => {
+      const t = wedge(th);
+      const cp = cornerPointsForSize(t.piece(), t.line, t.line.baseSizeId)[1].pts;
+      close(cp, expected[th]);
+      const r = cutLineForSize(t.piece(), t.line, t.line.baseSizeId);
+      expect(selfCrossings(r.pts)).toBe(0);
+      const [i0, i1] = r.cornerSpan[1];
+      close(r.pts.slice(i0, i1 + 1), expected[th]);
+      // squared: incoming extension ends perpendicular to the incoming edge, ≥ every allowance
+      const sew = resolveContour(t.piece().sew, t.line, t.line.baseSizeId).pts;
+      expect(polyDist(r.pts, sew)).toBeCloseTo(10, 9);
+    });
+  }
+  it('audit D2c pentagon, 6 sizes, Lock Grading: no self-crossing, identical stamped corner on every size', () => {
+    const doc = new Document(makeStyle('t', ['XS', 'S', 'M', 'L', 'XL', '2XL'], 'L'));
+    const line = doc.sizeLine(); const ids = line.sizes.map(s => s.id);
+    const g = (dx: number, dy: number) => Object.fromEntries(ids.map(i => [i, { dx, dy }]));
+    const c = makeContour([gradePoint(0, 0), gradePoint(240, -20, { grade: g(7, -3) }), gradePoint(260, 150, { grade: g(4, 9) }), gradePoint(120, 260, { grade: g(0, 6) }), gradePoint(-10, 180)]);
+    const p = makePiece('P', c, doc.style.activeSizeTableId); doc.transact('a', s => s.pieces.push(p));
+    setSeam(doc, p.id, c.points[1].id, c.points[2].id, 15);
+    setCorner(doc, p.id, c.points[2].id, { type: 'boxed', extend: 'both' });
+    const base = cornerPointsForSize(doc.piece(p.id), line, line.baseSizeId)[2];
+    // contains the audit's former self-intersection point as a proper (concave) corner vertex
+    expect(base.pts.length).toBe(5);
+    const lineDist = (q: Vec, a: Vec, b: Vec) => Math.abs(cross2(norm(sub(b, a)), sub(q, a)));
+    const [P1, P2, P3] = [{ x: 240, y: -20 }, { x: 260, y: 150 }, { x: 120, y: 260 }];
+    // the audit's former self-crossing (275.195, 150.779) is now a proper concave vertex on BOTH cut lines
+    expect(lineDist(base.pts[2], P1, P2)).toBeCloseTo(15, 9);
+    expect(lineDist(base.pts[2], P2, P3)).toBeCloseTo(10, 9);
+    close([base.pts[2]], [{ x: 275.195, y: 150.779 }], 3);
+    // squared ends: incoming runs on 10 mm (outgoing width) past the corner, outgoing runs back 15 mm
+    const tIn = norm(sub(P2, P1)), tOut = norm(sub(P3, P2));
+    expect(dot(sub(base.pts[3], P2), tIn)).toBeCloseTo(10, 9);
+    expect(lineDist(base.pts[3], P1, P2)).toBeCloseTo(15, 9);
+    expect(dot(sub(base.pts[1], P2), tOut)).toBeCloseTo(-15, 9);
+    expect(lineDist(base.pts[1], P2, P3)).toBeCloseTo(10, 9);
+    setLockGrading(doc, p.id, true);
+    // corner-local frame: origin = sew corner, x = incoming edge direction (rotates per size here)
+    const loc = (sid: string, pts: Vec[]) => {
+      const sp = resolveContour(doc.piece(p.id).sew, line, sid).anchorPos;
+      const t = norm(sub(sp[2], sp[1]));
+      return pts.map(q => { const v = sub(q, sp[2]); return { x: dot(v, t), y: dot(v, perp(t)) }; });
+    };
+    const baseLoc = loc(line.baseSizeId, base.pts);
+    for (const sid of ids) {
+      const cp = cornerPointsForSize(doc.piece(p.id), line, sid)[2];
+      close(loc(sid, cp.pts), baseLoc, 9);
+      const r = cutLineForSize(doc.piece(p.id), line, sid);
+      expect(selfCrossings(r.pts)).toBe(0);
+      const [i0, i1] = r.cornerSpan[2];
+      expect(i1 - i0 + 1).toBe(5); // was 4,4,4,3,4,4 across sizes
+      close(r.pts.slice(i0, i1 + 1), cp.pts, 9); // every stamped point is on the real cut line
+    }
   });
 });

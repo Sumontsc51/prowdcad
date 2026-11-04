@@ -27,7 +27,7 @@
 import { Vec, add, sub, mul, dot, cross, dist, norm, perp, reflect } from '../geom/vec';
 import {
   offsetOutward, offsetPolyline, isCCW, lineIntersect, polylineIntersections, closestPoint,
-  removeSelfIntersections, dedupe, pointInPolygon, distToPolygon, polylineLength, pointAtLength,
+  removeSelfIntersections, dedupe, pointInPolygon, distToPolygon, polylineLength, pointAtLength, signedArea,
 } from '../geom/poly';
 import type { Piece, SizeLine, SizeId, CornerSpec, Contour, Anchor, Id, Style, GradeInc } from '../model/types';
 import { resolveContour, spanPolyline, absoluteToIncremental, type ResolvedContour } from '../model/contour';
@@ -93,7 +93,15 @@ interface CornerCtx {
 
 interface CornerInfo { ctx: CornerCtx; raw: Vec[] }
 
-interface Built { r: ResolvedContour; offs: Vec[][]; corners: CornerInfo[] }
+interface Built {
+  r: ResolvedContour; offs: Vec[][]; corners: CornerInfo[];
+  /** live[k]: grade segment k has non-zero length (B10: zero-length segments are merged away) */
+  live: boolean[];
+  /** alias[k]: the corner that carries corner k's geometry (k itself unless segment k is zero-length) */
+  alias: number[];
+  /** effective corner spec of each real corner (a spec on a merged duplicate anchor carries over) */
+  spec: (CornerSpec | undefined)[];
+}
 
 const unit = (a: Vec, b: Vec): Vec => norm(sub(b, a));
 const toLocal = (v: Vec, t: Vec): Vec => ({ x: dot(v, t), y: dot(v, perp(t)) });
@@ -102,7 +110,17 @@ const fromLocal = (q: Vec, t: Vec): Vec => add(mul(t, q.x), mul(perp(t), q.y));
 function tangentAtEnd(p: Vec[]): Vec { for (let i = p.length - 1; i > 0; i--) { const t = unit(p[i - 1], p[i]); if (t.x || t.y) return t; } return { x: 0, y: 0 }; }
 function tangentAtStart(p: Vec[]): Vec { for (let i = 1; i < p.length; i++) { const t = unit(p[i - 1], p[i]); if (t.x || t.y) return t; } return { x: 0, y: 0 }; }
 
-/** Offset geometry of every grade segment + the raw (untrimmed, unlocked) corner geometry. */
+/**
+ * Offset geometry of every grade segment + the raw (untrimmed, unlocked) corner geometry.
+ *
+ * B10: a grade segment whose sew span has zero length (duplicate consecutive grade anchors) has no
+ * offset of its own. Its two end corners coincide, so they are merged into ONE corner between the
+ * nearest live segments on either side: the corner at the END of the zero-length run (the anchor
+ * whose outgoing segment is live) carries the geometry; corners in the run alias to it (their raw
+ * geometry is its first point) and the zero-length segment is skipped in assembly. A corner spec on
+ * a merged anchor carries over when the carrying anchor has none. The seam of a zero-length segment
+ * is irrelevant (it has no length).
+ */
 function build(piece: Piece, line: SizeLine, sizeId: SizeId): Built {
   const r = resolveContour(piece.sew, line, sizeId);
   const g = r.gradeIdx;
@@ -112,26 +130,53 @@ function build(piece: Piece, line: SizeLine, sizeId: SizeId): Built {
   const seams = segmentSeams(piece, r);
   const offs: Vec[][] = [];
   const sews: Vec[][] = [];
+  const live: boolean[] = [];
   for (let k = 0; k < G; k++) {
     const sew = dedupe(spanPolyline(r, g[k], g[(k + 1) % G]));
     sews.push(sew);
+    live.push(sew.length >= 2);
     if (sew.length < 2) { offs.push([{ ...r.anchorPos[g[k]] }, { ...r.anchorPos[g[k]] }]); continue; }
     offs.push(offsetPolyline(sew, { distances: seams[k] * sign, join: 'miter', closed: false, cleanup: true }));
   }
+  const nLive = live.filter(Boolean).length;
+  if (nLive < 2) for (let k = 0; k < G; k++) live[k] = true; // degenerate piece: keep the raw behaviour
+  const prevLive = (k: number) => { let j = (k - 1 + G) % G; while (!live[j]) j = (j - 1 + G) % G; return j; };
+  const nextLive = (k: number) => { let j = k; while (!live[j]) j = (j + 1) % G; return j; };
+  const alias = Array.from({ length: G }, (_, k) => nextLive(k));
+  const spec: (CornerSpec | undefined)[] = [];
+  for (let k = 0; k < G; k++) {
+    let s = piece.sew.points[g[k]].corner;
+    if (live[k]) for (let j = (k - 1 + G) % G; !s && !live[j] && j !== k; j = (j - 1 + G) % G) s = piece.sew.points[g[j]].corner;
+    spec.push(s);
+  }
   const corners: CornerInfo[] = [];
   for (let k = 0; k < G; k++) {
-    const kp = (k - 1 + G) % G;
-    const prev = offs[kp], next = offs[k];
+    const kp = prevLive(k), kn = nextLive(k);
+    const prev = offs[kp], next = offs[kn];
     let tIn = tangentAtEnd(prev), tOut = tangentAtStart(next);
     if (!tIn.x && !tIn.y) tIn = tangentAtEnd(sews[kp]);
-    if (!tOut.x && !tOut.y) tOut = tangentAtStart(sews[k]);
+    if (!tOut.x && !tOut.y) tOut = tangentAtStart(sews[kn]);
     const ctx: CornerCtx = {
       C: { ...r.anchorPos[g[k]] }, A: prev[prev.length - 1], B: next[0], tIn, tOut,
-      dPrev: seams[kp], dNext: seams[k], prev, next,
+      dPrev: seams[kp], dNext: seams[kn], prev, next,
     };
-    corners.push({ ctx, raw: cornerGeometry(piece.sew.points[g[k]].corner, ctx, piece, line, sizeId, g[k]) });
+    corners.push({ ctx, raw: live[k] ? cornerGeometry(spec[k], ctx, piece, line, sizeId, g[k]) : [] });
   }
-  return { r, offs, corners };
+  for (let k = 0; k < G; k++) if (!live[k]) corners[k].raw = [{ ...corners[alias[k]].raw[0] }];
+  return { r, offs, corners, live, alias, spec };
+}
+
+/** Corner geometry of every grade corner of a size after Lock Grading stamping and B10 aliasing. */
+function finalCornerPts(piece: Piece, line: SizeLine, sizeId: SizeId, b: Built): Vec[][] {
+  const G = b.corners.length;
+  let pts = b.corners.map(c => c.raw);
+  if (piece.lockGrading && sizeId !== line.baseSizeId) {
+    const base = build(piece, line, line.baseSizeId);
+    // stamp only corners that are real (not merged) in both sizes
+    pts = b.corners.map((c, k) => b.spec[k] && b.live[k] && base.live[k] && base.alias[k] === k ? lockedCornerPts(base.corners[k], c.ctx) : c.raw);
+  }
+  for (let k = 0; k < G; k++) if (!b.live[k]) pts[k] = [{ ...pts[b.alias[k]][0] }];
+  return pts;
 }
 
 function miterCorner(c: CornerCtx): Vec[] {
@@ -148,8 +193,25 @@ function miterCorner(c: CornerCtx): Vec[] {
   if (!M) return dist(c.A, c.B) < 1e-9 ? [c.A] : [c.A, c.B];
   const convex = dot(sub(M, c.A), c.tIn) > -1e-9 && dot(sub(c.B, M), c.tOut) > -1e-9;
   const lim = SEAM_MITER_LIMIT * Math.max(Math.abs(c.dPrev), Math.abs(c.dNext), 1e-9);
-  if (convex && dist(M, c.C) > lim) return [c.A, c.B];
+  if (convex && dist(M, c.C) > lim) return squareCapCorner(c, M);
   return [M];
+}
+
+/**
+ * Acute corner past the miter limit: a square cap perpendicular to the sew-corner → miter direction
+ * at the larger allowance R from the sew corner, between the two (straight-extended) offset lines.
+ * Every cap point is ≥ R from the sew corner, so the tip keeps the full allowance (was: the short
+ * bevel A→B, which leaves 0.25 mm on a 5° spike with a 10 mm seam).
+ */
+function squareCapCorner(c: CornerCtx, M: Vec): Vec[] {
+  const u = norm(sub(M, c.C));
+  const R = Math.max(Math.abs(c.dPrev), Math.abs(c.dNext));
+  const K = add(c.C, mul(u, R)), kd = perp(u);
+  let P0 = lineIntersect(c.A, c.tIn, K, kd) ?? c.A;
+  let P1 = lineIntersect(c.B, c.tOut, K, kd) ?? c.B;
+  if (dot(sub(P0, c.A), c.tIn) < 0) P0 = c.A;
+  if (dot(sub(c.B, P1), c.tOut) < 0) P1 = c.B;
+  return dist(P0, P1) < 1e-9 ? [P0] : [P0, P1];
 }
 
 /** true when the offsets diverge at the corner (outer corner w.r.t. the offset direction) */
@@ -173,10 +235,49 @@ function boxedCorner(c: CornerCtx, extend: 'prev' | 'next' | 'both'): Vec[] {
     if (s >= -1e-9) return miterCorner(c);
     return [c.A, add(c.B, mul(c.tOut, s)), c.B];
   }
-  // both: each allowance runs past the corner by the other's width, bridged straight
-  const P = add(c.A, mul(c.tIn, Math.abs(c.dNext)));
-  const Q = sub(c.B, mul(c.tOut, Math.abs(c.dPrev)));
-  return [c.A, P, Q, c.B];
+  return boxedBoth(c);
+}
+
+/**
+ * Boxed 'both' (B7): each seam allowance is a strip of its own width along its own edge, extended
+ * past the corner by the OTHER seam's width along its own direction and squared off (end
+ * perpendicular to its edge). The cut corner is the outer boundary of the union of the two strips,
+ * from the incoming cut line to the outgoing cut line. At 90° this is the rectangle corner
+ * A → P → B (P = A + tIn·dNext = B − tOut·dPrev). At other angles the squared ends cross the other
+ * strip instead of being bridged straight (the old P→Q bridge self-crossed at obtuse corners and the
+ * loop removal dropped the corner): acute corners get a squared step P → Y → Q, obtuse corners get
+ * the two squared ends standing proud of the other cut line. The chain never self-crosses, so Lock
+ * Grading stamps it unchanged.
+ */
+function boxedBoth(c: CornerCtx): Vec[] {
+  const dP = Math.abs(c.dPrev), dN = Math.abs(c.dNext);
+  if (dP < 1e-9 || dN < 1e-9) return miterCorner(c);
+  const nI = norm(sub(c.A, c.C)), nO = norm(sub(c.B, c.C));
+  const L = 3 * (dP + dN) + 1;
+  const at = (o: Vec, t: Vec, s: number, n: Vec, h: number) => add(add(o, mul(t, s)), mul(n, h));
+  // strips (inner side on the sew line); far ends well past any protrusion
+  const Sin = at(c.C, c.tIn, -L, nI, dP), Sout = at(c.C, c.tOut, L, nO, dN);
+  let U = [at(c.C, c.tIn, -L, nI, 0), at(c.C, c.tIn, dN, nI, 0), at(c.C, c.tIn, dN, nI, dP), Sin];
+  let V = [at(c.C, c.tOut, -dP, nO, 0), at(c.C, c.tOut, L, nO, 0), Sout, at(c.C, c.tOut, -dP, nO, dN)];
+  if (signedArea(U) < 0) U = U.reverse();
+  if (signedArea(V) < 0) V = V.reverse();
+  const inside = (q: Vec, poly: Vec[]) => pointInPolygon(q, poly) && distToPolygon(q, poly) > 1e-7;
+  if (inside(Sin, V) || inside(Sout, U)) return miterCorner(c);
+  // union boundary (positive winding of the two loops joined by a cancelling bridge)
+  const uni = removeSelfIntersections([...U, U[0], ...V, V[0]], true, 1);
+  const find = (q: Vec) => uni.findIndex(p => dist(p, q) <= 1e-7);
+  const i0 = find(Sin), i1 = find(Sout);
+  if (uni.length < 3 || i0 < 0 || i1 < 0) return miterCorner(c);
+  const n = uni.length;
+  const step = dot(sub(uni[(i0 + 1) % n], Sin), c.tIn) > 0 ? 1 : n - 1;
+  const chain: Vec[] = [];
+  for (let i = (i0 + step) % n, guard = 0; i !== i1 && guard < n; i = (i + step) % n, guard++) chain.push(uni[i]);
+  if (!chain.length) return miterCorner(c);
+  const out: Vec[] = [];
+  if (dot(sub(chain[0], c.A), c.tIn) > 1e-9) out.push({ ...c.A });
+  out.push(...chain);
+  if (dot(sub(c.B, chain[chain.length - 1]), c.tOut) > 1e-9) out.push({ ...c.B });
+  return dedupe(out, 1e-9);
 }
 
 function angledCorner(c: CornerCtx): Vec[] {
@@ -261,12 +362,8 @@ export function cutLineForSize(piece: Piece, line: SizeLine, sizeId: SizeId): Cu
   const b = build(piece, line, sizeId);
   const G = b.corners.length;
   const g = b.r.gradeIdx;
-  // Lock Grading: stamp base-size engineered corners onto this size
-  let cornerPts = b.corners.map(c => c.raw);
-  if (piece.lockGrading && sizeId !== line.baseSizeId) {
-    const base = build(piece, line, line.baseSizeId);
-    cornerPts = b.corners.map((c, k) => piece.sew.points[g[k]].corner ? lockedCornerPts(base.corners[k], c.ctx) : c.raw);
-  }
+  // Lock Grading: stamp base-size engineered corners onto this size (+ B10 merged-corner aliasing)
+  const cornerPts = finalCornerPts(piece, line, sizeId, b);
   // darts: splice the cut-line excursion (folded cap / cutting dart) over each open dart opening
   const skipSeg = dartExcursions(piece, line, sizeId, g, cornerPts, b.offs);
   // assemble
@@ -278,7 +375,7 @@ export function cutLineForSize(piece: Piece, line: SizeLine, sizeId: SizeId): Cu
   for (let k = 0; k < G; k++) {
     const cp = cornerPts[k], cn = cornerPts[(k + 1) % G];
     for (const p of cp) push(p, k);
-    if (skipSeg.has(k)) continue;
+    if (skipSeg.has(k) || !b.live[k]) continue;
     const seg = trimEnd(trimStart(b.offs[k], cp[cp.length - 1]), cn[0]);
     for (const p of seg) push(p, -1);
   }
@@ -353,11 +450,8 @@ export function computeCutLine(piece: Piece, line: SizeLine, sizeId: SizeId): Ve
 export function cornerPointsForSize(piece: Piece, line: SizeLine, sizeId: SizeId): { anchorId: Id; sew: Vec; pts: Vec[] }[] {
   const b = build(piece, line, sizeId);
   const g = b.r.gradeIdx;
-  const base = piece.lockGrading && sizeId !== line.baseSizeId ? build(piece, line, line.baseSizeId) : null;
-  return b.corners.map((c, k) => ({
-    anchorId: piece.sew.points[g[k]].id, sew: c.ctx.C,
-    pts: base && piece.sew.points[g[k]].corner ? lockedCornerPts(base.corners[k], c.ctx) : c.raw,
-  }));
+  const pts = finalCornerPts(piece, line, sizeId, b);
+  return b.corners.map((c, k) => ({ anchorId: piece.sew.points[g[k]].id, sew: c.ctx.C, pts: pts[k] }));
 }
 
 // ───────────────────────────── commands ─────────────────────────────

@@ -14,7 +14,7 @@
  */
 import type { Anchor, Contour, Id, Notch, NotchPlacement, NotchType, Piece, SizeId, SizeLine, GradeInc } from '../model/types';
 import type { Document } from '../model/doc';
-import { resolveContour, absoluteToIncremental, withoutZeroSegments, type ResolvedContour } from '../model/contour';
+import { resolveContour, absoluteToIncremental, type ResolvedContour } from '../model/contour';
 import { computeCutLine } from './seam';
 import { newId, makeAnchor } from '../model/factory';
 import { Vec, add, sub, mul, norm, rotate, rad, deg, angleBetween, lerp, dot, len } from '../geom/vec';
@@ -48,7 +48,7 @@ export function resolveFresh(doc: Document, piece: Piece, contourId: Id, sizeId?
 export function cutFresh(doc: Document, piece: Piece, sizeId?: SizeId): Vec[] {
   const line = doc.sizeLine(piece);
   const sid = sizeId ?? line.baseSizeId;
-  return piece.cutMode === 'manual' && piece.manualCut ? resolveContour(piece.manualCut, line, sid).pts : computeCutLine(withoutZeroSegments(piece, line, sid), line, sid);
+  return piece.cutMode === 'manual' && piece.manualCut ? resolveContour(piece.manualCut, line, sid).pts : computeCutLine(piece, line, sid);
 }
 
 function sizeIds(line: SizeLine): SizeId[] { return line.sizes.map(s => s.id); }

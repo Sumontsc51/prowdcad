@@ -7,7 +7,7 @@
  * and it makes every kernel op trivially undoable.
  */
 import type { Style, Piece, SizeId, SizeLine, SizeTable, Id, Contour, Anchor } from './types';
-import { resolveContour, absoluteOffset, halfOpenedPiece, withoutZeroSegments, type ResolvedContour } from './contour';
+import { resolveContour, absoluteOffset, halfOpenedPiece, type ResolvedContour } from './contour';
 import { computeCutLine } from '../ops/seam';
 import { makeStyle } from './factory';
 import type { Vec } from '../geom/vec';
@@ -129,7 +129,7 @@ export class Document {
     const key = `${pieceId}|${sid}|${piece === this.piece(pieceId) ? 'a' : 'o'}`;
     const hit = this.cache.get(key); if (hit) return hit;
     const sew = resolveContour(piece.sew, line, sid);
-    const cut = piece.cutMode === 'manual' && piece.manualCut ? resolveContour(piece.manualCut, line, sid).pts : computeCutLine(withoutZeroSegments(piece, line, sid), line, sid);
+    const cut = piece.cutMode === 'manual' && piece.manualCut ? resolveContour(piece.manualCut, line, sid).pts : computeCutLine(piece, line, sid);
     const internals = piece.internals.map(c => resolveContour(c, line, sid));
     const ga = this.offsetVec(piece.grain.gradeA, line, sid), gb = this.offsetVec(piece.grain.gradeB, line, sid);
     const rp: ResolvedPiece = { pieceId, sizeId: sid, sew, cut, internals, grain: { a: { x: piece.grain.a.x + ga.x, y: piece.grain.a.y + ga.y }, b: { x: piece.grain.b.x + gb.x, y: piece.grain.b.y + gb.y } } };
