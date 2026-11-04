@@ -38,6 +38,16 @@ export interface Settings {
   roundRadiusMm: number;
   panels: { pieces: boolean; sizes: boolean; inspector: boolean; grading: boolean };
   guides: Guide[];
+  /** cut-line corner markers (cutLineForSize corner indices) on selected pieces */
+  showCutCorners: boolean;
+  /** rule names next to grade points */
+  showRuleNames: boolean;
+  /** reference blocks (dashed) */
+  showReference: boolean;
+  /** Select tool: dragging a point blends the run to the neighbouring grade points (moveProportional) */
+  proportionalDrag: boolean;
+  /** last-used dialog values, keyed by dialog id */
+  last: Record<string, Record<string, string | number | boolean>>;
 }
 
 const KEY = 'prowdcad.web.settings';
@@ -49,6 +59,8 @@ export const DEFAULT_SETTINGS: Settings = {
   gridMm: 10, nudgeMm: 1, polygonSides: 6, roundRadiusMm: 20,
   panels: { pieces: true, sizes: true, inspector: true, grading: false },
   guides: [],
+  showCutCorners: false, showRuleNames: false, showReference: true, proportionalDrag: false,
+  last: {},
 };
 
 function load(): Settings {
@@ -57,7 +69,7 @@ function load(): Settings {
   if (!raw) return base;
   try {
     const s = JSON.parse(raw) as Partial<Settings>;
-    return { ...base, ...s, panels: { ...base.panels, ...(s.panels ?? {}) }, hotkeys: { ...(s.hotkeys ?? {}) } };
+    return { ...base, ...s, panels: { ...base.panels, ...(s.panels ?? {}) }, hotkeys: { ...(s.hotkeys ?? {}) }, last: { ...(s.last ?? {}) } };
   } catch { return base; }
 }
 

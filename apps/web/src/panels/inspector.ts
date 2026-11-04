@@ -10,6 +10,7 @@ import { lengthInput, numberInput, textInput, selectInput, checkbox, row, unitTa
 import { resolveFor, contourById, layoutOf, setAbsGradeRaw } from '../geometry';
 import { ops } from '../ops-bridge';
 import { reportError } from '../commands';
+import { cornerGallery } from '../actions/seam-notch';
 import { fmt, unitLabel } from '../units-ui';
 import { spanLength, gradeSegment, totalLength } from '@prowdcad/kernel';
 
@@ -37,7 +38,9 @@ function pieceInspector(app: App, host: HTMLElement, id: string) {
     row('Description', textInput(p.description ?? '', v => set('Piece description', pc => { pc.description = v; }))),
     row('Seam default', lengthInput(p.seamDefault, v => set('Seam default', pc => { pc.seamDefault = v; }), { min: 0 }), unitTag()),
     row('No seam', checkbox(p.noSeam, v => set('No seam', pc => { pc.noSeam = v; }))),
-    row('Locked', checkbox(p.locked, v => set('Lock piece', pc => { pc.locked = v; }))),
+    row('Lock grading', checkbox(p.lockGrading, v => { try { ops.setLockGrading(app.doc, id, v); } catch (err) { reportError(err, 'Lock grading'); } })),
+    row('Cut line', h('span.val', {}, p.cutMode === 'manual' ? 'manual' : 'auto')),
+    row('Locked', checkbox(p.locked, v => { try { ops.lockPiece(app.doc, id, v); } catch (err) { reportError(err, 'Lock'); } })),
     row('Position X', lengthInput(L.x, v => set('Move piece', pc => { pc.layout = { ...layoutOf(pc), x: v }; })), unitTag()),
     row('Position Y', lengthInput(L.y, v => set('Move piece', pc => { pc.layout = { ...layoutOf(pc), y: v }; })), unitTag()),
     row('Rotation', numberInput(L.angleDeg, v => set('Rotate piece', pc => { pc.layout = { ...layoutOf(pc), angleDeg: v }; })), h('span.u', {}, '°')),
@@ -79,7 +82,7 @@ function anchorInspector(app: App, host: HTMLElement, pa: NonNullable<ReturnType
     if (isBase) set(`Point ${axis.toUpperCase()}`, an => { an[axis] = v; });
     else {
       const target = { ...pos, [axis]: v };
-      try { ops.dragGrade(app.doc, ref, active, target); } catch (err) { reportError(err, 'Grade'); }
+      try { ops.dragGrade(app.doc, ref.pieceId, ref.anchorId, active, target); } catch (err) { reportError(err, 'Grade'); }
     }
   };
   host.append(
@@ -133,21 +136,13 @@ function anchorInspector(app: App, host: HTMLElement, pa: NonNullable<ReturnType
     if (k >= 0) { const [s0, s1] = gradeSegment(rc, k); segInfo = `${fmt(spanLength(rc, s0, s1))} ${unitLabel()}`; }
     host.append(h('div.insp-title', {}, 'Seam'),
       row('Segment length', h('span.val', {}, segInfo)),
-      row('Seam after', lengthInput(a.seamAfter ?? piece.seamDefault, v => set('Seam allowance', an => { an.seamAfter = v; }), { min: 0, readOnly: ro }), unitTag(),
+      row('Seam after', lengthInput(a.seamAfter ?? piece.seamDefault, v => { try { ops.reseamSegment(app.doc, ref.pieceId, ref.anchorId, v); } catch (err) { reportError(err, 'Seam'); } }, { readOnly: ro, title: 'Seam of the segment leaving this point (negative = inward)' }), unitTag(),
         a.seamAfter != null ? h('button.mini', { title: 'Use piece default', onclick: () => set('Seam allowance', an => { delete an.seamAfter; }) }, '↺') : ''),
-      row('Corner', selectInput(a.corner?.type ?? 'miter', [['miter', 'Miter'], ['boxed', 'Boxed (square)'], ['turnback', 'Turn-back (hem)'], ['angled', 'Angled (bevel)'], ['manual', 'Manual']], v => {
-        try { ops.setCornerType(app.doc, ref, v as CornerType); }
-        catch (err) {
-          // store the spec on the model even before ops/seam lands (the cut line honours it once wired)
-          set('Corner type', an => { an.corner = { ...(an.corner ?? {}), type: v as CornerType }; });
-          reportError(err, 'Corner type');
-        }
-      })),
-      row('Start point', checkbox(!!a.flags.startPoint, v => tx(app, 'Start point', () => {
-        const pc = app.doc.piece(ref.pieceId);
-        for (const q of pc.sew.points) delete q.flags.startPoint;
-        if (v) pc.sew.points.find(q => q.id === ref.anchorId)!.flags.startPoint = true;
-      }))),
+      row('Corner', h('button.btn.sm', { title: 'Corner type gallery', onclick: (e: Event) => { const b = (e.target as HTMLElement).getBoundingClientRect(); void cornerGallery(app, ref, { x: b.left, y: b.bottom + 4 }); } },
+        a.corner ? `${a.corner.type}${a.corner.extend ? ' · ' + a.corner.extend : ''}` : 'miter'),
+        a.corner ? h('button.mini', { title: 'Revert to miter', onclick: () => { try { ops.revertCorner(app.doc, ref.pieceId, ref.anchorId); } catch (err) { reportError(err, 'Revert corner'); } } }, '↺') : ''),
+      row('Start point', checkbox(!!a.flags.startPoint, v => { if (v) { try { ops.setStartPoint(app.doc, ref.pieceId, ref.anchorId); } catch (err) { reportError(err, 'Start point'); } } })),
+      ...(a.ruleId ? [row('Rule', h('span.val', {}, (() => { try { return ops.ruleName(app.doc, ref.pieceId, ref.anchorId); } catch { return a.ruleId!; } })()))] : []),
     );
   }
 }

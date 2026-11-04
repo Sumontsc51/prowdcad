@@ -156,6 +156,9 @@ export class Canvas {
     svg.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
     svg.addEventListener('wheel', e => {
       e.preventDefault();
+      let used = false;
+      this.safe(() => { used = !!this.app.tool?.wheel?.(this.app, e); });
+      if (used) { this.app.invalidate('canvas', 'status'); return; }
       const s = this.screenOf(e);
       if (e.ctrlKey || !e.shiftKey) {
         const k = e.deltaMode === 1 ? 0.05 : 0.0015;

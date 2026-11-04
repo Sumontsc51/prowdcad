@@ -19,6 +19,7 @@ import { ops, type AnchorRef } from '../ops-bridge';
 import { toast } from '../ui/toast';
 import { fmt, unitLabel } from '../units-ui';
 import { fs } from './common';
+import { settings } from '../settings';
 
 type Drag =
   | { type: 'anchors'; startW: Vec; grab: Vec; refs: AnchorRef[]; base: Map<string, Vec>; moved: boolean; sizeId: string; grade: boolean }
@@ -43,7 +44,7 @@ export const selectTool: Tool = {
   id: 'select', title: 'Select / Edit', group: 'select', hotkey: 'V', icon: ICON.select, cursor: 'default',
   deactivate(app) { if (drag) { drag = null; app.cancelPreview(); } },
   busy: () => !!drag,
-  hint: () => 'Click/drag anchors & pieces · Shift add/constrain · Alt-click corner⇄smooth · Alt-drag handle = break · drag empty = marquee',
+  hint: () => (settings.proportionalDrag ? '[Proportional drag ON] ' : '') + 'Click/drag anchors & pieces · Shift add/constrain · Alt-click corner⇄smooth · Alt-drag handle = break · drag empty = marquee',
 
   down(app, p) {
     const e = p.e;
@@ -197,7 +198,16 @@ export const selectTool: Tool = {
         // commit through the grading op (kernel) — preview is discarded first
         const targets = d.refs.map(r => { const pc = app.preview.get(r.pieceId); const res = pc ? resolveFor(app.doc, pc, d.sizeId) : null; const c = pc ? contourById(pc, r.contourId) : null; const i = c ? c.points.findIndex(q => q.id === r.anchorId) : -1; const ci = pc && c ? (c === pc.sew ? -1 : pc.internals.indexOf(c)) : -1; return res && i >= 0 ? { r, t: (ci < 0 ? res.sew : res.internals[ci]).anchorPos[i] } : null; });
         app.cancelPreview();
-        for (const t of targets) if (t) ops.dragGrade(app.doc, t.r, d.sizeId, t.t);
+        app.doc.transact('Drag grade', () => { for (const t of targets) if (t) ops.dragGrade(app.doc, t.r.pieceId, t.r.anchorId, d.sizeId, t.t); });
+        return;
+      }
+      if (settings.proportionalDrag && d.refs.length === 1) {
+        // Move Proportional: blend the run between the neighbouring grade points (kernel op)
+        const r0 = d.refs[0];
+        const pc = app.preview.get(r0.pieceId); const c = pc ? contourById(pc, r0.contourId) : null; const a = c?.points.find(q => q.id === r0.anchorId);
+        const b = d.base.get(r0.anchorId);
+        app.cancelPreview();
+        if (a && b) ops.moveProportional(app.doc, r0.pieceId, r0.anchorId, { x: a.x - b.x, y: a.y - b.y });
         return;
       }
       app.commitPreview(d.refs.length > 1 ? 'Move points' : 'Move point');
@@ -226,7 +236,7 @@ export function nudge(app: App, dx: number, dy: number) {
         const qi = q.contour === q.piece.sew ? -1 : q.piece.internals.indexOf(q.contour);
         const qp = (qi < 0 ? rs.sew : rs.internals[qi]).anchorPos[q.index];
         const dl = dirToLocal(q.piece, { x: dx, y: dy });
-        ops.dragGrade(app.doc, r, app.activeSize, { x: qp.x + dl.x, y: qp.y + dl.y });
+        ops.dragGrade(app.doc, r.pieceId, r.anchorId, app.activeSize, { x: qp.x + dl.x, y: qp.y + dl.y });
       }
       return;
     }

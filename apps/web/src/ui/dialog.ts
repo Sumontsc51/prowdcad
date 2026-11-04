@@ -9,6 +9,7 @@
  */
 import { h } from './dom';
 import { fmt, parseLen, parseNum, unitLabel } from '../units-ui';
+import { settings, saveSettings } from '../settings';
 
 export type FieldDef =
   | { kind: 'length'; key: string; label: string; value: number; min?: number; hint?: string }
@@ -165,4 +166,46 @@ export async function alertDialog(title: string, message: string): Promise<void>
 export async function promptLength(title: string, label: string, value: number): Promise<number | null> {
   const r = await showDialog({ title, fields: [{ kind: 'length', key: 'v', label, value }] });
   return r ? (r.v as number) : null;
+}
+
+/**
+ * showDialog that remembers the last OK'd values per dialog id (settings.last). Field defaults
+ * passed in are overridden by the remembered values of the same type.
+ */
+export async function rememberedDialog(id: string, opt: DialogOptions): Promise<DialogValues | null> {
+  const last = settings.last[id] ?? {};
+  for (const f of opt.fields ?? []) {
+    if (f.key.startsWith('_')) continue; // '_'-prefixed fields are context values: never remembered
+    const v = last[f.key];
+    if (v !== undefined && typeof v === typeof f.value) {
+      if ((f.kind === 'select' || f.kind === 'radio') && !f.options.some(o => o.value === v)) continue;
+      (f as { value: unknown }).value = v;
+    }
+  }
+  const r = await showDialog(opt);
+  if (r && !r.__button) {
+    const keep: Record<string, string | number | boolean> = {};
+    for (const [k, v] of Object.entries(r)) if (!k.startsWith('_')) keep[k] = v;
+    settings.last[id] = keep; saveSettings();
+  }
+  return r;
+}
+
+/** Small anchored popover (corner gallery etc.). Closes on outside click / Esc. */
+export function popover(x: number, y: number, content: HTMLElement, onClose?: () => void): () => void {
+  const el = h('div.popover', {}, content);
+  document.body.append(el);
+  const r = el.getBoundingClientRect();
+  el.style.left = Math.max(4, Math.min(x, window.innerWidth - r.width - 4)) + 'px';
+  el.style.top = Math.max(4, Math.min(y, window.innerHeight - r.height - 4)) + 'px';
+  openCount++;
+  let closed = false;
+  const close = () => {
+    if (closed) return; closed = true; openCount--;
+    el.remove(); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key, true); onClose?.();
+  };
+  const outside = (e: Event) => { if (!el.contains(e.target as Node)) close(); };
+  const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+  setTimeout(() => { document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', key, true); }, 0);
+  return close;
 }

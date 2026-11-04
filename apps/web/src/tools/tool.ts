@@ -47,6 +47,10 @@ export interface Tool {
   hint?(app: App): string;
   /** true while a multi-click construction is in progress (blocks guide grabbing etc.) */
   busy?(app: App): boolean;
+  /** mouse wheel; return true when consumed (suppresses wheel zoom) */
+  wheel?(app: App, e: WheelEvent): boolean;
+  /** not shown in the palette (transient pick sessions) */
+  hidden?: boolean;
 }
 
 export const ICON = {
@@ -63,4 +67,11 @@ export const ICON = {
   notch: '<path d="M3 8h18M12 8v8"/><path d="M9 16h6"/>',
   drill: '<circle cx="12" cy="12" r="5"/><path d="M12 4v16M4 12h16"/>',
   dart: '<path d="M3 6h7l2 12 2-12h7"/>',
+  seam: '<path d="M4 18V6h16v12z"/><path d="M7 15V9h10v6z" stroke-dasharray="2 2"/>',
+  text: '<path d="M5 6h14M12 6v13M9 19h6"/>',
+  walk: '<path d="M3 17h9"/><path d="M12 17l7-9" stroke-dasharray="3 2"/><circle cx="12" cy="17" r="1.6"/><path d="M5 8l3-3 3 3"/>',
+  smooth: '<path d="M3 16l3-5 2 3 3-6 2 4 3-3" opacity=".45"/><path d="M3 17c4-9 10-9 18-2"/>',
+  slash: '<path d="M4 20L20 4"/><path d="M14 4h6v6"/><rect x="3" y="6" width="9" height="12" opacity=".5"/>',
+  trace: '<path d="M4 18L9 6l6 4 5-4"/><circle cx="4" cy="18" r="1.4"/><circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="10" r="1.4"/>',
+  pick: '<path d="M12 3v6M12 15v6M3 12h6M15 12h6"/><circle cx="12" cy="12" r="2"/>',
 };

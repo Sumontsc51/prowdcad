@@ -12,6 +12,8 @@ import { h, clear } from '../ui/dom';
 import { lengthInput } from './widgets';
 import { unitLabel } from '../units-ui';
 import { resolveFor, toWorld } from '../geometry';
+import { ops } from '../ops-bridge';
+import { getCommand, isEnabled, runCommand, effectiveHotkey, reportError } from '../commands';
 
 export function renderGrading(app: App, host: HTMLElement) {
   clear(host);
@@ -24,6 +26,14 @@ export function renderGrading(app: App, host: HTMLElement) {
   }
   const track = h('button.btn.sm' + (app.pointTracking ? '.on' : ''), { title: 'Point Tracking: ←/→ previous/next grade point, ↑/↓ size (Alt+T)', onclick: () => { app.pointTracking = !app.pointTracking; app.invalidate('panels'); } }, app.pointTracking ? '◉ Tracking' : '○ Tracking');
   bar.append(mode, track, h('span.dim', {}, unitLabel()));
+  // power ops (command registry — same as Grade menu / hotkeys)
+  const tools = h('div.gr-tools');
+  for (const [id, label, tip] of TOOLBAR) {
+    if (id === '|') { tools.append(h('span.gr-sep')); continue; }
+    const c = getCommand(id); if (!c) continue;
+    tools.append(h('button.btn.sm' + (isEnabled(c) ? '' : '.disabled'), { title: `${tip}${effectiveHotkey(id) ? ` (${effectiveHotkey(id).split(',')[0]})` : ''}`, onclick: () => void runCommand(id) }, label));
+  }
+  bar.append(tools);
   host.append(bar);
   if (!piece) { host.append(h('div.empty', {}, 'Select a piece to see its grading.')); return; }
   const live = app.doc.piece(piece.id);
@@ -68,20 +78,21 @@ export function renderGrading(app: App, host: HTMLElement) {
 
 function writeCell(app: App, pieceId: string, anchorId: string, sizeId: SizeId, axis: 'dx' | 'dy', v: number) {
   const line = app.sizeLine();
-  app.doc.transact(`Grade ${axis}`, () => {
-    const a = app.doc.piece(pieceId).sew.points.find(q => q.id === anchorId)!;
-    if (app.gradeAbsolute) {
-      const abs = incrementalToAbsolute(a.grade ?? {}, line);
-      const cur: GradeInc = abs[sizeId] ?? { dx: 0, dy: 0 };
-      abs[sizeId] = { ...cur, [axis]: v };
-      a.grade = absoluteToIncremental(abs, line);
-    } else {
-      const inc = absoluteToIncremental(incrementalToAbsolute(a.grade ?? {}, line), line);
-      inc[sizeId] = { ...(inc[sizeId] ?? { dx: 0, dy: 0 }), [axis]: v };
-      a.grade = inc;
-    }
-  });
+  const a = app.doc.piece(pieceId).sew.points.find(q => q.id === anchorId)!;
+  const view = app.gradeAbsolute ? 'absolute' : 'incremental';
+  const curMap = app.gradeAbsolute ? incrementalToAbsolute(a.grade ?? {}, line) : absoluteToIncremental(incrementalToAbsolute(a.grade ?? {}, line), line);
+  const cur: GradeInc = curMap[sizeId] ?? { dx: 0, dy: 0 };
+  try { ops.setGrade(app.doc, pieceId, anchorId, sizeId, { ...cur, [axis]: v }, { view }); } catch (err) { reportError(err, 'Grade'); }
 }
+
+const TOOLBAR: [string, string, string][] = [
+  ['grade.copy', 'Copy', 'Copy grade of selected points'], ['grade.paste', 'Paste', 'Paste grade'], ['grade.pasteX', 'X', 'Paste X only'], ['grade.pasteY', 'Y', 'Paste Y only'],
+  ['grade.smartPaste', 'Smart', 'Smart paste (flips X across the mirror axis)'], ['grade.pasteAround', 'Around', 'Paste around a run'], ['|', '', ''],
+  ['grade.flipX', '⇋X', 'Flip X'], ['grade.flipY', '⇅Y', 'Flip Y'], ['grade.equalX', '=X', 'Equal X'], ['grade.equalY', '=Y', 'Equal Y'],
+  ['grade.deleteX', '∅X', 'Delete X'], ['grade.deleteY', '∅Y', 'Delete Y'], ['grade.zero', '∅', 'Delete all grading'], ['|', '', ''],
+  ['grade.stackPoint', 'Stack', 'Stack nest at a point'], ['grade.stackLine', 'Stack line', 'Stack along line'], ['grade.angle', '∠', 'Angle grading (auto-aim)'],
+  ['grade.parallel', '∥', 'Grade parallel'], ['grade.proportional', 'Prop', 'Grade proportionally'], ['|', '', ''], ['grade.rules', 'Rules', 'Rule library'], ['grade.movement', 'MTM', 'Movement programs'],
+];
 
 /** Point-tracking key handling; returns true when consumed. */
 export function trackingKey(app: App, e: KeyboardEvent, centreOn: (x: number, y: number) => void): boolean {

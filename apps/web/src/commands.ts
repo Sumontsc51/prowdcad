@@ -30,7 +30,7 @@ export interface Command {
   hint?: string;
 }
 
-export const MENUS = ['File', 'Edit', 'Piece', 'Point', 'Segment', 'Seam', 'Dart', 'Grade', 'Measure', 'View', 'Help'] as const;
+export const MENUS = ['File', 'Edit', 'Piece', 'Point', 'Segment', 'Seam', 'Notch', 'Cut', 'Dart', 'Grade', 'Measure', 'View', 'Help'] as const;
 
 const registry = new Map<string, Command>();
 let seq = 0;
@@ -89,6 +89,7 @@ export async function runCommand(id: string): Promise<void> {
 }
 
 export function reportError(err: unknown, what: string) {
+  if ((err as Error)?.name === 'Cancelled') return;
   if (err instanceof NotWiredError) { toast(`${what}: not wired yet (${err.module})`, 'warn', 3500); return; }
   console.error(err);
   toast(`${what}: ${(err as Error)?.message ?? String(err)}`, 'error', 4500);

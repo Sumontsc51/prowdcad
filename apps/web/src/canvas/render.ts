@@ -4,10 +4,11 @@
  *   #world   — world space (mm, y-up via the viewport matrix), non-scaling strokes: sew/cut/internals/notches/drills
  *   #overlay — screen space: guides, labels, grain arrows, anchors, handles and their hit targets (topmost), tool overlays
  */
-import { isCCW, type Piece, type Vec, type SizeId } from '@prowdcad/kernel';
+import { type Piece, type Vec, type SizeId, type ResolvedNotch } from '@prowdcad/kernel';
+import { ops } from '../ops-bridge';
 import type { App } from '../app';
 import { settings } from '../settings';
-import { resolveFor, toWorld, layoutOf, sizeColor, outwardNormal, sizeFor } from '../geometry';
+import { resolveFor, toWorld, layoutOf, sizeColor, sizeFor } from '../geometry';
 import { MM_PER_UNIT } from '@prowdcad/kernel';
 
 const ACCENT = '#4ea1ff';
@@ -34,6 +35,21 @@ export function niceStep(minWorld: number, base = 1): number {
   const p = Math.pow(10, Math.floor(Math.log10(Math.max(x, 1e-9))));
   for (const m of [1, 2, 5, 10]) if (m * p >= x) return m * p * base;
   return 10 * p * base;
+}
+
+// resolved notches cache (notches are re-derived per revision / piece / size)
+const notchCache = new Map<string, ResolvedNotch[]>();
+let notchRev = -1;
+function notchesFor(app: App, p: Piece, sid: SizeId): ResolvedNotch[] {
+  if (!p.notches.length) return [];
+  const live = app.doc.style.pieces.includes(p);
+  if (notchRev !== app.doc.revision()) { notchCache.clear(); notchRev = app.doc.revision(); }
+  const key = `${p.id}|${sid}`;
+  if (live) { const c = notchCache.get(key); if (c) return c; }
+  let res: ResolvedNotch[] = [];
+  try { res = ops.resolveNotches(app.doc, p, sid); } catch (err) { console.warn('notches', err); }
+  if (live) notchCache.set(key, res);
+  return res;
 }
 
 // ───────────── grid ─────────────
@@ -103,30 +119,41 @@ export function renderWorld(app: App): string {
       const dash = c.style === 'dashed' || c.type === 'fold' || c.type === 'mirror' ? ' stroke-dasharray="6 4"' : c.style === 'dotted' ? ' stroke-dasharray="1.5 3"' : '';
       g.push(`<path d="${pathD(ic.pts, ic.closed)}" class="ns" stroke="${isSel ? '#2f6fb8' : '#30343c'}" stroke-width="1.1" fill="none"${dash}/>`);
     });
-    // notches — 'anchor' placement only until ops/notches is wired
-    if (p.notches.length) {
-      const ccw = isCCW(r.sew.pts);
-      let d = '';
-      for (const n of p.notches) {
-        if (n.placement.kind !== 'anchor' || n.contourId !== p.sew.id) continue;
-        const ai = p.sew.points.findIndex(a => a.id === (n.placement as { anchorId: string }).anchorId);
-        if (ai < 0) continue;
-        const pos = r.sew.anchorPos[ai];
-        const nrm = outwardNormal(r.sew.pts, r.sew.anchorIndex[ai], ccw);
-        const seam = p.noSeam ? 0 : (p.sew.points[ai].seamAfter ?? p.seamDefault);
-        const outer = { x: pos.x + nrm.x * seam, y: pos.y + nrm.y * seam };
-        const inner = { x: outer.x - nrm.x * n.depth, y: outer.y - nrm.y * n.depth };
-        d += `M${f(outer.x)} ${f(outer.y)}L${f(inner.x)} ${f(inner.y)}`;
-        if (n.type === 'T') { const t = { x: -nrm.y * n.width / 2, y: nrm.x * n.width / 2 }; d += `M${f(inner.x - t.x)} ${f(inner.y - t.y)}L${f(inner.x + t.x)} ${f(inner.y + t.y)}`; }
-      }
-      if (d) g.push(`<path d="${d}" class="ns" stroke="#c0392b" stroke-width="1.4" fill="none"/>`);
+    // notches (live objects, resolved through ops/notches on every displayed size)
+    const notchSizes = app.nested ? [active, ...app.doc.sizesOf(p).filter(x => x !== active && !app.nestedHidden.has(x))] : [active];
+    for (const sid of notchSizes) {
+      const rn = notchesFor(app, p, sid);
+      if (!rn.length) continue;
+      let d = '', dd = '';
+      for (const n of rn) for (const pl of n.cutGeometry) { const seg = pathD(pl, false); if (n.mode === 'draw') dd += seg; else d += seg; }
+      const col = sid === active ? '#c0392b' : sizeColor(line, sid);
+      if (d) g.push(`<path d="${d}" class="ns" stroke="${col}" stroke-width="${sid === active ? 1.4 : 0.9}" fill="none"/>`);
+      if (dd) g.push(`<path d="${dd}" class="ns" stroke="${col}" stroke-width="1" stroke-dasharray="2 2" fill="none"/>`);
     }
-    // drills
+    // drills / buttons (graded positions)
     for (const dr of p.drills) {
+      let c: Vec = dr; try { c = ops.drillPosition(app.doc, p, dr, active); } catch { /* fallback base */ }
       const rr = Math.max(dr.diameter / 2, 0.5);
-      g.push(`<circle cx="${f(dr.x)}" cy="${f(dr.y)}" r="${f(rr)}" class="ns" stroke="#8e44ad" stroke-width="1" fill="none"/>` +
-        `<path d="M${f(dr.x - rr * 1.6)} ${f(dr.y)}H${f(dr.x + rr * 1.6)}M${f(dr.x)} ${f(dr.y - rr * 1.6)}V${f(dr.y + rr * 1.6)}" class="ns" stroke="#8e44ad" stroke-width="0.8"/>`);
+      const col = dr.kind === 'button' ? '#16a085' : dr.kind === 'buttonhole' ? '#d35400' : '#8e44ad';
+      const dash = dr.mode === 'draw' ? ' stroke-dasharray="1.5 1.5"' : '';
+      if (dr.kind === 'buttonhole') g.push(`<path d="M${f(c.x - rr)} ${f(c.y)}H${f(c.x + rr)}" class="ns" stroke="${col}" stroke-width="1.4"${dash}/>`);
+      else g.push(`<circle cx="${f(c.x)}" cy="${f(c.y)}" r="${f(rr)}" class="ns" stroke="${col}" stroke-width="1" fill="none"${dash}/>` +
+        `<path d="M${f(c.x - rr * 1.6)} ${f(c.y)}H${f(c.x + rr * 1.6)}M${f(c.x)} ${f(c.y - rr * 1.6)}V${f(c.y + rr * 1.6)}" class="ns" stroke="${col}" stroke-width="0.8"/>`);
     }
+    // artwork (true size, y-up world → flip the image upright)
+    for (const aw of p.artwork) {
+      let c: Vec = aw; try { c = ops.gradedPosition(app.doc, p.id, aw.id, active); } catch { /* base */ }
+      g.push(`<g transform="translate(${f(c.x)} ${f(c.y)}) rotate(${f(aw.angleDeg)}) scale(${f(aw.scaleX)} ${f(-aw.scaleY)})" opacity="0.85"><image href="${esc(aw.src)}" x="${f(-aw.width / 2)}" y="${f(-aw.height / 2)}" width="${f(aw.width)}" height="${f(aw.height)}" preserveAspectRatio="none"/><rect x="${f(-aw.width / 2)}" y="${f(-aw.height / 2)}" width="${f(aw.width)}" height="${f(aw.height)}" class="ns" fill="none" stroke="#9b59b6" stroke-width="0.8" stroke-dasharray="3 2"/></g>`);
+    }
+    // reference block
+    if (settings.showReference && p.reference) {
+      try {
+        const ref = ops.showReference(app.doc, p.id, active);
+        if (ref) g.push(`<path d="${pathD(ref.sew, true)}${ref.internals.map(q => pathD(q, false)).join('')}" class="ns" stroke="#e67e22" stroke-width="0.9" stroke-dasharray="5 3" fill="none" opacity="0.8"/>`);
+      } catch { /* ignore */ }
+    }
+    // half piece axis
+    if (p.half) g.push(`<path d="M${f(p.half.a.x)} ${f(p.half.a.y)}L${f(p.half.b.x)} ${f(p.half.b.y)}" class="ns" stroke="#16a085" stroke-width="1.2" stroke-dasharray="8 3 2 3"/>`);
     g.push('</g>');
     out.push(g.join(''));
   }
@@ -168,6 +195,34 @@ export function renderOverlay(app: App): string {
     out.push(`<text x="${fs(cen.x)}" y="${fs(cen.y)}" class="plabel${isSel ? ' sel' : ''}" text-anchor="middle">${esc(p.name)}</text>` +
       `<text x="${fs(cen.x)}" y="${fs(cen.y + 13)}" class="psub" text-anchor="middle">${esc(sizeName)}${p.locked ? ' · locked' : ''}</text>`);
 
+    // text annotations (screen space so glyphs stay upright)
+    for (const t of p.texts) {
+      let tp: Vec = t; try { tp = ops.textPosition(app.doc, p, t, active); } catch { /* base */ }
+      const sp = v.toScreen(toWorld(p, tp));
+      const px = Math.max(6, t.size * v.scale);
+      const ang = -(t.angleDeg + layoutOf(p).angleDeg);
+      out.push(`<text x="${fs(sp.x)}" y="${fs(sp.y)}" font-size="${fs(px)}" fill="#2c3e50" text-anchor="middle" dominant-baseline="middle" transform="rotate(${fs(ang)} ${fs(sp.x)} ${fs(sp.y)})">${esc(t.text)}</text>`);
+    }
+    // cut-line corner indices (where cut-line notches / corners land)
+    if (settings.showCutCorners && isSel && !p.noSeam) {
+      try {
+        const cl = ops.cutLineForSize(p, line, active);
+        cl.cornerIndex.forEach((ci, k) => {
+          const q = cl.pts[ci]; if (!q) return;
+          const s2 = v.toScreen(toWorld(p, q));
+          out.push(`<circle cx="${fs(s2.x)}" cy="${fs(s2.y)}" r="3" fill="#fff" stroke="#3a78c2" stroke-width="1.2"/><text x="${fs(s2.x + 5)}" y="${fs(s2.y - 5)}" class="cc-idx">${k + 1}·${ci}</text>`);
+        });
+      } catch { /* ignore */ }
+    }
+    if (settings.showRuleNames && (isSel || settings.showAllAnchors)) {
+      p.sew.points.forEach((a, ai) => {
+        if (!a.ruleId) return;
+        let nm = ''; try { nm = ops.ruleName(app.doc, p.id, a.id); } catch { return; }
+        if (!nm) return;
+        const s2 = v.toScreen(toWorld(p, r.sew.anchorPos[ai]));
+        out.push(`<text x="${fs(s2.x + 7)}" y="${fs(s2.y + 12)}" class="rule-name">${esc(nm)}</text>`);
+      });
+    }
     const showAnchors = isSel || settings.showAllAnchors;
     if (!showAnchors) continue;
     const sizesToDraw: SizeId[] = app.nested && isSel

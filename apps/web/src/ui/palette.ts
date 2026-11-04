@@ -18,7 +18,7 @@ export function mountPalette(app: App, host: HTMLElement) {
   document.addEventListener('pointerdown', e => { if (fly && !(e.target as Element).closest?.('.flyout,.tool-btn')) closeFly(); });
   const render = () => {
     clear(host);
-    const visible = app.tools.filter(t => !settings.hiddenTools.includes(t.id));
+    const visible = app.tools.filter(t => !t.hidden && !settings.hiddenTools.includes(t.id));
     const groups: string[] = [];
     for (const t of visible) if (!groups.includes(t.group)) groups.push(t.group);
     for (const g of groups) {
