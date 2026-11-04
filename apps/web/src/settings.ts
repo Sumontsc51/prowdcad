@@ -1,0 +1,66 @@
+/**
+ * Persisted UI settings (per browser). Every localStorage access is guarded: private windows,
+ * blocked storage and quota errors must never break the app.
+ */
+import type { Unit } from '@prowdcad/kernel';
+
+export const store = {
+  get(key: string): string | null {
+    try { return window.localStorage.getItem(key); } catch { return null; }
+  },
+  set(key: string, value: string): boolean {
+    try { window.localStorage.setItem(key, value); return true; } catch { return false; }
+  },
+  del(key: string): void {
+    try { window.localStorage.removeItem(key); } catch { /* ignore */ }
+  },
+};
+
+export interface Guide { axis: 'x' | 'y'; pos: number }
+
+export interface Settings {
+  unit: Unit;
+  /** inch fraction denominator; 0 = decimal inches */
+  fracDen: number;
+  /** command id → key chord override (e.g. "Ctrl+Shift+S"). Empty string = unbound. */
+  hotkeys: Record<string, string>;
+  hiddenTools: string[];
+  showGrid: boolean;
+  showRulers: boolean;
+  showCut: boolean;
+  showAllAnchors: boolean;
+  snapGrid: boolean;
+  snapGuides: boolean;
+  snapPoints: boolean;
+  gridMm: number;
+  nudgeMm: number;
+  polygonSides: number;
+  roundRadiusMm: number;
+  panels: { pieces: boolean; sizes: boolean; inspector: boolean; grading: boolean };
+  guides: Guide[];
+}
+
+const KEY = 'prowdcad.web.settings';
+
+export const DEFAULT_SETTINGS: Settings = {
+  unit: 'mm', fracDen: 16, hotkeys: {}, hiddenTools: [],
+  showGrid: true, showRulers: true, showCut: true, showAllAnchors: true,
+  snapGrid: false, snapGuides: true, snapPoints: true,
+  gridMm: 10, nudgeMm: 1, polygonSides: 6, roundRadiusMm: 20,
+  panels: { pieces: true, sizes: true, inspector: true, grading: false },
+  guides: [],
+};
+
+function load(): Settings {
+  const raw = store.get(KEY);
+  const base = structuredClone(DEFAULT_SETTINGS);
+  if (!raw) return base;
+  try {
+    const s = JSON.parse(raw) as Partial<Settings>;
+    return { ...base, ...s, panels: { ...base.panels, ...(s.panels ?? {}) }, hotkeys: { ...(s.hotkeys ?? {}) } };
+  } catch { return base; }
+}
+
+export const settings: Settings = load();
+
+export function saveSettings(): void { store.set(KEY, JSON.stringify(settings)); }

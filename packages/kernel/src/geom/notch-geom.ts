@@ -14,7 +14,7 @@ export function cumPoly(r: ResolvedContour): Vec[] {
 export function contourLength(r: ResolvedContour): number { return r.cum[r.cum.length - 1] ?? 0; }
 
 /** Arc length (from pts[0]) of anchor i. */
-export function anchorS(r: ResolvedContour, i: number): number { return r.cum[r.anchorIndex[i]] ?? 0; }
+export function anchorArcS(r: ResolvedContour, i: number): number { return r.cum[r.anchorIndex[i]] ?? 0; }
 
 /** Normalise an arc length: wrap for closed contours, clamp for open ones. */
 export function wrapS(r: ResolvedContour, s: number): number {
