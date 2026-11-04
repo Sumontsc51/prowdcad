@@ -23,6 +23,8 @@ export class Canvas {
   private pan: { sx: number; sy: number; id: number } | null = null;
   private guideDrag: { index: number | null; axis: 'x' | 'y'; id: number; fromRuler: boolean; el: Element } | null = null;
   private ro: ResizeObserver;
+  /** called on right-click when the active tool does not handle it */
+  onContext: ((p: Ptr) => void) | null = null;
 
   constructor(public app: App, host: HTMLElement) {
     this.host = host;
@@ -148,7 +150,8 @@ export class Canvas {
     svg.addEventListener('pointerleave', () => { this.app.cursorWorld = null; this.app.invalidate('status'); });
     svg.addEventListener('contextmenu', e => {
       e.preventDefault();
-      this.safe(() => this.app.tool?.context?.(this.app, this.ptr(e)));
+      const p = this.ptr(e);
+      this.safe(() => { if (!this.app.tool?.context?.(this.app, p)) this.onContext?.(p); });
     });
     svg.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
     svg.addEventListener('wheel', e => {

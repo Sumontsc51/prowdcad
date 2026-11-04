@@ -103,18 +103,20 @@ export function effectiveHotkey(id: string): string {
 }
 
 export function normalizeChord(chord: string): string {
-  const parts = chord.split('+').map(p => p.trim()).filter(Boolean);
-  if (!parts.length) return '';
-  let key = parts.pop()!;
-  // "Ctrl++" style
-  if (chord.trim().endsWith('++')) key = '+';
-  const mods = new Set(parts.map(p => p.toLowerCase()));
+  let c = chord.trim();
+  if (!c) return '';
+  let key: string;
+  // a literal "+" key: "+", "Ctrl++"
+  if (c === '+' || c.endsWith('++')) { key = '+'; c = c.slice(0, -1).replace(/\+$/, ''); }
+  else { const parts = c.split('+'); key = parts.pop()!.trim(); c = parts.join('+'); }
+  const mods = new Set(c.split('+').map(p => p.trim().toLowerCase()).filter(Boolean));
   const m: string[] = [];
   if (mods.has('ctrl') || mods.has('cmd') || mods.has('meta') || mods.has('control')) m.push('Ctrl');
   if (mods.has('alt') || mods.has('option')) m.push('Alt');
   if (mods.has('shift')) m.push('Shift');
-  const k = key.length === 1 ? key.toUpperCase() : key[0].toUpperCase() + key.slice(1);
-  return [...m, k === 'Del' ? 'Delete' : k === 'Esc' ? 'Escape' : k === ' ' ? 'Space' : k].join('+');
+  let k = key.length === 1 ? key.toUpperCase() : key[0].toUpperCase() + key.slice(1);
+  if (k === 'Del') k = 'Delete'; else if (k === 'Esc') k = 'Escape'; else if (k === ' ') k = 'Space';
+  return [...m, k].join('+');
 }
 
 export function chordFromEvent(e: KeyboardEvent): string {
@@ -127,6 +129,7 @@ export function chordFromEvent(e: KeyboardEvent): string {
   if (e.shiftKey && (isLetter || key.length > 1)) m.push('Shift');
   if (key === ' ') key = 'Space';
   if (key.length === 1) key = key.toUpperCase();
+  if (key === 'Esc') key = 'Escape';
   // with Alt on macOS e.key may be a special glyph; fall back to code
   if (e.altKey && /^Key[A-Z]$/.test(e.code)) key = e.code.slice(3);
   if (/^Digit\d$/.test(e.code) && (e.ctrlKey || e.metaKey || e.altKey)) key = e.code.slice(5);

@@ -3,8 +3,8 @@
  * Toggle Incremental ⇄ Absolute. Writes go through doc.transact using the kernel's
  * absoluteToIncremental / incrementalToAbsolute (incremental convention: inc[size_0] = 0).
  *
- * Point Tracking (toggle, or Ctrl+T): ←/→ step to previous/next grade point (selection follows,
- * canvas centres on it), ↑/↓ step the active size.
+ * Point Tracking (toggle, or Alt+T): ←/→ step to previous/next grade point (selection follows,
+ * canvas centres on it), ↑/↓ step the active size. Toggle: Alt+T.
  */
 import { absoluteToIncremental, incrementalToAbsolute, type GradeInc, type SizeId } from '@prowdcad/kernel';
 import type { App } from '../app';
@@ -22,7 +22,7 @@ export function renderGrading(app: App, host: HTMLElement) {
   for (const [abs, label] of [[false, 'Incremental'], [true, 'Absolute']] as const) {
     mode.append(h('button' + (app.gradeAbsolute === abs ? '.on' : ''), { onclick: () => { app.gradeAbsolute = abs; app.invalidate('panels'); } }, label));
   }
-  const track = h('button.btn.sm' + (app.pointTracking ? '.on' : ''), { title: 'Point Tracking: ←/→ previous/next grade point, ↑/↓ size (Ctrl+T)', onclick: () => { app.pointTracking = !app.pointTracking; app.invalidate('panels'); } }, app.pointTracking ? '◉ Tracking' : '○ Tracking');
+  const track = h('button.btn.sm' + (app.pointTracking ? '.on' : ''), { title: 'Point Tracking: ←/→ previous/next grade point, ↑/↓ size (Alt+T)', onclick: () => { app.pointTracking = !app.pointTracking; app.invalidate('panels'); } }, app.pointTracking ? '◉ Tracking' : '○ Tracking');
   bar.append(mode, track, h('span.dim', {}, unitLabel()));
   host.append(bar);
   if (!piece) { host.append(h('div.empty', {}, 'Select a piece to see its grading.')); return; }

@@ -138,8 +138,9 @@ export const selectTool: Tool = {
     }
     if (drag.type === 'handle') {
       drag.moved = true;
-      const pc = app.beginPreview(drag.ref.pieceId);
-      const c = contourById(pc, drag.ref.contourId)!; const idx = c.points.findIndex(q => q.id === drag!.ref.anchorId);
+      const dref = drag.ref;
+      const pc = app.beginPreview(dref.pieceId);
+      const c = contourById(pc, dref.contourId)!; const idx = c.points.findIndex(q => q.id === dref.anchorId);
       const a = c.points[idx];
       const res = resolveFor(app.doc, pc, app.sizeOf(pc));
       const ci = c === pc.sew ? -1 : pc.internals.indexOf(c);

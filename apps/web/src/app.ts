@@ -52,7 +52,6 @@ export class App {
         this.sel = { pieces: [], anchors: [] };
         this.activeSize = this.doc.sizeTable().axis1.baseSizeId;
         this.nestedHidden.clear(); this.hiddenPieces.clear(); this.preview.clear();
-        if (this.doc.style.units) { settings.unit = this.doc.style.units; }
         this.savedRev = this.doc.revision();
       }
       this.pruneSelection();
