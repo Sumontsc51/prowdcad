@@ -3,7 +3,7 @@
  * Builds the layout, mounts canvas / palette / menus / panels / status bar, registers commands,
  * routes keyboard input (tool → point tracking → command registry) and starts auto-backup.
  *
- * Integrator: wire kernel ops here with `wireOps({...})` from './ops-bridge'.
+ * Kernel ops are wired into the ops bridge by wireKernel() (kernel-wiring.ts) before anything runs.
  */
 import './styles.css';
 import { makePiece, makeStyle, rectangleContour } from '@prowdcad/kernel';
@@ -21,6 +21,11 @@ import { startAutoBackup, offerRecovery } from './actions/file';
 import { isTyping } from './ui/dom';
 import { dialogOpen } from './ui/dialog';
 import { selectTool } from './tools/select';
+import { wireKernel } from './kernel-wiring';
+import { cornerGallery } from './actions/seam-notch';
+import { downloadSink } from './actions/file';
+
+wireKernel();
 
 const root = document.getElementById('app')!;
 root.innerHTML = `
@@ -64,10 +69,12 @@ canvas.onContext = p => {
   const e = p.e as MouseEvent;
   if (h.kind === 'anchor' && h.pieceId) {
     if (!app.isAnchorSelected({ anchorId: h.anchorId! })) app.selectAnchor({ pieceId: h.pieceId, contourId: h.contourId!, anchorId: h.anchorId! });
-    openContextMenu(e.clientX, e.clientY, ['point.toggleSmooth', 'point.toggleKind', 'point.resetHandles', 'point.insertMid', 'point.lock', '-', 'seam.segment', 'point.notchHere', 'dart.add', '-', 'grade.copy', 'grade.paste', 'grade.zero', '-', 'edit.delete']);
+    const isSewGrade = (() => { const q = app.resolveRef({ pieceId: h.pieceId!, contourId: h.contourId!, anchorId: h.anchorId! }); return !!q && q.contour === q.piece.sew && q.anchor.kind === 'grade'; })();
+    openContextMenu(e.clientX, e.clientY, ['point.toggleSmooth', 'point.toggleKind', 'point.breakHandle', 'point.joinHandle', 'point.lock', 'point.startPoint', '-', 'point.moveXY', 'point.moveAlong', 'point.setAngle', 'point.round', '-', 'seam.segment', 'seam.trimCorner', 'notch.atPoint', 'notch.corner', 'dart.add', '-', 'grade.copy', 'grade.paste', 'grade.smartPaste', 'grade.zero', '-', 'point.delete'],
+      isSewGrade ? [{ label: 'Corner type…', run: () => void cornerGallery(app, { pieceId: h.pieceId!, contourId: h.contourId!, anchorId: h.anchorId! }, { x: e.clientX, y: e.clientY }) }] : []);
   } else if (h.kind === 'piece' && h.pieceId) {
     if (!app.sel.pieces.includes(h.pieceId)) app.selectPiece(h.pieceId);
-    openContextMenu(e.clientX, e.clientY, ['piece.rename', 'piece.lock', 'edit.duplicate', '-', 'piece.rotate90', 'piece.rotate', 'piece.mirror', 'piece.grain', '-', 'seam.piece', 'seam.noSeam', '-', 'measure.piece', 'view.fitSel', '-', 'piece.delete']);
+    openContextMenu(e.clientX, e.clientY, ['piece.rename', 'piece.lock', 'edit.duplicate', 'piece.saveAsNew', '-', 'piece.rotate90', 'piece.rotate', 'piece.grain', 'piece.rotateToGrain', '-', 'seam.piece', 'seam.reseam', 'seam.lockGrading', 'seam.noSeam', '-', 'piece.scale', 'notch.grid', 'measure.piece', 'view.fitSel', '-', 'piece.delete']);
   } else {
     openContextMenu(e.clientX, e.clientY, ['view.fit', 'view.zoom100', '-', 'view.grid', 'view.rulers', 'grade.nested', '-', 'edit.selectAll', 'file.new']);
   }
@@ -115,4 +122,4 @@ async function start() {
 void start();
 
 // expose for debugging / integrator console access
-(window as unknown as { prowd: unknown }).prowd = { app, canvas };
+(window as unknown as { prowd: unknown }).prowd = { app, canvas, downloadSink };

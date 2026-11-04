@@ -74,6 +74,13 @@ export function registerPointSeg(app: App) {
     const id = ops.addPointOnSegment(app.doc, run.pieceId, run.from, r.how === 'pct' ? { pct: r.pct as number, kind: r.kind as 'grade', grading: r.grading as 'auto', name: String(r._name) || undefined } : { distance: r.d as number, from: r.how as 'prev' | 'next', kind: r.kind as 'grade', grading: r.grading as 'auto', name: String(r._name) || undefined });
     app.selectAnchor({ pieceId: run.pieceId, contourId: run.contourId, anchorId: id });
   } });
+  registerCommand({ id: 'point.insertMid', title: 'Insert point after (mid-span)', menu: 'Point', group: 1, hotkey: 'Alt+I', enabled: hasAnchor, run: () => {
+    const pa = app.primaryAnchor()!; const n = pa.contour.points.length;
+    if (!pa.contour.closed && pa.index === n - 1) throw new Error('Last point of an open line has no following span');
+    const next = pa.contour.points[(pa.index + 1) % n];
+    const [id] = ops.addSplineSupportPoints(app.doc, pa.piece.id, pa.anchor.id, next.id, 1);
+    if (id) app.selectAnchor({ pieceId: pa.piece.id, contourId: pa.contour.id, anchorId: id });
+  } });
   registerCommand({ id: 'point.addAt', title: 'Add point at click', menu: 'Point', group: 1, hotkey: 'Shift+Alt+A', run: async () => {
     const r = await must(app, { kind: 'contour', prompt: 'Click on a line to insert a point (Ctrl = curve point)' }, 'contour');
     const id = ops.addPointAt(app.doc, r.hit.piece.id, r.hit.contour.id, toLocal(r.hit.piece, r.w), r.e.ctrlKey ? 'curve' : 'grade');
