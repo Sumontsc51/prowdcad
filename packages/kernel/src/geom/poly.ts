@@ -167,21 +167,44 @@ export interface OffsetOptions {
  * Variable-distance polygon/polyline offset.
  * Positive distance offsets to the LEFT of travel direction (x→y CCW convention: for a CCW
  * polygon, "left" is INSIDE; for CW, left is OUTSIDE). Use `offsetOutward` for winding-agnostic use.
- * Each edge is shifted by its own distance; corners are joined by miter (intersection of the two
- * shifted edge lines), falling back to bevel beyond miterLimit. A zero-distance edge is kept in place.
+ *
+ * Each edge is shifted by its own distance. Joins:
+ *  - corner where the shifted edges cross (concave w.r.t. the offset direction): their intersection.
+ *    On a closed polygon, when that would make a shifted edge run backwards (the edge is consumed by
+ *    the offset: collapse, narrow slot, curve tighter than the distance) the join goes through the
+ *    original vertex instead (Clipper style), so the winding cleanup below sees the true coverage.
+ *  - corner where they diverge (convex): miter within `miterLimit`·d; beyond it (and for 'bevel')
+ *    a square cap perpendicular to the bisector at distance d from the corner; 'round' = polygon
+ *    circumscribed about the radius-d arc. Every join stays ≥ d from the corner.
+ *  - antiparallel edges (180° spike / zero-width slit): square cap past the tip.
+ * A zero-distance edge is kept in place; zero-length edges are dropped first.
+ * Closed + cleanup: the result is the boundary of the region with positive winding (relative to the
+ * input orientation) of the raw offset path — an offset that vanishes returns [] (area 0).
  */
 export function offsetPolyline(p: Polyline, opt: OffsetOptions): Polyline {
   const closed = opt.closed ?? true;
   const join = opt.join ?? 'miter';
   const miterLimit = opt.miterLimit ?? 4;
-  const pts = dedupe(p);
-  if (closed && pts.length > 1 && dist(pts[0], pts[pts.length - 1]) < 1e-6) pts.pop();
+  const cleanup = opt.cleanup ?? true;
+  const raw = dedupe(p);
+  // keep per-segment distances aligned with the deduped edges
+  const srcDists: number[] = typeof opt.distances === 'number' ? [] : opt.distances;
+  const pts: Polyline = [];
+  const dsrc: number[] = [];
+  {
+    const segN0 = closed ? p.length : p.length - 1;
+    const dAt = (i: number) => (typeof opt.distances === 'number' ? opt.distances : (srcDists[Math.min(i, segN0 - 1)] ?? srcDists[srcDists.length - 1] ?? 0));
+    for (let i = 0; i < p.length; i++) {
+      if (pts.length && dist(pts[pts.length - 1], p[i]) <= 1e-6) { dsrc[dsrc.length - 1] = dAt(i); continue; }
+      pts.push(p[i]); dsrc.push(dAt(i));
+    }
+    void raw;
+  }
+  if (closed && pts.length > 1 && dist(pts[0], pts[pts.length - 1]) < 1e-6) { pts.pop(); dsrc.pop(); }
   const n = pts.length;
   if (n < 2) return pts.slice();
   const segCount = closed ? n : n - 1;
-  const dists: number[] = typeof opt.distances === 'number'
-    ? new Array(segCount).fill(opt.distances)
-    : opt.distances.slice(0, segCount);
+  const dists: number[] = dsrc.slice(0, segCount);
   while (dists.length < segCount) dists.push(dists[dists.length - 1] ?? 0);
 
   // shifted edges
@@ -193,52 +216,95 @@ export function offsetPolyline(p: Polyline, opt: OffsetOptions): Polyline {
     const off = mul(nrm, dists[i]);
     edges.push({ a: add(a, off), b: add(b, off), d, dist: dists[i] });
   }
+  type E = typeof edges[0];
 
-  const out: Polyline = [];
-  const joinCorner = (e0: typeof edges[0], e1: typeof edges[0], corner: Vec) => {
+  /** square cap: perpendicular to the outward bisector at distance R from the corner */
+  const squareCap = (e0: E, e1: E, corner: Vec): Vec[] => {
+    const n0 = mul(perp(e0.d), Math.sign(e0.dist) || 1), n1 = mul(perp(e1.d), Math.sign(e1.dist) || 1);
+    let bis = norm(add(n0, n1));
+    if (len(bis) < 1e-9) bis = e0.d;
+    const R = Math.max(Math.abs(e0.dist), Math.abs(e1.dist));
+    const C = add(corner, mul(bis, R));
+    const cd = perp(bis);
+    let P0 = lineIntersect(e0.a, e0.d, C, cd) ?? e0.b;
+    let P1 = lineIntersect(e1.a, e1.d, C, cd) ?? e1.a;
+    if (dot(sub(P0, e0.b), e0.d) < 0) P0 = e0.b;
+    if (dot(sub(P1, e1.a), e1.d) > 0) P1 = e1.a;
+    return dist(P0, P1) < 1e-12 ? [P0] : [P0, P1];
+  };
+  const roundJoin = (e0: E, e1: E, corner: Vec, turn: number): Vec[] => {
+    const R = Math.max(Math.abs(e0.dist), Math.abs(e1.dist), 1e-9);
+    const a0 = Math.atan2(e0.b.y - corner.y, e0.b.x - corner.x);
+    const a1 = Math.atan2(e1.a.y - corner.y, e1.a.x - corner.x);
+    let sweep = a1 - a0; if (turn < 0 && sweep > 0) sweep -= 2 * Math.PI; if (turn > 0 && sweep < 0) sweep += 2 * Math.PI;
+    const steps = Math.max(1, Math.ceil(Math.abs(sweep) / (Math.PI / 12)));
+    const st = sweep / steps;
+    // circumscribed polygon: every chord is tangent to the radius-R arc (never closer than R)
+    const Rc = R / Math.cos(st / 2);
+    const out: Vec[] = [{ x: corner.x + Math.cos(a0) * R, y: corner.y + Math.sin(a0) * R }];
+    for (let k = 1; k <= steps; k++) { const a = a0 + st * (k - 0.5); out.push({ x: corner.x + Math.cos(a) * Rc, y: corner.y + Math.sin(a) * Rc }); }
+    out.push({ x: corner.x + Math.cos(a1) * R, y: corner.y + Math.sin(a1) * R });
+    return out;
+  };
+
+  /** join geometry at a corner; `concave` = the shifted edges cross (miter point = their intersection) */
+  const joinCorner = (e0: E, e1: E, corner: Vec): { pts: Vec[]; concave: boolean } => {
     const turn = cross(e0.d, e1.d);
     const x = lineIntersect(e0.a, e0.d, e1.a, e1.d);
     if (!x) { // parallel
-      out.push(e0.b);
-      if (dist(e0.b, e1.a) > 1e-9) out.push(e1.a);
-      return;
+      if (dot(e0.d, e1.d) < 0 && (Math.abs(e0.dist) > 1e-12 || Math.abs(e1.dist) > 1e-12)) return { pts: squareCap(e0, e1, corner), concave: false }; // 180° spike
+      return { pts: dist(e0.b, e1.a) > 1e-9 ? [e0.b, e1.a] : [e0.b], concave: false };
     }
     const dAvg = Math.max(Math.abs(e0.dist), Math.abs(e1.dist), 1e-9);
     const miterLen = dist(x, corner);
-    // If the shifted edges still cross each other (t0 ≤ 1) the corner is concave w.r.t. the
-    // offset direction → the intersection is the only correct join. Otherwise they diverge
-    // (convex) → miter if inside the limit, else bevel/round.
+    // shifted edges still cross (t0 ≤ 1) → concave w.r.t. the offset direction → the intersection
     const t0 = dot(sub(x, e0.a), e0.d) / Math.max(dist(e0.a, e0.b), 1e-12);
     const concave = t0 <= 1 + 1e-9;
-    if (concave || (join === 'miter' && miterLen <= miterLimit * dAvg)) { out.push(x); return; }
-    if (join === 'round') {
-      const a0 = Math.atan2(e0.b.y - corner.y, e0.b.x - corner.x);
-      let a1 = Math.atan2(e1.a.y - corner.y, e1.a.x - corner.x);
-      let sweep = a1 - a0; if (turn < 0 && sweep > 0) sweep -= 2 * Math.PI; if (turn > 0 && sweep < 0) sweep += 2 * Math.PI;
-      const steps = Math.max(2, Math.ceil(Math.abs(sweep) / (Math.PI / 12)));
-      for (let k = 0; k <= steps; k++) { const a = a0 + sweep * (k / steps); out.push({ x: corner.x + Math.cos(a) * dAvg, y: corner.y + Math.sin(a) * dAvg }); }
-      return;
-    }
-    out.push(e0.b); out.push(e1.a); // bevel
+    if (concave) return { pts: [x], concave: true };
+    if (join === 'miter' && miterLen <= miterLimit * dAvg) return { pts: [x], concave: false };
+    if (join === 'round') return { pts: roundJoin(e0, e1, corner, turn), concave: false };
+    return { pts: squareCap(e0, e1, corner), concave: false };
   };
 
+  const out: Polyline = [];
   if (closed) {
+    const J = Array.from({ length: segCount }, (_, i) => joinCorner(edges[(i - 1 + segCount) % segCount], edges[i], pts[i]));
+    // a shifted edge that would run backwards between its two miter points is consumed: route the
+    // joins at both its ends through the original vertex so the winding cleanup can remove it
+    const via = new Array(segCount).fill(false);
+    if (cleanup) {
+      for (let i = 0; i < segCount; i++) {
+        const s0 = J[i].pts[J[i].pts.length - 1], s1 = J[(i + 1) % segCount].pts[0];
+        const L = dist(edges[i].a, edges[i].b);
+        if ((J[i].concave || J[(i + 1) % segCount].concave) && dot(sub(s1, s0), edges[i].d) < -1e-9 * Math.max(1, L)) {
+          if (J[i].concave) via[i] = true;
+          if (J[(i + 1) % segCount].concave) via[(i + 1) % segCount] = true;
+        }
+      }
+    }
     for (let i = 0; i < segCount; i++) {
       const e0 = edges[(i - 1 + segCount) % segCount], e1 = edges[i];
-      joinCorner(e0, e1, pts[i]);
+      if (via[i]) { out.push(e0.b, pts[i], e1.a); continue; }
+      out.push(...J[i].pts);
     }
   } else {
     out.push(edges[0].a);
-    for (let i = 1; i < segCount; i++) joinCorner(edges[i - 1], edges[i], pts[i]);
+    for (let i = 1; i < segCount; i++) out.push(...joinCorner(edges[i - 1], edges[i], pts[i]).pts);
     out.push(edges[segCount - 1].b);
   }
   const res = dedupe(out);
-  return (opt.cleanup ?? true) ? removeSelfIntersections(res, closed) : res;
+  if (!cleanup) return res;
+  if (closed) {
+    const orient = signedArea(pts) >= 0 ? 1 : -1;
+    return removeSelfIntersections(res, true, orient);
+  }
+  return removeSelfIntersections(res, false);
 }
 
 /**
  * Winding-agnostic outward offset of a closed polygon: positive = grow, negative = shrink.
- * Per-segment distances allowed. Output keeps the input winding.
+ * Per-segment distances allowed. Output keeps the input winding. A shrink that consumes the whole
+ * polygon returns [] (area 0).
  */
 export function offsetOutward(poly: Polyline, distances: number[] | number, join: JoinType = 'miter', miterLimit = 4): Polyline {
   const ccw = isCCW(poly);
@@ -249,28 +315,43 @@ export function offsetOutward(poly: Polyline, distances: number[] | number, join
 }
 
 /**
- * Remove self-intersection loops (inverted loops produced by inward offsets). Keeps the
- * largest-area loop that preserves the original orientation. Robust enough for seam
- * allowances; not a general polygon clipper.
+ * Clean up a self-intersecting path.
+ *
+ * Closed: the boundary of the region whose winding number w.r.t. the path has the sign of
+ * `orientation` (default: the sign of the path's signed area), i.e. the positive-fill union used
+ * for polygon offsets. Crossings AND collinear overlaps are handled (overlapping antiparallel
+ * edges cancel). Holes are dropped and of several disjoint pieces the largest is returned; the
+ * result keeps the requested orientation and starts at the first surviving input vertex. Returns
+ * [] when nothing has positive winding. A simple path with the requested orientation is returned
+ * unchanged.
+ *
+ * Open: removes loops between crossings (keeps the longer-area loop with the original orientation).
  */
-export function removeSelfIntersections(p: Polyline, closed: boolean): Polyline {
+export function removeSelfIntersections(p: Polyline, closed: boolean, orientation?: 1 | -1): Polyline {
+  if (!closed) return removeLoopsOpen(p);
+  const pts = dedupe(p, 1e-9);
+  while (pts.length > 1 && dist(pts[0], pts[pts.length - 1]) <= 1e-9) pts.pop();
+  if (pts.length < 3) return orientation === undefined ? pts : [];
+  const orient = orientation ?? (signedArea(pts) >= 0 ? 1 : -1);
+  return windingCleanup(pts, orient);
+}
+
+function removeLoopsOpen(p: Polyline): Polyline {
   if (p.length < 4) return p;
   let pts = p.slice();
   let guard = 0;
   while (guard++ < 200) {
     const n = pts.length;
     let found: { i: number; j: number; pt: Vec } | null = null;
-    const segs = closed ? n : n - 1;
+    const segs = n - 1;
     outer: for (let i = 0; i < segs; i++) {
       for (let j = i + 2; j < segs; j++) {
-        if (closed && i === 0 && j === segs - 1) continue;
-        const r = segIntersect(pts[i], pts[(i + 1) % n], pts[j], pts[(j + 1) % n]);
+        const r = segIntersect(pts[i], pts[i + 1], pts[j], pts[j + 1]);
         if (r && r.t > 1e-9 && r.t < 1 - 1e-9 && r.u > 1e-9 && r.u < 1 - 1e-9) { found = { i, j, pt: r.pt }; break outer; }
       }
     }
     if (!found) break;
     const { i, j, pt } = found;
-    // two candidate loops: A = pts[i+1..j] + X ; B = X + pts[j+1..] + pts[..i]
     const loopA: Polyline = [pt, ...pts.slice(i + 1, j + 1)];
     const loopB: Polyline = [pt, ...pts.slice(j + 1), ...pts.slice(0, i + 1)];
     const orig = signedArea(p) >= 0;
@@ -283,6 +364,163 @@ export function removeSelfIntersections(p: Polyline, closed: boolean): Polyline 
     if (pts.length < 3) break;
   }
   return pts;
+}
+
+/** Winding number of q w.r.t. the closed path P (non-zero rule; + = CCW). */
+export function windingNumber(q: Vec, P: Polyline): number {
+  let w = 0;
+  const n = P.length;
+  for (let i = 0; i < n; i++) {
+    const a = P[i], b = P[(i + 1) % n];
+    if (a.y <= q.y) { if (b.y > q.y && (b.x - a.x) * (q.y - a.y) - (q.x - a.x) * (b.y - a.y) > 0) w++; }
+    else if (b.y <= q.y && (b.x - a.x) * (q.y - a.y) - (q.x - a.x) * (b.y - a.y) < 0) w--;
+  }
+  return w;
+}
+
+function windingCleanup(P: Polyline, orient: 1 | -1): Polyline {
+  const n = P.length;
+  // ── split parameters per edge (crossings + collinear overlaps), bbox sweep
+  const splits: number[][] = Array.from({ length: n }, () => [0, 1]);
+  const eb = Array.from({ length: n }, (_, i) => { const a = P[i], b = P[(i + 1) % n]; return { i, minX: Math.min(a.x, b.x), maxX: Math.max(a.x, b.x), minY: Math.min(a.y, b.y), maxY: Math.max(a.y, b.y) }; });
+  const order = eb.slice().sort((u, v) => u.minX - v.minX);
+  let any = false;
+  const TOL = 1e-9;
+  for (let oi = 0; oi < order.length; oi++) {
+    const A = order[oi];
+    for (let oj = oi + 1; oj < order.length && order[oj].minX <= A.maxX + TOL; oj++) {
+      const B = order[oj];
+      if (B.minY > A.maxY + TOL || B.maxY < A.minY - TOL) continue;
+      const i = A.i, j = B.i;
+      const adj = (j === (i + 1) % n) || (i === (j + 1) % n);
+      const a = P[i], b = P[(i + 1) % n], c = P[j], d = P[(j + 1) % n];
+      const r = sub(b, a), s = sub(d, c);
+      const lr = len(r), ls = len(s);
+      if (lr < 1e-12 || ls < 1e-12) continue;
+      const den = cross(r, s);
+      if (Math.abs(den) <= 1e-12 * lr * ls) {
+        // parallel: collinear overlap?
+        if (Math.abs(cross(r, sub(c, a))) / lr > TOL) continue;
+        const proj = (q: Vec, o: Vec, v: Vec, l2: number) => dot(sub(q, o), v) / l2;
+        const lr2 = lr * lr, ls2 = ls * ls;
+        let hit = false;
+        for (const q of [c, d]) { const t = proj(q, a, r, lr2); if (t > 1e-12 && t < 1 - 1e-12) { splits[i].push(t); hit = true; } }
+        for (const q of [a, b]) { const t = proj(q, c, s, ls2); if (t > 1e-12 && t < 1 - 1e-12) { splits[j].push(t); hit = true; } }
+        // overlapping (not just touching end to end)
+        const t0 = proj(c, a, r, lr2), t1 = proj(d, a, r, lr2);
+        if (hit || (Math.max(t0, t1) > 1e-12 && Math.min(t0, t1) < 1 - 1e-12)) any = true;
+        continue;
+      }
+      const ac = sub(c, a);
+      const t = cross(ac, s) / den, u = cross(ac, r) / den;
+      if (t < -1e-12 || t > 1 + 1e-12 || u < -1e-12 || u > 1 + 1e-12) continue;
+      const tIn = t > 1e-12 && t < 1 - 1e-12, uIn = u > 1e-12 && u < 1 - 1e-12;
+      if (adj && !tIn && !uIn) continue; // shared vertex
+      if (tIn) splits[i].push(t);
+      if (uIn) splits[j].push(u);
+      if (tIn || uIn || !adj) any = true;
+    }
+  }
+  if (!any) return signedArea(P) * orient > 0 ? P.slice() : [];
+
+  // ── vertices (merged within 1e-7) and sub-edges
+  const verts: Vec[] = [];
+  const isInput: boolean[] = [];
+  const grid = new Map<string, number[]>();
+  const CELL = 1e-6, MERGE = 1e-7;
+  const vid = (q: Vec, input: boolean): number => {
+    const gx = Math.floor(q.x / CELL), gy = Math.floor(q.y / CELL);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+      const l = grid.get(`${gx + dx},${gy + dy}`); if (!l) continue;
+      for (const k of l) if (dist(verts[k], q) <= MERGE) { if (input) isInput[k] = true; return k; }
+    }
+    const k = verts.length; verts.push({ x: q.x, y: q.y }); isInput.push(input);
+    const key = `${gx},${gy}`; const l = grid.get(key); if (l) l.push(k); else grid.set(key, [k]);
+    return k;
+  };
+  const inputIds = P.map(q => vid(q, true));
+  const sub_: { u: number; v: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = P[i], b = P[(i + 1) % n];
+    const ts = [...new Set(splits[i])].sort((x, y) => x - y);
+    let prev = inputIds[i];
+    for (let k = 1; k < ts.length; k++) {
+      const id = k === ts.length - 1 ? inputIds[(i + 1) % n] : vid(lerp(a, b, ts[k]), false);
+      if (id !== prev) sub_.push({ u: prev, v: id });
+      prev = id;
+    }
+  }
+  // ── keep boundary edges (positive winding on exactly one side), oriented inside-left (orient=1)
+  const inside = (w: number) => w * orient > 0;
+  const kept = new Map<string, { u: number; v: number }>();
+  for (const e of sub_) {
+    const a = verts[e.u], b = verts[e.v];
+    const L = dist(a, b); if (L < 1e-12) continue;
+    const m = lerp(a, b, 0.5), nl = perp(norm(sub(b, a)));
+    const delta = Math.min(1e-6, L * 1e-3);
+    const wl = inside(windingNumber(add(m, mul(nl, delta)), P)), wr = inside(windingNumber(sub(m, mul(nl, delta)), P));
+    if (wl === wr) continue;
+    // orientation of the output: inside on the left for orient=+1 (CCW), on the right for −1 (CW)
+    const fwd = orient > 0 ? wl : wr;
+    const de = fwd ? { u: e.u, v: e.v } : { u: e.v, v: e.u };
+    kept.set(`${de.u}>${de.v}`, de);
+  }
+  if (!kept.size) return [];
+  // ── link into loops: at each vertex take the outgoing edge with the largest left turn (orient=+1)
+  const outE = new Map<number, { u: number; v: number }[]>();
+  for (const e of kept.values()) { const l = outE.get(e.u); if (l) l.push(e); else outE.set(e.u, [e]); }
+  const used = new Set<string>();
+  const loops: number[][] = [];
+  for (const e0 of kept.values()) {
+    const k0 = `${e0.u}>${e0.v}`;
+    if (used.has(k0)) continue;
+    const loop: number[] = [e0.u];
+    let cur = e0; used.add(k0);
+    let guard = 0;
+    while (guard++ < kept.size + 2) {
+      if (cur.v === e0.u) break;
+      loop.push(cur.v);
+      const cands = (outE.get(cur.v) ?? []).filter(x => !used.has(`${x.u}>${x.v}`));
+      if (!cands.length) break;
+      const din = norm(sub(verts[cur.v], verts[cur.u]));
+      let best = cands[0], bestA = -Infinity;
+      for (const c of cands) {
+        const dout = norm(sub(verts[c.v], verts[c.u]));
+        const ang = Math.atan2(cross(din, dout), dot(din, dout)) * orient;
+        const a = ang <= -Math.PI + 1e-12 ? -Math.PI : ang;
+        if (a > bestA) { bestA = a; best = c; }
+      }
+      used.add(`${best.u}>${best.v}`); cur = best;
+    }
+    if (loop.length >= 3 && cur.v === e0.u) loops.push(loop);
+  }
+  let bestLoop: number[] | null = null, bestArea = 0;
+  for (const l of loops) {
+    const a = signedArea(l.map(i => verts[i])) * orient;
+    if (a > bestArea + 1e-12) { bestArea = a; bestLoop = l; }
+  }
+  if (!bestLoop || bestArea < 1e-12) return [];
+  // drop split points that are straight-through (never input vertices)
+  let ids = bestLoop;
+  for (let pass = 0; pass < 2; pass++) {
+    const m = ids.length; if (m < 4) break;
+    const keep: number[] = [];
+    for (let k = 0; k < m; k++) {
+      const id = ids[k];
+      if (isInput[id]) { keep.push(id); continue; }
+      const a = verts[ids[(k - 1 + m) % m]], b = verts[id], c = verts[ids[(k + 1) % m]];
+      const u = sub(b, a), w = sub(c, b), l = len(u) * len(w);
+      if (l > 1e-18 && Math.abs(cross(u, w)) / l <= 1e-9 && dot(u, w) > 0) continue;
+      keep.push(id);
+    }
+    ids = keep;
+  }
+  // start at the first surviving input vertex (stable start point)
+  const pos = new Map(ids.map((id, k) => [id, k]));
+  let start = 0;
+  for (const id of inputIds) { const k = pos.get(id); if (k !== undefined) { start = k; break; } }
+  ids = [...ids.slice(start), ...ids.slice(0, start)];
+  return ids.map(i => ({ ...verts[i] }));
 }
 
 /** Convex hull (Andrew). */

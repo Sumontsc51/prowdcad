@@ -10,7 +10,7 @@ import type { Vec } from '../geom/vec';
 import type { Document, ResolvedPiece } from '../model/doc';
 import type { Anchor, Contour, GradeInc, Id, Piece, SizeDef, SizeId, SizeLine, SizeTable, Style } from '../model/types';
 import { newId } from '../model/factory';
-import { anchorPositions, absoluteOffset, resolveContour, type ResolvedContour } from '../model/contour';
+import { anchorPositions, absoluteOffset, resolveContour, withoutZeroSegments, type ResolvedContour } from '../model/contour';
 import { computeCutLine } from './seam';
 import {
   type GradeRec, type GradedRef, gradedRefs, piecesOfTable, contourWorldOffsets, allContours, isExplicit,
@@ -334,7 +334,7 @@ export function resolveCombined(doc: Document, pieceId: Id, size1: SizeId, size2
     return { x: a.x + b.x, y: a.y + b.y };
   };
   const sew = resolveContour(flat.sew, line, line.baseSizeId);
-  const cut = flat.cutMode === 'manual' && flat.manualCut ? resolveContour(flat.manualCut, line, line.baseSizeId).pts : computeCutLine(flat, line, line.baseSizeId);
+  const cut = flat.cutMode === 'manual' && flat.manualCut ? resolveContour(flat.manualCut, line, line.baseSizeId).pts : computeCutLine(withoutZeroSegments(flat, line, line.baseSizeId), line, line.baseSizeId);
   const internals: ResolvedContour[] = flat.internals.map(c => resolveContour(c, line, line.baseSizeId));
   const ga = go(piece.grain.gradeA, piece.grain.gradeA2), gb = go(piece.grain.gradeB, piece.grain.gradeB2);
   return {

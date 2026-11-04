@@ -96,12 +96,14 @@ export function anchorPositions(points: Anchor[], line: SizeLine, sizeId: SizeId
     for (let k = 1; k <= n; k++) { const j = closed ? (i - k + n) % n : i - k; if (j < 0) break; if (points[j].kind === 'grade') { prev = j; break; } }
     for (let k = 1; k <= n; k++) { const j = closed ? (i + k) % n : i + k; if (j >= n) break; if (points[j].kind === 'grade') { next = j; break; } }
     if (prev < 0 && next < 0) { pos[i] = { x: points[i].x, y: points[i].y }; continue; }
-    if (prev < 0) prev = next; if (next < 0) next = prev;
+    // open contour with curve points before the first / after the last grade point: they follow the
+    // only bounding grade point rigidly (no walk past the contour ends)
+    if (prev < 0 || next < 0) { const g = prev < 0 ? next : prev; const o = sub(pos[g], points[g]); pos[i] = { x: points[i].x + o.x, y: points[i].y + o.y }; continue; }
     const offP = sub(pos[prev], points[prev]), offN = sub(pos[next], points[next]);
     // chord-length proportion between prev and next through the curve points
     let dPrev = 0, dNext = 0;
-    { let j = i; let guard = 0; while (j !== prev && guard++ < n) { const pj = closed ? (j - 1 + n) % n : j - 1; dPrev += dist(points[j], points[pj]); j = pj; } }
-    { let j = i; let guard = 0; while (j !== next && guard++ < n) { const nj = closed ? (j + 1) % n : j + 1; dNext += dist(points[j], points[nj]); j = nj; } }
+    { let j = i; let guard = 0; while (j !== prev && guard++ < n) { const pj = closed ? (j - 1 + n) % n : j - 1; if (pj < 0) break; dPrev += dist(points[j], points[pj]); j = pj; } }
+    { let j = i; let guard = 0; while (j !== next && guard++ < n) { const nj = closed ? (j + 1) % n : j + 1; if (nj >= n) break; dNext += dist(points[j], points[nj]); j = nj; } }
     const tot = dPrev + dNext;
     const t = tot < 1e-9 ? 0.5 : dPrev / tot;
     pos[i] = { x: points[i].x + offP.x * (1 - t) + offN.x * t, y: points[i].y + offP.y * (1 - t) + offN.y * t };
@@ -500,4 +502,45 @@ export function halfOpenedPiece(piece: Piece, line: SizeLine): Piece {
   p.artwork = [...p.artwork, ...p.artwork.filter(offAxis).map(a => ({ ...mirrorObj(a), id: mirroredId(a.id), scaleX: -a.scaleX }))];
   if (p.cutMode === 'manual') { p.cutMode = 'auto'; delete p.manualCut; }
   return p;
+}
+
+/**
+ * B10 workaround (the proper fix belongs in ops/seam.ts::build, which gives a zero-length grade
+ * segment its un-offset sew point as "offset" so the cut line touches the sew corner): for the cut
+ * line only, drop a sew grade anchor that coincides (1e-6 mm, in this size) with the next grade anchor
+ * when only straight geometry lies between them. The surviving anchor keeps its own seam and corner
+ * (a corner spec on the dropped one is moved over when the survivor has none). Anchors that live
+ * objects reference (dart legs, pleat edges, notch anchors) are kept. Returns `piece` when nothing
+ * is dropped.
+ */
+export function withoutZeroSegments(piece: Piece, line: SizeLine, sid: SizeId): Piece {
+  const P = piece.sew.points;
+  if (!piece.sew.closed || P.length < 4 || piece.noSeam) return piece;
+  const pos = anchorPositions(P, line, sid, true);
+  const n = P.length;
+  const protect = new Set<string>();
+  for (const d of piece.darts ?? []) { protect.add(d.legA); protect.add(d.legB); }
+  for (const pl of piece.pleats ?? []) for (const e of pl.edges ?? []) { protect.add(e.fixed); protect.add(e.moving); if (e.mid) protect.add(e.mid); }
+  for (const nt of piece.notches ?? []) if (nt.contourId === piece.sew.id) protect.add(nt.placement.anchorId);
+  const drop = new Set<number>();
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    if (P[i].kind !== 'grade' || P[j].kind !== 'grade' || drop.has(j)) continue;
+    if (Math.hypot(pos[i].x - pos[j].x, pos[i].y - pos[j].y) > 1e-6) continue;
+    if (protect.has(P[i].id) || P[i].hOut || P[j].hIn) continue;
+    if (n - drop.size - 1 < 3) break;
+    drop.add(i);
+  }
+  if (!drop.size) return piece;
+  const q: Piece = { ...piece, sew: { ...piece.sew, points: [] } };
+  const pts: Anchor[] = [];
+  for (let i = 0; i < n; i++) {
+    if (drop.has(i)) continue;
+    let a = P[i];
+    const prev = (i - 1 + n) % n;
+    if (drop.has(prev) && P[prev].corner && !a.corner) a = { ...a, corner: P[prev].corner };
+    pts.push(a);
+  }
+  q.sew.points = pts;
+  return q;
 }

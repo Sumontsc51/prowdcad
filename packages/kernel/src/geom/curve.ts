@@ -15,13 +15,32 @@ export function bezierTangent(p0: Vec, p1: Vec, p2: Vec, p3: Vec, t: number): Ve
   };
 }
 
-/** Sample a cubic Bézier into n+1 points (adaptive-ish: n chosen by chord length / flatness). */
-export function sampleBezier(p0: Vec, p1: Vec, p2: Vec, p3: Vec, tol = 0.05): Vec[] {
-  const approxLen = dist(p0, p1) + dist(p1, p2) + dist(p2, p3);
-  const n = Math.max(4, Math.min(256, Math.ceil(Math.sqrt(approxLen / tol))));
+/** Default arc-length tolerance (mm) of one sampled Bézier span: |polyline length − true arc length|. */
+export const BEZIER_LENGTH_TOL = 2e-4;
+
+const sampleN = (p0: Vec, p1: Vec, p2: Vec, p3: Vec, n: number): Vec[] => {
   const out: Vec[] = [];
   for (let i = 0; i <= n; i++) out.push(bezierPoint(p0, p1, p2, p3, i / n));
   return out;
+};
+const polyLen = (p: Vec[]) => { let L = 0; for (let i = 1; i < p.length; i++) L += dist(p[i - 1], p[i]); return L; };
+
+/**
+ * Sample a cubic Bézier into n+1 points, uniform in t. n starts from the chord tolerance `tol`
+ * (≈ √(len / tol)). An inscribed polyline under-reads the arc by E(n) ≈ C/n², so one doubling gives
+ * C ≈ 4/3·(L₂ₙ − Lₙ)·n², and n is raised to √(C / lenTol) so the length error of the span is below
+ * `lenTol` (default 2e-4 mm). Lengths measured off the sampled polyline are then within ~0.001 mm of
+ * the true arc length (B12) with the fewest extra points.
+ */
+export function sampleBezier(p0: Vec, p1: Vec, p2: Vec, p3: Vec, tol = 0.05, lenTol = BEZIER_LENGTH_TOL): Vec[] {
+  const approxLen = dist(p0, p1) + dist(p1, p2) + dist(p2, p3);
+  const n0 = Math.max(4, Math.min(256, Math.ceil(Math.sqrt(approxLen / tol))));
+  if (!(lenTol > 0)) return sampleN(p0, p1, p2, p3, n0);
+  const L1 = polyLen(sampleN(p0, p1, p2, p3, n0));
+  const L2 = polyLen(sampleN(p0, p1, p2, p3, 2 * n0));
+  const C = Math.max(0, (4 / 3) * (L2 - L1) * n0 * n0);
+  const need = Math.ceil(Math.sqrt(C / lenTol) * 1.05);
+  return sampleN(p0, p1, p2, p3, Math.max(n0, Math.min(4096, need)));
 }
 
 /**

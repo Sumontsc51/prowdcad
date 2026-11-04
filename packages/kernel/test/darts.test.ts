@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { makeStyle, rectangleContour, makePiece } from '../src/model/factory';
+import { makeStyle, rectangleContour, makePiece, makeContour, gradePoint, curvePoint } from '../src/model/factory';
 import { Document } from '../src/model/doc';
 import { area, perimeter } from '../src/geom/poly';
 import { dist } from '../src/geom/vec';
@@ -90,6 +90,7 @@ describe('dart transfer (acceptance D3)', () => {
     const s = setup();
     const id = shoulder(s);
     const before = dartClosedPerimeter(s.p(), s.line);
+    const beforeAll = s.ids.map(sz => dartClosedPerimeter(s.p(), s.line, sz));
     // side seam (BR → TR) 200 mm up: (300,200)
     const nid = transferDart(s.doc, s.pid, id, { target: { fromAnchorId: s.BR, distance: 200 }, pct: 100 });
     const pc = s.p();
@@ -107,8 +108,35 @@ describe('dart transfer (acceptance D3)', () => {
     expect(i.legLengthA).toBeCloseTo(R, 9); expect(i.legLengthB).toBeCloseTo(R, 9);
     expect(dist(pos(s.doc, s.pid, pc.darts[0].legA), { x: 300, y: 200 })).toBeLessThan(1e-9); // fixed leg stays at the target
     // grading still resolves (all sizes) and the closed perimeter is conserved per size
-    for (const sz of s.ids) expect(s.doc.resolvePiece(s.pid, sz).sew.pts.length).toBeGreaterThan(5);
+    s.ids.forEach((sz, k) => {
+      expect(s.doc.resolvePiece(s.pid, sz).sew.pts.length).toBeGreaterThan(5);
+      expect(Math.abs(dartClosedPerimeter(pc, s.line, sz) - beforeAll[k])).toBeLessThan(0.1);
+    });
   });
+  for (const curved of [false, true]) {
+    it(`B8: 100 % transfer conserves the closed perimeter within 0.1 mm in EVERY graded size (curved side seam: ${curved})`, () => {
+      const doc = new Document(makeStyle('t', ['S', 'M', 'L', 'XL'], 'M'));
+      const line = doc.sizeLine(); const ids = line.sizes.map(z => z.id);
+      const g = (dx: number, dy: number) => Object.fromEntries(ids.map(i => [i, { dx, dy }]));
+      const pts = curved
+        ? [gradePoint(0, 0), gradePoint(260, 0, { grade: g(8, 0) }), curvePoint(275, 190), gradePoint(250, 380, { grade: g(8, 5) }), gradePoint(0, 400, { grade: g(0, 5) })]
+        : [gradePoint(0, 0), gradePoint(260, 0, { grade: g(8, 0) }), gradePoint(250, 380, { grade: g(8, 5) }), gradePoint(0, 400, { grade: g(0, 5) })];
+      const c = makeContour(pts);
+      const piece = makePiece('F', c, doc.style.activeSizeTableId); doc.transact('a', st => st.pieces.push(piece));
+      const TR = c.points[curved ? 3 : 2].id, BR = c.points[1].id;
+      const id = createDart(doc, piece.id, { at: { fromAnchorId: TR, distance: 110 }, width: 24, depth: 170 });
+      const before = ids.map(z => dartClosedPerimeter(doc.piece(piece.id), line, z));
+      const nid = transferDart(doc, piece.id, id, { target: { fromAnchorId: BR, distance: 120 }, pct: 100 });
+      const after = ids.map(z => dartClosedPerimeter(doc.piece(piece.id), line, z));
+      // was S −0.050, L +0.057, XL +0.121 (curved XL +0.113). Straight side seam: exact in every size.
+      // Curved: ≤ 0.016 mm remains because explicit Bézier handles (from the target split) are not
+      // graded, so they turn by the base dart angle in every size.
+      ids.forEach((z, k) => expect(Math.abs(after[k] - before[k])).toBeLessThan(curved ? 0.02 : 1e-9));
+      // base size: exact
+      expect(Math.abs(after[1] - before[1])).toBeLessThan(1e-3);
+      expect(dartInfo(doc, piece.id, nid).width).toBeGreaterThan(0);
+    });
+  }
   it('D3: 50 % splits fullness evenly (equal widths at the contour within 0.05 mm)', () => {
     const s = setup();
     const id = shoulder(s);

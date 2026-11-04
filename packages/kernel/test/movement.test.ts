@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Document } from '../src/model/doc';
-import { makeStyle, makePiece, makeContour, gradePoint } from '../src/model/factory';
+import { makeStyle, makePiece, makeContour, gradePoint, curvePoint } from '../src/model/factory';
 import { sizeIdByName } from '../src/ops/sizes';
 import { createProgram, addMove, applyMeasurementDelta, applyMeasurementSet, addMeasurementSet, removeMove, program } from '../src/ops/movement';
 
@@ -77,5 +77,25 @@ describe('movement programs', () => {
     expect(p[2].x).toBe(270);
     expect(p[3].y).toBe(550);
     void t;
+  });
+
+  it('B6: curve points between moved grade anchors move too — chest line through a curved side seam +20.00', () => {
+    const doc = new Document(makeStyle('s', ['S', 'M', 'L'], 'M'));
+    const c = makeContour([gradePoint(0, 0), gradePoint(240, 0), curvePoint(250, 200), gradePoint(235, 420), gradePoint(0, 440)]);
+    const p = makePiece('FRONT', c, doc.style.activeSizeTableId); doc.transact('a', s => s.pieces.push(p));
+    /** x of the side seam where it crosses the horizontal line y */
+    const sideX = (y: number) => {
+      const pts = doc.resolvePiece(p.id).sew.pts; let best = -Infinity;
+      for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length]; if ((a.y - y) * (b.y - y) <= 0 && a.y !== b.y) best = Math.max(best, a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y)); }
+      return best;
+    };
+    const w0 = sideX(200), wMax0 = Math.max(...doc.resolvePiece(p.id).sew.pts.map(q => q.x));
+    const prog = createProgram(doc, 'chest', 'Chest', [{ pieceId: p.id, anchorId: c.points[1].id, dx: 0.5, dy: 0 }, { pieceId: p.id, anchorId: c.points[3].id, dx: 0.5, dy: 0 }]);
+    applyMeasurementDelta(doc, prog, 40);
+    const P = doc.piece(p.id).sew.points;
+    expect(P[1].x).toBe(260); expect(P[3].x).toBe(255);
+    expect(P[2].x).toBeCloseTo(270, 12); // was 250 (did not move)
+    expect(sideX(200) - w0).toBeCloseTo(20, 9); // was 0.000
+    expect(Math.max(...doc.resolvePiece(p.id).sew.pts.map(q => q.x)) - wMax0).toBeCloseTo(20, 9); // was 9.964
   });
 });

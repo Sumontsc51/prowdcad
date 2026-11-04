@@ -18,7 +18,9 @@
  *    (the shorter way round) is split at the target and rotated rigidly about the pivot (default the
  *    apex) by pct% of the dart angle, closing the old dart and opening the new one. At 100 % the old
  *    dart is removed (its coincident legs merge); internal objects in the rotated wedge follow.
- *    Rigid rotation ⇒ the closed-dart sew perimeter is conserved exactly.
+ *    Rigid rotation ⇒ the closed-dart sew perimeter is conserved exactly. The rotation is done per
+ *    size (that size's pivot and dart angle) and stored as explicit grading on the rotated anchors,
+ *    so the perimeter is conserved in every graded size too.
  *  - rotateDartAroundCenter: transfer about an offset centre; the new dart re-uses the old apex
  *    ("two darts, one apex") and both are re-equalized.
  *  - closeDart / openDart: zero width (legs and anything between collapse to the opening midpoint),
@@ -45,9 +47,9 @@
  * segment legA→legB and splice `path` in between. Notches on the legs/apex can use
  * `dartSewGeometry` for positions.
  */
-import type { Anchor, Contour, Dart, Id, Piece, SizeId, SizeLine } from '../model/types';
+import type { Anchor, Contour, Dart, GradeInc, Id, Piece, SizeId, SizeLine } from '../model/types';
 import type { Document } from '../model/doc';
-import { resolveContour, absoluteOffset, type ResolvedContour } from '../model/contour';
+import { resolveContour, absoluteOffset, anchorPositions, absoluteToIncremental, type ResolvedContour } from '../model/contour';
 import { Vec, add, sub, mul, dist, norm, perp, cross, dot, lerp, angleBetween, rotate, reflect } from '../geom/vec';
 import { lineIntersect } from '../geom/poly';
 import { newId } from '../model/factory';
@@ -255,7 +257,35 @@ function dartTransferRaw(piece: Piece, line: SizeLine, d: DartX, o: TransferDart
   const region = [...spanPoly(r1, a0, a1), P];
   const xf = xfRotate(P, theta);
   const n = c.points.length;
-  for (let k = a0, g = 0; g < n; k = (k + 1) % n, g++) { transformAnchor(c.points[k], xf); if (k === a1) break; }
+  // Per-size transfer (B8): in every size the wedge rotates rigidly about THAT size's pivot by THAT
+  // size's dart angle (× pct), so the old dart closes exactly and the closed perimeter is conserved
+  // in every size, not just the base. Computed from the pre-rotation per-size positions and written
+  // back as explicit grading of the rotated anchors (curve points included).
+  const regionIdx: number[] = [];
+  for (let k = a0, g = 0; g < n; k = (k + 1) % n, g++) { regionIdx.push(k); if (k === a1) break; }
+  const perSize = new Map<SizeId, Vec[]>();
+  const pivotAbs: Record<SizeId, GradeInc> = {};
+  for (const sz of line.sizes) {
+    if (sz.id === line.baseSizeId) continue;
+    const pos = anchorPositions(c.points, line, sz.id, c.closed);
+    const As = pos[idx(c, d.legA)], Bs = pos[idx(c, d.legB)];
+    // graded legs need not be equal (apex grading = mean of the leg offsets); pivot on the point of
+    // the legs' perpendicular bisector nearest the graded apex, so the rotation maps leg B exactly
+    // onto leg A (= the apex itself whenever the legs are equal, e.g. the base size)
+    let Ps = o.pivot ?? apexFor(d, line, sz.id);
+    if (!o.pivot && dist(As, Bs) > 1e-9) { const M = lerp(As, Bs, 0.5), u = perp(norm(sub(Bs, As))); Ps = add(M, mul(u, dot(sub(Ps, M), u))); }
+    pivotAbs[sz.id] = { dx: Ps.x - P.x, dy: Ps.y - P.y };
+    const th = (forward ? angleBetween(sub(Bs, Ps), sub(As, Ps)) : angleBetween(sub(As, Ps), sub(Bs, Ps))) * f;
+    perSize.set(sz.id, regionIdx.map(k => rotate(pos[k], th, Ps)));
+  }
+  for (const k of regionIdx) transformAnchor(c.points[k], xf);
+  regionIdx.forEach((k, j) => {
+    const a = c.points[k];
+    const abs: Record<SizeId, GradeInc> = {};
+    for (const [sid, tgt] of perSize) abs[sid] = { dx: tgt[j].x - a.x, dy: tgt[j].y - a.y };
+    a.grade = absoluteToIncremental(abs, line);
+    delete a.gradeAxisDeg;
+  });
   liveTransformRegion(piece, region, xf, { dartIds: new Set([d.id]), contourIds: new Set(d.axisContourId ? [d.axisContourId] : []) });
   // new dart
   const legA = forward ? tm.id : tId, legB = forward ? tId : tm.id;
@@ -263,7 +293,7 @@ function dartTransferRaw(piece: Piece, line: SizeLine, d: DartX, o: TransferDart
   const samePivot = dist(P, apexVec(d)) < 1e-9;
   const nd: DartX = {
     id: newId('dt'), legA, legB,
-    apex: { x: P.x, y: P.y, grade: samePivot ? jsonClone(d.apex.grade) : liveAvgGrade(line, [c.points[idx(c, legA)].grade, c.points[idx(c, legB)].grade]) },
+    apex: { x: P.x, y: P.y, grade: samePivot ? absoluteToIncremental(pivotAbs, line) : liveAvgGrade(line, [c.points[idx(c, legA)].grade, c.points[idx(c, legB)].grade]) },
     fold: d.fold, drillOffset: d.drillOffset, closed: false,
   };
   if (samePivot && d.apex.grade2) nd.apex.grade2 = jsonClone(d.apex.grade2);

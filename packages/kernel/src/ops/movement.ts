@@ -5,7 +5,8 @@
  * that differ by size), or writes the result into a new piece version.
  */
 import type { Document } from '../model/doc';
-import type { GradeInc, Id, MovementProgram, Piece, SizeId } from '../model/types';
+import type { Contour, GradeInc, Id, MovementProgram, Piece, SizeId } from '../model/types';
+import type { Vec } from '../geom/vec';
 import { newId, now } from '../model/factory';
 import { type GradeRec, findRef, clonePieceFresh, refWorldAbs, incFromWorldAbs, materializeCurves, allContours } from './grading/util';
 
@@ -79,6 +80,7 @@ function applyMoves(doc: Document, moves: { pieceId: Id; anchorId: Id; dx: numbe
     let piece = doc.piece(res.versions[pid] ?? pid);
     if (opt.asNewPieceVersion && !res.versions[pid]) { piece = versionPiece(doc, piece); res.versions[pid] = piece.id; }
     const line = doc.sizeLine(piece);
+    const before = new Map(allContours(piece).map(c => [c, c.points.map(a => ({ x: a.x, y: a.y }))] as const));
     for (const m of list) {
       const ref0 = findRef(piece, m.anchorId);
       if (opt.perSize) {
@@ -100,7 +102,36 @@ function applyMoves(doc: Document, moves: { pieceId: Id; anchorId: Id; dx: numbe
       }
       (res.moved[piece.id] = res.moved[piece.id] ?? []).push(m.anchorId);
     }
+    carryCurvePoints(before, new Set(list.map(m => m.anchorId)));
     piece.updatedAt = now();
+  }
+}
+
+/**
+ * Curve points between moved grade anchors follow them (B6), with the grading rule for implicit
+ * curve points: the base displacement of a curve point is the displacement of its previous and next
+ * grade anchors interpolated by base chord distance along the contour (pre-move positions). Curve
+ * points before the first / after the last grade anchor of an open contour follow their only
+ * neighbour rigidly. Curve points the program moves itself are left alone.
+ */
+function carryCurvePoints(before: Map<Contour, Vec[]>, explicit: Set<Id>) {
+  for (const [c, old] of before) {
+    const P = c.points, n = P.length;
+    if (n !== old.length) continue;
+    const disp = P.map((a, i) => ({ x: a.x - old[i].x, y: a.y - old[i].y }));
+    if (!P.some((a, i) => a.kind === 'grade' && (disp[i].x !== 0 || disp[i].y !== 0))) continue;
+    const step = (i: number, dir: 1 | -1) => (c.closed ? (i + dir + n) % n : i + dir);
+    for (let i = 0; i < n; i++) {
+      if (P[i].kind !== 'curve' || explicit.has(P[i].id)) continue;
+      let prev = -1, next = -1, dPrev = 0, dNext = 0;
+      for (let j = i, g = 0; g < n; g++) { const k = step(j, -1); if (k < 0 || k >= n) break; dPrev += Math.hypot(old[j].x - old[k].x, old[j].y - old[k].y); j = k; if (P[k].kind === 'grade') { prev = k; break; } }
+      for (let j = i, g = 0; g < n; g++) { const k = step(j, 1); if (k < 0 || k >= n) break; dNext += Math.hypot(old[j].x - old[k].x, old[j].y - old[k].y); j = k; if (P[k].kind === 'grade') { next = k; break; } }
+      if (prev < 0 && next < 0) continue;
+      let dx: number, dy: number;
+      if (prev < 0 || next < 0) { const g = prev < 0 ? next : prev; dx = disp[g].x; dy = disp[g].y; }
+      else { const tot = dPrev + dNext, t = tot < 1e-9 ? 0.5 : dPrev / tot; dx = disp[prev].x * (1 - t) + disp[next].x * t; dy = disp[prev].y * (1 - t) + disp[next].y * t; }
+      P[i].x = old[i].x + dx; P[i].y = old[i].y + dy;
+    }
   }
 }
 
