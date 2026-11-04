@@ -33,6 +33,7 @@ import type { Piece, SizeLine, SizeId, CornerSpec, Contour, Anchor, Id, Style, G
 import { resolveContour, spanPolyline, absoluteToIncremental, type ResolvedContour } from '../model/contour';
 import { newId } from '../model/factory';
 import type { Document } from '../model/doc';
+import { dartCutShape } from './darts';
 
 /** Miter length limit (× the larger allowance) beyond which a convex miter falls back to a bevel. */
 export const SEAM_MITER_LIMIT = 4;
@@ -266,6 +267,8 @@ export function cutLineForSize(piece: Piece, line: SizeLine, sizeId: SizeId): Cu
     const base = build(piece, line, line.baseSizeId);
     cornerPts = b.corners.map((c, k) => piece.sew.points[g[k]].corner ? lockedCornerPts(base.corners[k], c.ctx) : c.raw);
   }
+  // darts: splice the cut-line excursion (folded cap / cutting dart) over each open dart opening
+  const skipSeg = dartExcursions(piece, line, sizeId, g, cornerPts, b.offs);
   // assemble
   const out: Vec[] = []; const flag: number[] = []; // flag: -1 plain, else corner k
   const push = (p: Vec, f: number) => {
@@ -275,6 +278,7 @@ export function cutLineForSize(piece: Piece, line: SizeLine, sizeId: SizeId): Cu
   for (let k = 0; k < G; k++) {
     const cp = cornerPts[k], cn = cornerPts[(k + 1) % G];
     for (const p of cp) push(p, k);
+    if (skipSeg.has(k)) continue;
     const seg = trimEnd(trimStart(b.offs[k], cp[cp.length - 1]), cn[0]);
     for (const p of seg) push(p, -1);
   }
@@ -301,6 +305,37 @@ export function cutLineForSize(piece: Piece, line: SizeLine, sizeId: SizeId): Cu
     cornerIndex.push(i0); cornerSpan.push([i0, i1]);
   }
   return { pts, cornerIndex, cornerSpan };
+}
+
+/**
+ * Dart cut shapes (ops/darts `dartCutShape`): for every OPEN dart whose legs are consecutive grade
+ * anchors (legA → legB is one grade segment k), the corner at legA becomes the whole excursion path
+ * (A-side cut line → cap / into the dart → B-side cut line), the corner at legB its last point, and
+ * the offset of the opening segment is dropped. Mutates `cornerPts`; returns the skipped segments.
+ * A dart whose shape cannot be computed keeps the plain offset (miter) geometry. A CLOSED dart only
+ * drops its zero-length opening offset.
+ */
+function dartExcursions(piece: Piece, line: SizeLine, sizeId: SizeId, g: number[], cornerPts: Vec[][], offs: Vec[][]): Set<number> {
+  const skip = new Set<number>();
+  const G = g.length;
+  for (const d of piece.darts ?? []) {
+    const iA = piece.sew.points.findIndex(a => a.id === d.legA), iB = piece.sew.points.findIndex(a => a.id === d.legB);
+    const kA = g.indexOf(iA), kB = g.indexOf(iB);
+    if (kA < 0 || kB < 0 || (kA + 1) % G !== kB || G < 3) continue;
+    // closed dart: the zero-length opening has no offset of its own (would spike back to the sew line)
+    if (d.closed) {
+      const pv = offs[(kA - 1 + G) % G], nx = offs[kB];
+      cornerPts[kA] = [{ ...pv[pv.length - 1] }]; cornerPts[kB] = [{ ...nx[0] }];
+      skip.add(kA); continue;
+    }
+    let path: Vec[];
+    try { path = dartCutShape(piece, line, sizeId, d.id).path; } catch { continue; }
+    if (path.length < 2 || path.some(q => !Number.isFinite(q.x) || !Number.isFinite(q.y))) continue;
+    cornerPts[kA] = path.map(q => ({ ...q }));
+    cornerPts[kB] = [{ ...path[path.length - 1] }];
+    skip.add(kA);
+  }
+  return skip;
 }
 
 function nearestIndex(pts: Vec[], q: Vec): number {

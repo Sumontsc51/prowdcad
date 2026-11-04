@@ -99,6 +99,7 @@ export class Canvas {
     if (d.hit === 'anchor') return { kind: 'anchor', pieceId: d.piece, contourId: d.contour, anchorId: d.anchor, sizeId: d.size };
     if (d.hit === 'handle') return { kind: 'handle', pieceId: d.piece, contourId: d.contour, anchorId: d.anchor, which: d.which as 'in' | 'out' };
     if (d.hit === 'guide') return { kind: 'guide', guide: Number(d.guide) };
+    if (d.hit === 'live') return { kind: 'live', pieceId: d.piece, liveKind: d.liveKind as Hit['liveKind'], liveId: d.liveId };
     if (d.piece) return { kind: 'piece', pieceId: d.piece };
     return { kind: 'none' };
   }

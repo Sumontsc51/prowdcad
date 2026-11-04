@@ -8,6 +8,7 @@ import { settings, saveSettings } from './settings';
 import type { Tool } from './tools/tool';
 import { contourById, deepClone, sizeFor } from './geometry';
 import type { AnchorRef } from './ops-bridge';
+import type { LiveRef } from './live';
 
 export interface Selection {
   pieces: Id[];
@@ -20,6 +21,8 @@ export class App {
   doc: Document;
   view = new Viewport();
   sel: Selection = { pieces: [], anchors: [] };
+  /** selected live object (dart / pleat / fullness record), shown in the Inspector */
+  liveSel: LiveRef | null = null;
   activeSize: SizeId;
   nested = false;
   nestedHidden = new Set<SizeId>();
@@ -101,6 +104,7 @@ export class App {
 
   // ───── selection ─────
   selectPiece(id: Id | null, additive = false) {
+    if (!additive) this.liveSel = null;
     if (!id) { if (!additive) this.sel = { pieces: [], anchors: [] }; }
     else if (additive) {
       const i = this.sel.pieces.indexOf(id);
@@ -110,6 +114,7 @@ export class App {
   }
   isAnchorSelected(r: { anchorId: Id }) { return this.sel.anchors.some(a => a.anchorId === r.anchorId); }
   selectAnchor(ref: AnchorRef | null, additive = false) {
+    this.liveSel = null;
     if (!ref) { this.sel.anchors = []; this.invalidate(); return; }
     if (additive) {
       const i = this.sel.anchors.findIndex(a => a.anchorId === ref.anchorId);
@@ -122,6 +127,11 @@ export class App {
     const ids = new Set(this.doc.style.pieces.map(p => p.id));
     this.sel.pieces = this.sel.pieces.filter(id => ids.has(id));
     this.sel.anchors = this.sel.anchors.filter(r => ids.has(r.pieceId) && !!this.resolveRef(r));
+    if (this.liveSel) {
+      const l = this.liveSel, p = this.doc.style.pieces.find(x => x.id === l.pieceId);
+      const ok = !!p && (l.kind === 'dart' ? p.darts : l.kind === 'pleat' ? p.pleats : p.fullness ?? []).some((o: { id: Id }) => o.id === l.id);
+      if (!ok || !this.sel.pieces.includes(l.pieceId) || this.sel.anchors.length) this.liveSel = null;
+    }
     const sizes = this.sizeLine().sizes.map(s => s.id);
     if (!sizes.includes(this.activeSize)) this.activeSize = this.baseSize();
   }

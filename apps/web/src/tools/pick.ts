@@ -14,14 +14,16 @@ import { anchorNear, contourNear, pieceUnder, drillNear, type AnchorHit, type Co
 import { snapPoint } from '../canvas/snap';
 import { screenMarker } from './common';
 import { DoubleClick } from '../ui/dom';
+import { liveNear, type LiveHit, type LiveKind } from '../live';
 
-export type PickKind = 'anchor' | 'contour' | 'piece' | 'point' | 'drill' | 'anchorOrDrill';
+export type PickKind = 'anchor' | 'contour' | 'piece' | 'point' | 'drill' | 'anchorOrDrill' | 'live';
 export type PickResult =
   | { kind: 'anchor'; hit: AnchorHit; w: Vec; e: MouseEvent; dbl: boolean }
   | { kind: 'contour'; hit: ContourHit; w: Vec; e: MouseEvent; dbl: boolean }
   | { kind: 'piece'; piece: Piece; w: Vec; e: MouseEvent; dbl: boolean }
   | { kind: 'point'; w: Vec; snapped: boolean; e: MouseEvent; dbl: boolean }
-  | { kind: 'drill'; hit: DrillHit; w: Vec; e: MouseEvent; dbl: boolean };
+  | { kind: 'drill'; hit: DrillHit; w: Vec; e: MouseEvent; dbl: boolean }
+  | { kind: 'live'; hit: LiveHit; w: Vec; e: MouseEvent; dbl: boolean };
 
 export interface PickOptions {
   kind: PickKind;
@@ -31,6 +33,8 @@ export interface PickOptions {
   pieceId?: Id;
   excludePieceId?: Id;
   contourId?: Id;
+  /** kind 'live': restrict to darts / pleats / fullness records */
+  liveKind?: LiveKind;
   /** Enter / right-click finishes a multi-pick with 'done' */
   allowDone?: boolean;
   /** extra overlay (screen-space SVG) drawn while picking (hover point given) */
@@ -58,6 +62,7 @@ function hitFor(app: App, w: Vec, e: MouseEvent, o: PickOptions, isDbl: boolean)
       const d = drillNear(app, w); if (d) return { kind: 'drill', hit: d, ...base };
       const h = anchorNear(app, w, ho); return h ? { kind: 'anchor', hit: h, ...base } : null;
     }
+    case 'live': { const h = liveNear(app, w, { kind: o.liveKind, pieceId: o.pieceId }); return h ? { kind: 'live', hit: h, ...base } : null; }
     case 'point': { const s = snapPoint(app, w, { noGrid: false }); return { kind: 'point', w: s.p, snapped: s.kind !== 'none', e, dbl: isDbl }; }
   }
 }
@@ -65,7 +70,7 @@ function hitFor(app: App, w: Vec, e: MouseEvent, o: PickOptions, isDbl: boolean)
 function hoverMarkFor(app: App, w: Vec, o: PickOptions): string {
   const r = hitFor(app, w, new MouseEvent('move'), o, false);
   if (!r) return '';
-  const pt = r.kind === 'anchor' ? r.hit.world : r.kind === 'contour' ? r.hit.world : r.kind === 'drill' ? r.hit.world : r.kind === 'point' ? r.w : null;
+  const pt = r.kind === 'anchor' || r.kind === 'contour' || r.kind === 'drill' || r.kind === 'live' ? r.hit.world : r.kind === 'point' ? r.w : null;
   return pt ? screenMarker(app.view.toScreen(pt), r.kind === 'anchor' ? 'square' : 'ring', '#ff9f1a', r.kind === 'anchor' ? 5 : 6) : '';
 }
 

@@ -12,6 +12,7 @@ import { registerMeasure } from './measure-cmds';
 import { registerPointSeg } from './point-seg';
 import { registerCutPiece } from './cut-piece';
 import { registerGrade } from './grade-cmds';
+import { registerLive, deleteLive } from './live-cmds';
 import { ops, opStatus, type SegmentRef, type AnchorRef } from '../ops-bridge';
 import { showDialog, alertDialog, confirmDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
@@ -66,7 +67,7 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
     hint: undefined, run: () => { const l = app.doc.undoLabel(); if (app.doc.undo()) app.status(`Undo: ${l}`); } });
   registerCommand({ id: 'edit.redo', title: 'Redo', menu: 'Edit', group: 0, hotkey: 'Ctrl+Y,Ctrl+Shift+Z', enabled: c => c.app.doc.canRedo(),
     run: () => { const l = app.doc.redoLabel(); if (app.doc.redo()) app.status(`Redo: ${l}`); } });
-  registerCommand({ id: 'edit.delete', title: 'Delete', menu: 'Edit', group: 1, hotkey: 'Delete,Backspace', enabled: c => hasPiece(c) || hasAnchor(c), run: () => deleteSelection(app) });
+  registerCommand({ id: 'edit.delete', title: 'Delete', menu: 'Edit', group: 1, hotkey: 'Delete,Backspace', enabled: c => hasPiece(c) || hasAnchor(c) || !!c.app.liveSel, run: () => deleteSelection(app) });
   registerCommand({ id: 'edit.duplicate', title: 'Duplicate piece', menu: 'Edit', group: 1, hotkey: 'Ctrl+D', enabled: hasPiece, run: () => {
     const ids: string[] = [];
     tx('Duplicate piece', () => {
@@ -105,31 +106,8 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
   registerCutPiece(app);
   registerGrade(app);
 
-  // ───────────── Dart ─────────────
-  registerCommand({ id: 'dart.add', title: 'Add dart at point…', menu: 'Dart', group: 0, enabled: hasAnchor, run: async () => {
-    const pa = app.primaryAnchor()!;
-    const r = await showDialog({ title: 'Add dart', fields: [{ kind: 'length', key: 'w', label: 'Width', value: 20, min: 0.1 }, { kind: 'length', key: 'l', label: 'Length', value: 100, min: 0.1 }] });
-    if (!r) return;
-    const res = app.doc.resolveContour(pa.piece, pa.contour);
-    const at = res.anchorPos[pa.index];
-    const xs = res.pts.map(q => q.x), ys = res.pts.map(q => q.y);
-    const c = { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 };
-    const d = Math.hypot(c.x - at.x, c.y - at.y) || 1;
-    const apex = { x: at.x + (c.x - at.x) / d * (r.l as number), y: at.y + (c.y - at.y) / d * (r.l as number) };
-    ops.addDart(app.doc, { pieceId: pa.piece.id, at, apex, width: r.w as number });
-  } });
-  registerCommand({ id: 'dart.rotate', title: 'Rotate dart', menu: 'Dart', group: 0, enabled: hasPiece, run: () => { const p = onePiece(); const d = p.darts[0]; if (!d) throw new Error('Piece has no dart'); ops.rotateDart(app.doc, { pieceId: p.id, dartId: d.id, target: d.apex }); } });
-  registerCommand({ id: 'dart.toggle', title: 'Open / close dart', menu: 'Dart', group: 0, enabled: hasPiece, run: () => { const p = onePiece(); const d = p.darts[0]; if (!d) throw new Error('Piece has no dart'); ops.toggleDartClosed(app.doc, { pieceId: p.id, dartId: d.id }); } });
-  registerCommand({ id: 'dart.pleat', title: 'Add pleat…', menu: 'Dart', group: 1, enabled: c => c.app.sel.anchors.length >= 2, run: async () => {
-    const [a, b] = app.sel.anchors.map(r => app.resolveRef(r)!);
-    const r = await showDialog({ title: 'Add pleat', fields: [{ kind: 'length', key: 'd', label: 'Depth', value: 30, min: 0.1 }, { kind: 'select', key: 't', label: 'Type', value: 'knife', options: [{ value: 'knife', label: 'Knife' }, { value: 'box', label: 'Box' }] }] });
-    if (r) ops.addPleat(app.doc, { pieceId: a.piece.id, start: a.anchor, end: b.anchor, depth: r.d as number, type: r.t as 'knife' | 'box' });
-  } });
-  registerCommand({ id: 'dart.fullness', title: 'Add fullness…', menu: 'Dart', group: 1, enabled: hasPiece, run: async () => {
-    const p = onePiece(); const ic = p.internals[p.internals.length - 1]; if (!ic) throw new Error('Draw an internal slash line first');
-    const r = await showDialog({ title: 'Add fullness', fields: [{ kind: 'length', key: 'a', label: 'Amount', value: 20 }] });
-    if (r) ops.addFullness(app.doc, { pieceId: p.id, line: ic.points.map(q => ({ x: q.x, y: q.y })), amount: r.a as number });
-  } });
+  // ───────────── Dart (darts / pleats / fullness) ─────────────
+  registerLive(app);
 
   // ───────────── View ─────────────
   registerCommand({ id: 'view.fit', title: 'Zoom to fit', menu: 'View', group: 0, hotkey: 'Ctrl+0,F', run: () => canvas.zoomFit() });
@@ -198,9 +176,21 @@ function remapIds(p: Piece): Piece {
   p.id = re(p.id, 'pc');
   for (const c of [p.sew, ...p.internals, ...(p.manualCut ? [p.manualCut] : [])]) { c.id = re(c.id, 'c'); for (const a of c.points) a.id = re(a.id, 'p'); }
   const m = (id: string) => map.get(id) ?? id;
-  for (const d of p.darts) { d.id = newId('dt'); d.legA = m(d.legA); d.legB = m(d.legB); }
-  for (const pl of p.pleats) pl.id = newId('pl');
-  for (const n of p.notches) { n.id = newId('n'); n.contourId = m(n.contourId); n.placement = { ...n.placement, anchorId: m(n.placement.anchorId) } as typeof n.placement; }
+  // live objects: every anchor / contour id they reference is remapped (deep string replace over the record)
+  const remapDeep = <T,>(o: T): T => JSON.parse(JSON.stringify(o), (_k, v) => (typeof v === 'string' && map.has(v) ? map.get(v) : v)) as T;
+  const liveIds = new Map<string, string>();
+  for (const d of p.darts) liveIds.set(d.id, newId('dt'));
+  for (const pl of p.pleats) liveIds.set(pl.id, newId('pl'));
+  for (const f of p.fullness ?? []) liveIds.set(f.id, newId('fu'));
+  for (const id of [...(p.fullness ?? []).flatMap(f => f.slotIds ?? []), ...p.pleats.flatMap(pl => pl.slotIds ?? [])]) if (!map.has(id)) map.set(id, newId('p'));
+  for (const [o, n] of liveIds) map.set(o, n);
+  p.darts = remapDeep(p.darts);
+  p.pleats = remapDeep(p.pleats);
+  if (p.fullness) p.fullness = remapDeep(p.fullness);
+  // pleat auto-notch ids are `${pleatId}:n<k>`
+  for (const n of p.notches) if (n.source === 'pleat') { const [pl, k] = n.id.split(':'); if (liveIds.has(pl)) map.set(n.id, `${liveIds.get(pl)}:${k}`); }
+  for (const pl of p.pleats) if (pl.notchIds) pl.notchIds = pl.notchIds.map(m);
+  for (const n of p.notches) { n.id = n.source === 'pleat' && map.has(n.id) ? map.get(n.id)! : newId('n'); n.contourId = m(n.contourId); n.placement = { ...n.placement, anchorId: m(n.placement.anchorId) } as typeof n.placement; }
   for (const d of p.drills) d.id = newId('d');
   for (const t of p.texts) t.id = newId('t');
   for (const a of p.artwork) a.id = newId('aw');
@@ -211,6 +201,7 @@ function remapIds(p: Piece): Piece {
 
 /** Delete selected anchors (keeping contours valid) or else the selected pieces. */
 async function deleteSelection(app: App) {
+  if (app.liveSel && !app.sel.anchors.length) { await deleteLive(app, app.liveSel); return; }
   if (app.sel.anchors.length) {
     const refs = app.sel.anchors.slice();
     let blocked = 0;

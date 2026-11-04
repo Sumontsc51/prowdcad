@@ -3,7 +3,7 @@ import type { App } from '../app';
 
 /** What the pointer is over, decoded from data-* attributes of SVG hit targets. */
 export interface Hit {
-  kind: 'anchor' | 'handle' | 'piece' | 'edge' | 'guide' | 'none';
+  kind: 'anchor' | 'handle' | 'piece' | 'edge' | 'guide' | 'live' | 'none';
   pieceId?: string;
   contourId?: string;
   anchorId?: string;
@@ -11,6 +11,9 @@ export interface Hit {
   /** for anchors/handles drawn for a specific size (nested view); undefined = active size */
   sizeId?: string;
   guide?: number;
+  /** live object hit target (dart / pleat / fullness) */
+  liveKind?: 'dart' | 'pleat' | 'fullness';
+  liveId?: string;
 }
 
 export interface Ptr {
@@ -73,5 +76,7 @@ export const ICON = {
   smooth: '<path d="M3 16l3-5 2 3 3-6 2 4 3-3" opacity=".45"/><path d="M3 17c4-9 10-9 18-2"/>',
   slash: '<path d="M4 20L20 4"/><path d="M14 4h6v6"/><rect x="3" y="6" width="9" height="12" opacity=".5"/>',
   trace: '<path d="M4 18L9 6l6 4 5-4"/><circle cx="4" cy="18" r="1.4"/><circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="10" r="1.4"/>',
+  pleat: '<path d="M4 4v16M10 4v16M14 4l-4 4M14 20l-4-4M14 4v16M20 4v16" />',
+  fullness: '<path d="M4 20L12 4l8 16"/><path d="M12 4v16" stroke-dasharray="2 2"/><path d="M8 20h8"/>',
   pick: '<path d="M12 3v6M12 15v6M3 12h6M15 12h6"/><circle cx="12" cy="12" r="2"/>',
 };

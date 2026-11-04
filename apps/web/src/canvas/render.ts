@@ -10,6 +10,7 @@ import type { App } from '../app';
 import { settings } from '../settings';
 import { resolveFor, toWorld, layoutOf, sizeColor, sizeFor } from '../geometry';
 import { MM_PER_UNIT } from '@prowdcad/kernel';
+import { liveShapes, hitLines, type LiveShape } from '../live';
 
 const ACCENT = '#4ea1ff';
 const f = (n: number) => (Math.round(n * 1000) / 1000).toString();
@@ -116,9 +117,17 @@ export function renderWorld(app: App): string {
     // internals
     p.internals.forEach((c, i) => {
       const ic = r.internals[i]; if (!ic) return;
+      // live-object axes are drawn (graded) from the live geometry below
+      if ((c.type === 'dartAxis' && p.darts.some(d => d.axisContourId === c.id)) || (c.type === 'pleatAxis' && p.pleats.some(q => q.axisContourId === c.id))) return;
       const dash = c.style === 'dashed' || c.type === 'fold' || c.type === 'mirror' ? ' stroke-dasharray="6 4"' : c.style === 'dotted' ? ' stroke-dasharray="1.5 3"' : '';
       g.push(`<path d="${pathD(ic.pts, ic.closed)}" class="ns" stroke="${isSel ? '#2f6fb8' : '#30343c'}" stroke-width="1.1" fill="none"${dash}/>`);
     });
+    // darts / pleats / fullness (live objects) in every displayed size
+    const liveSizes = app.nested ? [active, ...app.doc.sizesOf(p).filter(x => x !== active && !app.nestedHidden.has(x))] : [active];
+    for (const sid of liveSizes) {
+      const col = sid === active ? (isSel ? '#2f6fb8' : '#30343c') : sizeColor(line, sid);
+      for (const sh of liveShapes(app, p, sid)) g.push(liveSvg(sh, col, sid === active));
+    }
     // notches (live objects, resolved through ops/notches on every displayed size)
     const notchSizes = app.nested ? [active, ...app.doc.sizesOf(p).filter(x => x !== active && !app.nestedHidden.has(x))] : [active];
     for (const sid of notchSizes) {
@@ -160,6 +169,40 @@ export function renderWorld(app: App): string {
   return out.join('');
 }
 
+// ───────────── live objects (world layer, piece-local coords) ─────────────
+const ln = (a: Vec, b: Vec) => `M${f(a.x)} ${f(a.y)}L${f(b.x)} ${f(b.y)}`;
+function liveSvg(sh: LiveShape, col: string, active: boolean): string {
+  const w = active ? 1.1 : 0.8;
+  switch (sh.kind) {
+    case 'dart': {
+      let o = `<path d="${ln(sh.mid, sh.apex)}" class="ns" stroke="${col}" stroke-width="${w * 0.8}" stroke-dasharray="5 3" fill="none"/>`;
+      if (!sh.closed) o += `<path d="${pathD(sh.legA, false)}${pathD(sh.legB, false)}" class="ns" stroke="${col}" stroke-width="${w}" fill="none"${sh.cutting ? '' : ''}/>`;
+      if (active) {
+        // drill mark (cross in a ring) at drillOffset back from the apex; apex dot
+        const r = 2.2;
+        o += `<circle cx="${f(sh.drill.x)}" cy="${f(sh.drill.y)}" r="${r}" class="ns" stroke="#8e44ad" stroke-width="0.9" fill="none"/>` +
+          `<path d="M${f(sh.drill.x - r * 1.5)} ${f(sh.drill.y)}H${f(sh.drill.x + r * 1.5)}M${f(sh.drill.x)} ${f(sh.drill.y - r * 1.5)}V${f(sh.drill.y + r * 1.5)}" class="ns" stroke="#8e44ad" stroke-width="0.7"/>`;
+        if (sh.cutting && !sh.closed) o += `<path d="${pathD([sh.legA[0], sh.apex, sh.legB[0]], true)}" fill="rgba(192,57,43,0.08)" stroke="none"/>`;
+      }
+      return o;
+    }
+    case 'pleat': {
+      let o = `<path d="${ln(sh.axis[0], sh.axis[1])}" class="ns" stroke="${col}" stroke-width="${w * 0.8}" stroke-dasharray="8 3 2 3" fill="none"/>`;
+      if (sh.shade && active) o += `<path d="${pathD(sh.shade, true)}" fill="rgba(46,134,193,0.10)" stroke="none"/>`;
+      if (sh.folds.length) o += `<path d="${sh.folds.map(q => pathD(q, false)).join('')}" class="ns" stroke="${col}" stroke-width="${w * 0.8}" stroke-dasharray="2 2" fill="none"/>`;
+      if (sh.fixed && sh.moving) o += `<path d="${pathD(sh.fixed, false)}${pathD(sh.moving, false)}" class="ns" stroke="${col}" stroke-width="${w * 0.7}" fill="none"/>`;
+      if (sh.ticks.length) o += `<path d="${sh.ticks.map(q => pathD(q, false)).join('')}" class="ns" stroke="${col}" stroke-width="${w * 0.7}" fill="none" opacity="0.8"/>`;
+      return o;
+    }
+    case 'fullness': {
+      let o = '';
+      if (active) o += sh.wedges.map(q => `<path d="${pathD(q, true)}" fill="rgba(230,126,34,0.10)" stroke="none"/>`).join('');
+      if (sh.slashes.length) o += `<path d="${sh.slashes.map(q => pathD(q, false)).join('')}" class="ns" stroke="${active ? '#d35400' : col}" stroke-width="${w * 0.8}" stroke-dasharray="4 3" fill="none"/>`;
+      return o;
+    }
+  }
+}
+
 // ───────────── overlay layer ─────────────
 export function renderOverlay(app: App): string {
   const v = app.view;
@@ -181,6 +224,8 @@ export function renderOverlay(app: App): string {
   const hitAnchors: string[] = [];
   const handlesOut: string[] = [];
   const hitHandles: string[] = [];
+  const hitLive: string[] = [];
+  const liveHl: string[] = [];
 
   for (const p of app.pieces()) {
     if (app.hiddenPieces.has(p.id)) continue;
@@ -222,6 +267,16 @@ export function renderOverlay(app: App): string {
         const s2 = v.toScreen(toWorld(p, r.sew.anchorPos[ai]));
         out.push(`<text x="${fs(s2.x + 7)}" y="${fs(s2.y + 12)}" class="rule-name">${esc(nm)}</text>`);
       });
+    }
+    // live-object hit targets (active size) + highlight of the selected one
+    for (const sh of liveShapes(app, p, active)) {
+      const isLiveSel = app.liveSel?.id === sh.id;
+      for (const pl of hitLines(sh)) {
+        const d = pathS(pl.map(q => v.toScreen(toWorld(p, q))), false);
+        if (isLiveSel) liveHl.push(`<path d="${d}" stroke="#ff9f1a" stroke-width="3" fill="none" opacity="0.85"/>`);
+        hitLive.push(`<path d="${d}" stroke="transparent" stroke-width="10" fill="none" data-hit="live" data-piece="${p.id}" data-live-kind="${sh.kind}" data-live-id="${sh.id}" style="cursor:pointer"/>`);
+      }
+      if (isLiveSel && sh.kind === 'dart') { const a = v.toScreen(toWorld(p, sh.apex)); liveHl.push(`<circle cx="${fs(a.x)}" cy="${fs(a.y)}" r="4" fill="#ff9f1a"/>`); }
     }
     const showAnchors = isSel || settings.showAllAnchors;
     if (!showAnchors) continue;
@@ -270,10 +325,11 @@ export function renderOverlay(app: App): string {
       });
     }
   }
-  out.push(handlesOut.join(''), anchorsOut.join(''));
+  out.push(liveHl.join(''), handlesOut.join(''), anchorsOut.join(''));
   const tool = app.tool?.overlay?.(app);
   if (tool) out.push(tool);
-  out.push(hitAnchors.join(''), hitHandles.join(''));
+  // live hit targets sit below anchor / handle targets, so points stay grabbable on top of dart legs
+  out.push(hitLive.join(''), hitAnchors.join(''), hitHandles.join(''));
   return out.join('');
 }
 

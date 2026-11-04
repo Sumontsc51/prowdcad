@@ -7,8 +7,9 @@
  * kernel functions. Entry signatures are exactly the kernel's (`Pick<typeof kernel, …>`), so the
  * UI is type-checked against the kernel's public API.
  *
- * Live-object modules that have not landed in the UI yet (darts / pleats / fullness) keep
- * hand-written signatures and stay placeholders until a later pass wires them.
+ * Live objects (darts / pleats / fullness) are reached through their kernel functions
+ * (ops/darts, ops/pleats, ops/fullness groups) plus four hand-written convenience wrappers
+ * (`LiveOps`: addDart, rotateDart, toggleDartClosed, addPleat) wired in kernel-wiring.ts.
  */
 import type * as KT from '@prowdcad/kernel';
 import type { Document, Id, Vec } from '@prowdcad/kernel';
@@ -20,6 +21,8 @@ export class NotWiredError extends Error {
   }
 }
 
+/** Contour position for the live-object ops: base-size arc distance forward from a sew anchor (kernel `LiveContourPos`). */
+export interface LiveContourPos { fromAnchorId: Id; distance: number }
 /** Reference to one anchor of one contour of one piece. */
 export interface AnchorRef { pieceId: Id; contourId: Id; anchorId: Id }
 /** A grade segment of a contour: from grade anchor `startAnchorId` to the next grade anchor. */
@@ -49,6 +52,12 @@ export const KERNEL_GROUPS = {
   'ops/drills': ['drillPosition', 'addDrill', 'updateDrill', 'deleteDrill', 'duplicateWithOffset', 'multiButtons', 'slitContourSegment'],
   'ops/annotation': ['addText', 'textPosition', 'editText', 'deleteText', 'addArtwork', 'pixelsToMm', 'artworkPlacementRect', 'deleteArtwork'],
   'ops/binding': ['generateBinding'],
+  'ops/darts': ['createDart', 'createMultiDarts', 'fixDart', 'moveDartApex', 'setDartDepth', 'setDartFold', 'setDartDrillOffset', 'changeDarts',
+    'transferDart', 'rotateDartAroundCenter', 'closeDart', 'openDart', 'closeAllDarts', 'openAllDarts', 'setDartCutting', 'cutAllDarts',
+    'copyDart', 'pasteDart', 'removeDart', 'insertDart', 'dartSewGeometry', 'dartInfo', 'dartClosedPerimeter', 'dartCutShape'],
+  'ops/pleats': ['addPleatAxis', 'addPleatByAngle', 'addMultiPleat', 'setPleatAttributes', 'openPleats', 'closePleats', 'openPleat', 'closePleat',
+    'deletePleat', 'pleatOpenings', 'pleatFabric'],
+  'ops/fullness': ['addFullness', 'addMultiFullness', 'deleteFullness', 'fullnessOpenings', 'fullnessRecord'],
   'ops/grading': ['gradingTable', 'setGrade', 'dragGrade', 'copyGrading', 'pasteGrading', 'smartPaste', 'pasteGradingAround', 'flipX', 'flipY', 'deleteX',
     'deleteY', 'deleteAll', 'equalX', 'equalY', 'stackPoint', 'stackAlongLine', 'anchorRun', 'angleGrading', 'gradeParallel', 'gradeProportionally', 'gradedNest', 'gradedPosition'],
   'ops/sizes': ['insertSize', 'appendSize', 'removeSize', 'renameSize', 'setBase', 'setAxis2', 'deleteUngradedSizes', 'deleteInvisibleSizes', 'ungradedSizes', 'invisibleSizes'],
@@ -64,16 +73,22 @@ export const KERNEL_GROUPS = {
 export type KernelFnName = (typeof KERNEL_GROUPS)[keyof typeof KERNEL_GROUPS][number];
 export const KERNEL_FNS: KernelFnName[] = Object.values(KERNEL_GROUPS).flat() as KernelFnName[];
 
-/** Live-object ops (darts / pleats / fullness): placeholders — wired by a later pass. */
+/**
+ * Convenience wrappers over the live-object kernel ops (one undo step each). Wired in
+ * kernel-wiring.ts → `liveOpsImpl`.
+ */
 export interface LiveOps {
-  addDart(doc: Document, args: { pieceId: Id; at: Vec; apex: Vec; width: number }): Id;
-  rotateDart(doc: Document, args: { pieceId: Id; dartId: Id; target: Vec }): void;
-  toggleDartClosed(doc: Document, args: { pieceId: Id; dartId: Id }): void;
-  addPleat(doc: Document, args: { pieceId: Id; start: Vec; end: Vec; depth: number; type: 'box' | 'knife' }): Id;
-  addFullness(doc: Document, args: { pieceId: Id; line: Vec[]; amount: number }): void;
+  /** createDart: centre on a contour position (or an existing sew anchor); apex by depth or explicit point (then Fix Dart) */
+  addDart(doc: Document, args: { pieceId: Id; at: LiveContourPos | { anchorId: Id }; width: number; depth?: number; apex?: Vec; fold?: 'A' | 'B'; drillOffset?: number }): Id;
+  /** pivot transfer (`transferDart`, default 100 %), or Rotate Around offset Center when `center` is given (`rotateDartAroundCenter`) */
+  rotateDart(doc: Document, args: { pieceId: Id; dartId: Id; target: LiveContourPos; pct?: number; pivot?: Vec; center?: Vec }): Id;
+  /** close an open dart / reopen a closed one (`width` undefined = exact restore) */
+  toggleDartClosed(doc: Document, args: { pieceId: Id; dartId: Id; width?: number }): void;
+  /** Add Pleat Axis with attributes, opened when `open` and depth > 0 */
+  addPleat(doc: Document, args: { pieceId: Id; start: Vec; end: Vec; attrs?: KT.PleatAttributes; open?: boolean }): Id;
 }
 export const LIVE_GROUPS: Record<keyof LiveOps, string> = {
-  addDart: 'ops/darts', rotateDart: 'ops/darts', toggleDartClosed: 'ops/darts', addPleat: 'ops/pleats', addFullness: 'ops/fullness',
+  addDart: 'ops/darts', rotateDart: 'ops/darts', toggleDartClosed: 'ops/darts', addPleat: 'ops/pleats',
 };
 
 export type KernelOps = Pick<typeof KT, KernelFnName> & LiveOps;
