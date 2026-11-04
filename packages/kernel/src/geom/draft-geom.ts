@@ -17,13 +17,13 @@ import { newId } from '../model/factory';
 
 export const GEO_EPS = 1e-6;
 
-export function clone<T>(x: T): T { return JSON.parse(JSON.stringify(x)); }
+export function jsonClone<T>(x: T): T { return JSON.parse(JSON.stringify(x)); }
 
 export class NotImplemented extends Error { constructor(what: string) { super('Not implemented: ' + what); } }
 
 // ───────────────────────── lookup ─────────────────────────
 
-export function allContours(piece: Piece): Contour[] { return [piece.sew, ...piece.internals]; }
+export function pieceContours(piece: Piece): Contour[] { return [piece.sew, ...piece.internals]; }
 
 export function contourOf(piece: Piece, contourId: Id): Contour {
   if (piece.sew.id === contourId) return piece.sew;
@@ -32,7 +32,7 @@ export function contourOf(piece: Piece, contourId: Id): Contour {
   return c;
 }
 
-export function locateAnchor(piece: Piece, anchorId: Id): { contour: Contour; index: number; anchor: Anchor } {
+export function findAnchorIn(piece: Piece, anchorId: Id): { contour: Contour; index: number; anchor: Anchor } {
   for (const c of [piece.sew, ...piece.internals, ...(piece.manualCut ? [piece.manualCut] : [])]) {
     const i = c.points.findIndex(a => a.id === anchorId);
     if (i >= 0) return { contour: c, index: i, anchor: c.points[i] };
@@ -78,10 +78,10 @@ export function between(contour: Contour, a: number, b: number): number[] {
 export function resolveBase(contour: Contour, line: SizeLine, tol = 0.05): ResolvedContour {
   return resolveContour(contour, line, line.baseSizeId, tol);
 }
-export function cumPoly(r: ResolvedContour): Vec[] { return r.closed && r.pts.length > 1 ? [...r.pts, r.pts[0]] : r.pts; }
+export function closedPoly(r: ResolvedContour): Vec[] { return r.closed && r.pts.length > 1 ? [...r.pts, r.pts[0]] : r.pts; }
 export function lengthOf(r: ResolvedContour): number { return r.cum[r.cum.length - 1] ?? 0; }
 export function arcS(r: ResolvedContour, i: number): number { return r.cum[r.anchorIndex[i]] ?? 0; }
-export function wrapS(r: ResolvedContour, s: number): number {
+export function wrapArc(r: ResolvedContour, s: number): number {
   const L = lengthOf(r);
   if (L <= 0) return 0;
   if (!r.closed) return Math.max(0, Math.min(L, s));
@@ -99,8 +99,8 @@ export function spanLen(r: ResolvedContour, a: number, b: number): number {
 }
 
 export function pointAt(r: ResolvedContour, s: number): { pt: Vec; edge: number; f: number; tangent: Vec } {
-  const poly = cumPoly(r), cum = r.cum;
-  s = wrapS(r, s);
+  const poly = closedPoly(r), cum = r.cum;
+  s = wrapArc(r, s);
   if (poly.length < 2) return { pt: { ...(poly[0] ?? { x: 0, y: 0 }) }, edge: 0, f: 0, tangent: { x: 1, y: 0 } };
   let e = 0;
   while (e < cum.length - 2 && cum[e + 1] < s) e++;
@@ -111,8 +111,8 @@ export function pointAt(r: ResolvedContour, s: number): { pt: Vec; edge: number;
   return { pt: lerp(poly[e], poly[e + 1], f), edge: e, f, tangent: norm(sub(poly[e + 1], poly[e])) };
 }
 
-export function closestS(r: ResolvedContour, q: Vec): { s: number; pt: Vec; d: number } {
-  const poly = cumPoly(r);
+export function closestArc(r: ResolvedContour, q: Vec): { s: number; pt: Vec; d: number } {
+  const poly = closedPoly(r);
   let best = { s: 0, pt: { ...(poly[0] ?? { x: 0, y: 0 }) }, d: Infinity };
   for (let e = 0; e + 1 < poly.length; e++) {
     const a = poly[e], b = poly[e + 1], ab = sub(b, a), l2 = dot(ab, ab);
@@ -137,7 +137,7 @@ export function spanEdgeEnd(r: ResolvedContour, i: number): number {
 
 /** Sampled polyline from anchor a forward to anchor b (inclusive). */
 export function spanPoly(r: ResolvedContour, a: number, b: number): Vec[] {
-  const poly = cumPoly(r);
+  const poly = closedPoly(r);
   const ia = r.anchorIndex[a];
   let ib = r.anchorIndex[b];
   if (r.closed && (ib < ia || (ib === ia && a === b))) ib += r.pts.length;
@@ -149,11 +149,11 @@ export function spanPoly(r: ResolvedContour, a: number, b: number): Vec[] {
 
 /** Sampled polyline between arc lengths s0 → s1 (forward). */
 export function arcSlice(r: ResolvedContour, s0: number, s1: number): Vec[] {
-  const poly = cumPoly(r), L = lengthOf(r);
+  const poly = closedPoly(r), L = lengthOf(r);
   const d = r.closed ? fwd(r, s0, s1) : s1 - s0;
   const out: Vec[] = [pointAt(r, s0).pt];
   if (d <= 0) return out;
-  const start = wrapS(r, s0);
+  const start = wrapArc(r, s0);
   // walk vertices
   const N = poly.length - 1;
   for (let lap = 0; lap < 2; lap++) {
@@ -244,7 +244,7 @@ export function splitAt(contour: Contour, line: SizeLine, s: number, opt: SplitO
   const snap = opt.snap ?? 1e-4;
   const r = resolveBase(contour, line);
   const L = lengthOf(r);
-  s = contour.closed ? wrapS(r, s) : Math.max(0, Math.min(L, s));
+  s = contour.closed ? wrapArc(r, s) : Math.max(0, Math.min(L, s));
   for (let i = 0; i < n; i++) {
     const si = arcS(r, i);
     const d = contour.closed ? Math.min(fwd(r, si, s), fwd(r, s, si)) : Math.abs(si - s);
@@ -296,7 +296,7 @@ export function splitAt(contour: Contour, line: SizeLine, s: number, opt: SplitO
  * corners; their outer handles are dropped). The source contour is NOT modified.
  */
 export function extractRange(contour: Contour, line: SizeLine, s0: number, s1: number, opt: { keepIds?: boolean; grading?: 'auto' | 'zero' } = {}): Anchor[] {
-  const c = clone(contour);
+  const c = jsonClone(contour);
   const r0 = resolveBase(c, line);
   const p1 = pointAt(r0, s1).pt;
   const full = c.closed && Math.abs(fwd(r0, s0, s1)) < 1e-9 && Math.abs(s0 - s1) > 1e-9;
@@ -314,7 +314,7 @@ export function extractRange(contour: Contour, line: SizeLine, s0: number, s1: n
   freeze(c, r2, i0); freeze(c, r2, i1);
   const ids = [i0, ...between(c, i0, i1), i1];
   if (!c.closed && i1 < i0) throw new Error('extractRange: s1 before s0 on open contour');
-  const out = ids.map(i => clone(c.points[i]));
+  const out = ids.map(i => jsonClone(c.points[i]));
   const first = out[0], last = out[out.length - 1];
   delete first.hIn; first.smooth = false;
   delete last.hOut; last.smooth = false;
@@ -324,7 +324,7 @@ export function extractRange(contour: Contour, line: SizeLine, s0: number, s1: n
 
 /** closest arc position to q, preferring the candidate nearest to sHint when several are equally close */
 export function closestSNear(r: ResolvedContour, q: Vec, sHint: number): number {
-  const poly = cumPoly(r);
+  const poly = closedPoly(r);
   let best = { s: sHint, d: Infinity, h: Infinity };
   for (let e = 0; e + 1 < poly.length; e++) {
     const a = poly[e], b = poly[e + 1], ab = sub(b, a), l2 = dot(ab, ab);
@@ -347,7 +347,7 @@ export function reverseAnchors(points: Anchor[], closed: boolean): Anchor[] {
   }
   const out: Anchor[] = [];
   for (let i = n - 1; i >= 0; i--) {
-    const a = clone(points[i]);
+    const a = jsonClone(points[i]);
     const hIn = a.hOut, hOut = a.hIn;
     delete a.hIn; delete a.hOut;
     if (hIn) a.hIn = hIn; if (hOut) a.hOut = hOut;
@@ -471,7 +471,7 @@ export function transformPiece(piece: Piece, xf: Xf): void {
   for (const c of piece.internals) transformContour(c, xf);
   if (piece.manualCut) transformContour(piece.manualCut, xf);
   for (const d of piece.darts) xfObj(d.apex, xf);
-  for (const p of piece.pleats) { xfObj(p.axisStart, xf); xfObj(p.axisEnd, xf); if (p.snapshot) xfSnap(p.snapshot, xf); }
+  for (const p of piece.pleats) { xfObj(p.axisStart, xf); xfObj(p.axisEnd, xf); xfAnySnap(p, xf); }
   for (const d of piece.drills) xfObj(d, xf);
   for (const t of piece.texts) { xfObj(t, xf); t.angleDeg = xf.ang(t.angleDeg); }
   for (const a of piece.artwork) { xfObj(a, xf); a.angleDeg = xf.ang(a.angleDeg); if (xf.mirror) a.scaleX = -a.scaleX; }
@@ -479,8 +479,13 @@ export function transformPiece(piece: Piece, xf: Xf): void {
   piece.grain.a = xf.pt(piece.grain.a); piece.grain.b = xf.pt(piece.grain.b);
   xfGrade(piece.grain.gradeA, xf); xfGrade(piece.grain.gradeB, xf);
   if (piece.half) { piece.half.a = xf.pt(piece.half.a); piece.half.b = xf.pt(piece.half.b); }
-  for (const f of piece.fullness ?? []) { if ('x' in f.pivot) { const p = xf.pt(f.pivot); f.pivot = { x: p.x, y: p.y }; } if (f.snapshot) xfSnap(f.snapshot, xf); }
+  for (const f of piece.fullness ?? []) { if ('x' in f.pivot) { const p = xf.pt(f.pivot); f.pivot = { x: p.x, y: p.y }; } xfAnySnap(f, xf); }
   if (piece.reference) { transformContour(piece.reference.sew, xf); for (const c of piece.reference.internals) transformContour(c, xf); }
+}
+/** live objects may carry a pre-transform snapshot (shape owned by other modules): transform any found */
+function xfAnySnap(o: object, xf: Xf) {
+  const snap = (o as { snapshot?: unknown }).snapshot as Parameters<typeof xfSnap>[0] | undefined;
+  if (snap && typeof snap === 'object') xfSnap({ anchors: snap.anchors ?? [], apexes: snap.apexes ?? [], drills: snap.drills ?? [] }, xf);
 }
 function xfSnap(s: { anchors: Anchor[]; apexes: { apex: { x: number; y: number; grade: Record<SizeId, GradeInc> } }[]; drills: { x: number; y: number; grade: Record<SizeId, GradeInc> }[] }, xf: Xf) {
   for (const a of s.anchors) transformAnchor(a, xf);
@@ -489,7 +494,7 @@ function xfSnap(s: { anchors: Anchor[]; apexes: { apex: { x: number; y: number; 
 }
 
 /**
- * Deep-clone a value and give every object carrying an `id` a fresh id, rewriting every string
+ * Deep-jsonClone a value and give every object carrying an `id` a fresh id, rewriting every string
  * reference to those ids anywhere in the structure (notch anchors, dart legs, connections …).
  */
 export function cloneWithNewIds<T>(x: T, prefixOf: (oldId: string) => string = () => 'o'): { value: T; map: Map<string, string> } {
@@ -509,7 +514,7 @@ export function cloneWithNewIds<T>(x: T, prefixOf: (oldId: string) => string = (
     if (o && typeof o === 'object') { const out: Record<string, unknown> = {}; for (const [k, v] of Object.entries(o as Record<string, unknown>)) out[k] = rewrite(v); return out; }
     return o;
   };
-  return { value: rewrite(clone(x)) as T, map };
+  return { value: rewrite(jsonClone(x)) as T, map };
 }
 
 // ───────────────────────── misc vector helpers ─────────────────────────
@@ -529,7 +534,7 @@ export { len, norm, sub, add, mul, dist, lerp, dot, cross, bezierPoint };
 /** Floating placement (fromPrev, constant distance) for a base point on a contour. */
 export function floatingPlacement(contour: Contour, line: SizeLine, pos: Vec): NotchPlacement {
   const r = resolveBase(contour, line);
-  const s = closestS(r, pos).s;
+  const s = closestArc(r, pos).s;
   let best = -1, bs = -Infinity;
   for (const g of r.gradeIdx) { const sg = arcS(r, g); if (sg <= s + 1e-9 && sg > bs) { bs = sg; best = g; } }
   if (best < 0) { // closed contour: the last grade anchor wraps around
@@ -540,3 +545,129 @@ export function floatingPlacement(contour: Contour, line: SizeLine, pos: Vec): N
   const dist: Record<SizeId, number> = {}; for (const id of sizeIds(line)) dist[id] = d;
   return d < 1e-9 ? { kind: 'anchor', anchorId: contour.points[best].id } : { kind: 'fromPrev', anchorId: contour.points[best].id, dist };
 }
+
+/** Base-size position of a notch on its contour (own evaluator, mirrors ops/notches placement semantics). */
+export function notchBasePos(r: ResolvedContour, contour: Contour, n: Piece['notches'][number], line: SizeLine): Vec {
+  const pl = n.placement;
+  const ia = idx(contour, pl.anchorId);
+  const sA = arcS(r, ia);
+  let s = sA;
+  if (pl.kind === 'fromPrev') s = sA + (pl.dist[line.baseSizeId] ?? Object.values(pl.dist)[0] ?? 0);
+  else if (pl.kind === 'fromNext') s = sA - (pl.dist[line.baseSizeId] ?? Object.values(pl.dist)[0] ?? 0);
+  else if (pl.kind === 'proportional') {
+    const ib = n.spanEndAnchorId ? idx(contour, n.spanEndAnchorId) : nextGrade(contour, ia);
+    if (ib >= 0) s = sA + (pl.pct / 100) * spanLen(r, ia, ib);
+  }
+  return pointAt(r, s).pt;
+}
+
+// ───────────────────────── polyline → anchors ─────────────────────────
+
+/**
+ * Convert a sampled polyline into anchors: RDP simplification (tol), vertices turning more than
+ * `cornerDeg` become grade corners, others smooth curve points (centripetal CR reproduces them).
+ * The two ends are grade corners. Purely straight input yields corners only.
+ */
+export function anchorsFromPolyline(pts: Vec[], o: { tol?: number; cornerDeg?: number; closed?: boolean } = {}): Anchor[] {
+  const tol = o.tol ?? 0.01, cornerDeg = o.cornerDeg ?? 20;
+  const P = pts.filter((p, i) => i === 0 || dist(p, pts[i - 1]) > 1e-9);
+  if (o.closed && P.length > 1 && dist(P[0], P[P.length - 1]) < 1e-9) P.pop();
+  const keep = o.closed ? rdpClosed(P, tol) : rdpIndices(P, tol);
+  const K = keep.map(i => P[i]);
+  const n = K.length;
+  const turn = (i: number): number => {
+    const a = K[(i - 1 + n) % n], b = K[i], c = K[(i + 1) % n];
+    const u = norm(sub(b, a)), w = norm(sub(c, b));
+    return (Math.acos(Math.max(-1, Math.min(1, dot(u, w)))) * 180) / Math.PI;
+  };
+  // a vertex between two long straight edges is a corner even at small turns
+  const out: Anchor[] = K.map((p, i) => {
+    const end = !o.closed && (i === 0 || i === n - 1);
+    const corner = end || turn(i) > cornerDeg || isStraightNeighbourhood(K, i, o.closed ?? false, tol);
+    return { id: newId('p'), x: p.x, y: p.y, kind: corner ? 'grade' : 'curve', smooth: !corner, grade: {}, flags: {} };
+  });
+  // curve runs that are entirely straight: drop smoothness (all corners) – already handled by RDP
+  return out;
+}
+function isStraightNeighbourhood(K: Vec[], i: number, closed: boolean, tol: number): boolean {
+  // both adjacent RDP edges are long relative to tol and there is a measurable turn → treat as corner
+  const n = K.length;
+  if (!closed && (i === 0 || i === n - 1)) return true;
+  const a = K[(i - 1 + n) % n], b = K[i], c = K[(i + 1) % n];
+  const l1 = dist(a, b), l2 = dist(b, c);
+  const t = Math.abs(cross(norm(sub(b, a)), norm(sub(c, b))));
+  return l1 > 20 && l2 > 20 && t > 1e-3 && tol >= 0;
+}
+function rdpClosed(P: Vec[], tol: number): number[] {
+  if (P.length <= 3) return P.map((_, i) => i);
+  // split at the farthest point from P[0]
+  let far = 0, fd = -1;
+  for (let i = 1; i < P.length; i++) { const d = dist(P[i], P[0]); if (d > fd) { fd = d; far = i; } }
+  const a = rdpIndices(P.slice(0, far + 1), tol);
+  const b = rdpIndices([...P.slice(far), P[0]], tol).map(i => i + far);
+  const out = [...a, ...b.slice(1, -1)];
+  return Array.from(new Set(out)).sort((x, y) => x - y);
+}
+
+// ───────────────────────── notch capture / restore ─────────────────────────
+
+export interface CapturedNotch { notch: Piece['notches'][number]; pos: Vec; contourId: Id }
+
+/** Capture base positions of every notch on the given contours (or all) of a piece. */
+export function captureNotches(piece: Piece, line: SizeLine, contourIds?: Id[]): CapturedNotch[] {
+  const out: CapturedNotch[] = [];
+  for (const n of piece.notches) {
+    if (contourIds && !contourIds.includes(n.contourId)) continue;
+    const c = [piece.sew, ...piece.internals].find(c => c.id === n.contourId);
+    if (!c || !c.points.some(a => a.id === n.placement.anchorId)) continue;
+    out.push({ notch: jsonClone(n), pos: notchBasePos(resolveBase(c, line), c, n, line), contourId: n.contourId });
+  }
+  return out;
+}
+
+/**
+ * Re-place captured notches onto `piece` (same id kept): nearest of its contours within tol;
+ * an anchor at the position → 'anchor' placement, else floating fromPrev. A notch whose original
+ * contour still exists unchanged around its anchor is left as is. Returns notches that found no home.
+ */
+export function restoreNotches(piece: Piece, line: SizeLine, caps: CapturedNotch[], tol = 1e-3, preferContour?: (c: CapturedNotch) => Id | undefined): CapturedNotch[] {
+  const homeless: CapturedNotch[] = [];
+  for (const cap of caps) {
+    piece.notches = piece.notches.filter(n => n.id !== cap.notch.id);
+    const cands = [piece.sew, ...piece.internals];
+    let best: { c: Contour; d: number; s: number } | null = null;
+    const pref = preferContour?.(cap);
+    for (const c of cands) {
+      if (c.points.length < 2) continue;
+      const r = resolveBase(c, line);
+      const cl = closestArc(r, cap.pos);
+      const bonus = c.id === pref ? -1e-9 : 0;
+      if (cl.d <= tol && (!best || cl.d + bonus < best.d)) best = { c, d: cl.d + bonus, s: cl.s };
+    }
+    if (!best) { homeless.push(cap); continue; }
+    const n = jsonClone(cap.notch);
+    n.contourId = best.c.id;
+    // keep the original placement when still valid on this contour and it evaluates to the same spot
+    const keepOk = best.c.points.some(a => a.id === n.placement.anchorId) && (!n.spanEndAnchorId || best.c.points.some(a => a.id === n.spanEndAnchorId));
+    if (keepOk && dist(notchBasePos(resolveBase(best.c, line), best.c, n, line), cap.pos) < tol) { piece.notches.push(n); continue; }
+    delete n.spanEndAnchorId;
+    const r = resolveBase(best.c, line);
+    const ai = best.c.points.findIndex((_, i) => dist(r.anchorPos[i], cap.pos) < tol);
+    n.placement = ai >= 0 ? { kind: 'anchor', anchorId: best.c.points[ai].id } : floatingPlacement(best.c, line, cap.pos);
+    piece.notches.push(n);
+  }
+  return homeless;
+}
+
+// ───────────────────────── mirror helpers ─────────────────────────
+
+/** Mirror copies (fresh ids) of anchors across the line a→b, in reversed order (so the run direction is reversed). */
+export function mirroredReversed(points: Anchor[], a: Vec, b: Vec): Anchor[] {
+  const xf = xfMirror(a, b);
+  const rev = reverseAnchors(points, false);
+  for (const p of rev) { transformAnchor(p, xf); p.id = newId('p'); p.flags = { ...p.flags, startPoint: undefined }; delete p.flags.startPoint; }
+  return rev;
+}
+
+/** Signed distance of p from the line a→b (left positive). */
+export function sideOf(p: Vec, a: Vec, b: Vec): number { const d = norm(sub(b, a)); return cross(d, sub(p, a)); }

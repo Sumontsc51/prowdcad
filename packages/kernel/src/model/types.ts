@@ -125,52 +125,74 @@ export interface Pleat {
   open: boolean;
   autoNotches: boolean;
   name?: string;
-  /** (pleats module) pleat-edge anchors on the sew contour, one entry per axis crossing (in axis order) */
+  /** (pleats module) pleat-edge anchors on the sew contour while OPEN, one entry per axis crossing (start crossing first) */
   edges?: PleatEdge[];
   /** (pleats module) which side of the axis (start→end) is translated when opening. Default 'right'. */
   moveSide?: 'left' | 'right';
   /** (pleats module) id of the dashed 'pleatAxis' internal contour */
   axisContourId?: Id;
-  /** (pleats module) auto-notch ids written onto piece.notches */
+  /** (pleats module) auto-notch ids written onto piece.notches while open */
   notchIds?: Id[];
-  /** (pleats module) sew anchors inserted by this pleat (removed by removePleat) */
+  /** (pleats module) sew anchors inserted by the open state (ids are re-used on re-open) */
   insertedIds?: Id[];
-  /** (pleats module) translations applied by the current open state; undone exactly on close */
-  moves?: LiveMove[];
+  /** (pleats module) pre-open copy of everything the open transform moved; restored verbatim on close */
+  snapshot?: LiveSnapshot;
+  /** (pleats/fullness) order in the piece's live spread stack (LIFO close/re-apply) */
+  openSeq?: number;
+  /** (pleats module) which axis crossing gets the auto notches. Default 'start'. */
+  notchAt?: 'start' | 'end' | 'both';
+  /** (pleats module) ids reserved for the anchors the open state inserts (stable across close/re-open) */
+  slotIds?: Id[];
 }
 
-/** (pleats module) anchors inserted where a pleat axis crosses the sew contour. Coincide while closed. */
+/** (pleats module) anchors inserted where a pleat axis crosses the sew contour. `mid` = box-pleat centre fold. */
 export interface PleatEdge { fixed: Id; moving: Id; mid?: Id }
 
 /**
- * (darts/pleats/fullness) One reversible edit applied by a live object. `before` is the full
- * pre-edit state; reversal restores it verbatim when the item still sits at before+delta, else
- * subtracts the delta (so later independent translations survive).
+ * (pleats/fullness/darts) Pre-op copy of everything a reversible spread moved.
+ * anchors: sew + internal anchors (by id). apexes: dart apexes by dart id; pleat axis ends use the keys
+ * `pleatStart:<pleatId>` / `pleatEnd:<pleatId>`. drills: drills by id; text annotations use `text:<textId>`.
  */
-export interface LiveMove {
-  kind: 'anchor' | 'apex' | 'drill' | 'text' | 'pleatStart' | 'pleatEnd';
-  id: Id;
-  dx: number; dy: number;
-  before: { x: number; y: number; hIn?: Vec; hOut?: Vec; grade: Record<SizeId, GradeInc>; gradeAxisDeg?: number };
+export interface LiveSnapshot {
+  anchors: Anchor[];
+  apexes: { dartId: Id; apex: { x: number; y: number; grade: Record<SizeId, GradeInc>; grade2?: Record<SizeId, GradeInc> } }[];
+  drills: { id: Id; x: number; y: number; grade: Record<SizeId, GradeInc>; grade2?: Record<SizeId, GradeInc> }[];
 }
+
+/** Contour position stored id-relative (stable across inserts): arc distance (mm, base) forward from a sew anchor. */
+export interface ContourPosRef { fromAnchor: Id; dist: number }
+
+/** Parameters of a fullness op, kept so a record can be re-applied after a LIFO unwind. */
+export type FullnessOp =
+  | { kind: 'single'; slash: ContourPosRef; pivot: ContourPosRef | { x: number; y: number }; openA: number; openB: number; mode: 'rotate' | 'parallel' }
+  | { kind: 'multi'; slashes: ContourPosRef[]; hinges: ContourPosRef[]; widths: number[]; mode: 'rotate' | 'parallel' };
 
 /** Slash & spread record (fullness module). */
 export interface Fullness {
   id: Id;
-  /** sew anchors inserted at the slash(es): [sA, sB] per slash, flattened */
+  /** sew anchors inserted at the slash(es): [fixed, moving] per slash, flattened */
   slashAnchorIds: Id[];
   /** hinge: a sew anchor id (pivot on contour) or an internal point */
   pivot: { anchorId: Id } | { x: number; y: number };
   amounts: { openA: number; openB: number };
   mode?: 'rotate' | 'parallel';
-  /** every anchor id inserted by this record (slash + hinge anchors), removed on delete */
+  /** every anchor id inserted by this record (slash + hinge anchors), removed on delete, re-used on re-apply */
   insertedIds?: Id[];
-  /** hinge anchor ids (one per slash) */
+  /** hinge anchor ids (one per slash; on the contour) */
   hingeIds?: Id[];
   /** multi fullness: per-slash amounts */
   perSlash?: { openA: number; openB: number }[];
-  /** reversible edits applied by the spread (restored in reverse order by deleteFullness) */
-  moves?: LiveMove[];
+  /** pre-op copy of everything the spread moved */
+  snapshot?: LiveSnapshot;
+  /** position in the piece's live spread stack */
+  seq?: number;
+  op?: FullnessOp;
+  /** internal pivot only: signed opening at the far hinge (negative = overlap), mm base size */
+  hingeOpen?: number;
+  /** Insert Dart: dart created together with this record */
+  dartId?: Id;
+  /** ids reserved for the anchors this record inserts (stable across LIFO unwind/re-apply) */
+  slotIds?: Id[];
 }
 
 export type NotchType = 'slit' | 'T' | 'V' | 'U' | 'castle';
