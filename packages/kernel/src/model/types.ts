@@ -108,7 +108,7 @@ export interface Dart {
   sourceFullnessId?: Id;
   /** (darts module) exact copies of the leg anchors taken at Close, restored by reopen */
   closedLegs?: Anchor[];
-  /** (darts module) seam allowance kept on each leg of a Cutting Dart (default: mouth segment seam) */
+  /** (darts module) seam allowance kept on each leg of a Cutting Dart (default 0 = cut on the legs) */
   cutSeam?: number;
 }
 
@@ -164,8 +164,8 @@ export interface ContourPosRef { fromAnchor: Id; dist: number }
 
 /** Parameters of a fullness op, kept so a record can be re-applied after a LIFO unwind. */
 export type FullnessOp =
-  | { kind: 'single'; slash: ContourPosRef; pivot: ContourPosRef | { x: number; y: number }; openA: number; openB: number; mode: 'rotate' | 'parallel' }
-  | { kind: 'multi'; slashes: ContourPosRef[]; hinges: ContourPosRef[]; widths: number[]; mode: 'rotate' | 'parallel' };
+  | { kind: 'single'; slash: ContourPosRef; pivot: ContourPosRef | { x: number; y: number }; openA: number; openB: number; mode: 'rotate' | 'parallel'; side: 'forward' | 'backward' }
+  | { kind: 'multi'; slashes: ContourPosRef[]; hinges: ContourPosRef[]; widths: number[]; mode: 'rotate' | 'parallel'; side: 'forward' | 'backward' };
 
 /** Slash & spread record (fullness module). */
 export interface Fullness {
@@ -178,7 +178,7 @@ export interface Fullness {
   mode?: 'rotate' | 'parallel';
   /** every anchor id inserted by this record (slash + hinge anchors), removed on delete, re-used on re-apply */
   insertedIds?: Id[];
-  /** hinge anchor ids (one per slash; on the contour) */
+  /** hinge anchor ids on the contour, flattened pairs per slash ([h, h] when the hinge is a single pivot anchor) */
   hingeIds?: Id[];
   /** multi fullness: per-slash amounts */
   perSlash?: { openA: number; openB: number }[];
