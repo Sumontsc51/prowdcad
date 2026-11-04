@@ -38,6 +38,9 @@ All lengths are typed in the current display unit and accept decimals **or** fra
 | Notch | N | Click on a sew or internal line → dialog: placement (on point / from previous / from next / proportional %), type, depth, width, angle, cut/draw. Click an existing notch = notch grid editor. Notches render from `resolveNotch` cut geometry, in every size in the nested view |
 | Drill / button | D | Click inside a piece → dialog (drill / button / buttonhole, Ø, cut/draw). Click an existing drill = edit / duplicate with offset / delete |
 | Text | T | Click inside a piece → text dialog. Click an existing text = edit / delete |
+| Dart | Shift+D | Click a sew line → *Create dart* dialog (width, apex by depth or by a clicked point, fold toward leg A/B, drill offset) → `createDart`. Click a dart (legs or axis) to select it: the Inspector shows width, depth, fold, drill offset, Closed (close / reopen, exact restore), Cutting dart (+ seam on the legs), live leg lengths, and buttons for Fix dart, Change darts, Copy / Paste, Pivot transfer, Rotate around centre, Cut all, Remove (restore / keep fullness) |
+| Pleat | Shift+L | Click the axis START then END → pleat dialog (knife / box, depth at start / end, fold, auto notches, open now). Alt on the second click = **Add Pleat Axis** only; set the attributes in the Inspector, then Open. Click a pleat to select it (Inspector: type, depths, fold, moving side, notches, openings, Open / Close / Open all / Close all / Delete) |
+| Add fullness | Shift+U | Click the SLASH point on a sew line, then the PIVOT (on the sew line = hinge, inside the piece = rotation centre) → dialog (opening at the slash, opening at the hinge, rotate / parallel, moving side) → `addFullness`. Click a slash line to select the record (Delete = exact restore) |
 | Slash | K | Click points across a piece (snaps; Shift = H/V/45°; Backspace removes a point), Enter or right-click → dialog (zero / auto grade of the new cut points, seam on the new edges) → `slashPiece` |
 | Trace segments | Shift+T | Click points (straight joins); Alt-click two points of one contour to take the run between them (Shift+Alt = backwards); Enter → new piece (`traceSegments`) |
 | Measure | M | Click two points: L / dX / dY / angle, plus a per-size table when both are points of one piece. Ctrl-click 3 points = angle. Alt-click a line = grade-segment length per size with chord dX/dY (Shift+Alt-click extends the run). Alt-click a point = per-size position and dX/dY from base |
@@ -47,6 +50,8 @@ All lengths are typed in the current display unit and accept decimals **or** fra
 Every tool: **Enter** finishes, **Esc** cancels, **Backspace** removes the last draft point.
 
 ### Canvas picks
+
+Darts, pleats and fullness records are **live objects**: they render in every displayed size (nested view included) from the kernel geometry (`dartSewGeometry`, graded pleat axes, the slash / hinge anchors of each fullness record): dart legs + apex + dashed axis (closed dart: axis only) and a drill mark at the drill offset; pleat axis (dash-dot), fold lines and shaded inserted fabric when open, fold-direction ticks when closed; fullness slash lines (dashed) and shaded wedges. Each has a hit target: clicking it with Select or its own tool selects it (orange highlight) and shows its Inspector section; right-click opens its context menu; Delete removes it (darts ask restore / keep fullness). The cut line follows `dartCutShape`: a folded dart gets its dart cap, a cutting dart is cut into the legs.
 
 Commands that need geometry ask for it on the canvas when the selection does not already provide it. The status bar shows the prompt; Esc cancels. Examples: *Seam ▸ Seam of segment* (click a segment), *Join pieces* (segment on A, then on B), *Binding generator* (click a chain of segments on any pieces, then Enter), *Compare length ▸ Add +/−* (click segments; Shift = reverse), *Manual seam angle* (corner, then two trim clicks), *Rotate segment* (segment, then the pivot end, then the new direction with a live preview), *Fold in* (two fold points, then the side to keep), *Half piece* (two axis points), *Build piece* (click inside a region), *Multi buttons* (two references: points or drills).
 
@@ -64,6 +69,7 @@ A "segment" from the selection means one of two things: two selected points on o
 | Notch | Notch tool, notch grid editor (per-size distances, fill all, extrapolate increment, paste TSV, convert, delete), notch on points, corner notch, cross notch, Add points for notches, Global notch grading, Notch setup, Drill tool, Duplicate with offset, Multi buttons, Slit contour segment, Text tool, Place artwork (file picker → data URL), Binding generator |
 | Cut | Slash tool, Cut along internal, Cut H/V at point (with offset), Cut parallel strip, Cut by guideline (drag a guide from a ruler first), Parallel internal, Extend/shrink parallel, Shapers (arc by depth/radius/length/through-point, wave, scallop/zigzag, ruffle, circular skirt), Trace, Build piece, Join pieces, Fold in/out, Half piece set/open/delete |
 | Grade | Grading table (its toolbar has the same power ops), nested view, absolute values, point tracking, rule names on the canvas, Clipboard (copy, paste, X only, Y only, flipped, Smart paste, Paste around), Edit (flip, equal, delete X/Y/all, stack point, stack along line, angle grading with auto-aim, grade parallel, grade proportionally), Rule library window (libraries; rules from values / point / contour; apply by number or name; Load sizes), Apply/Detach rule, Movement programs window (programs, moves from the selection, apply delta, measurement sets), Graded nest from pieces (selection order = smallest → largest), Sizes (axis-2 variation, delete ungraded / invisible) |
+| Dart | Add dart at point (selected sew point), Multi darts (segment pick → N, width, depth), Insert dart (slash point, pivot pick or Enter = automatic, width, depth), Close / reopen (Ctrl+Alt+D), Reopen at width, Fix dart, Cutting on/off, Change darts (flip every fold), Close / reopen all darts of the piece, Cut all darts (piece or all; cutting or folded), Pivot transfer (Shift+Alt+T: dart → target on the contour → % (default 100) + optional pivot click), Rotate around offset centre (dart → target → centre → %, default 50; the two darts share the apex), Copy / Paste dart (paste on a clicked sew line of any piece), Remove dart. **Pleat ▸** Add pleat axis (attributes later), Add pleat, Add by angle, Multi pleat (segment pick), Open / close selected, Open / close all, Delete. **Fullness ▸** Add fullness, Multi fullness (slash segment, hinge segment, N, first / last width, mode), Delete fullness (exact restore; later spreads are re-applied) |
 | Measure | Measure / Walk tools, Piece info (all sizes), Compare length window (+/− segments, mode, per-size table, *Edit segment to target* → `segmentLengthSetTo`), Walking check report, Segment length per size, Notches on segment |
 
 The **Sizes panel** has Insert (before / after, with the neighbour-increment fraction: 0.5 = half size; extrapolates at the ends), Append, Set base, Remove, Axis 2, Delete ungraded / invisible, Size → standalone style. Double-click a size chip to rename it or change its colour.
@@ -91,6 +97,8 @@ The **Inspector** shows *Lock grading* for a piece. For a sew grade point it add
 | Ctrl+Alt+C / V / X / Y / M | Copy grade / paste / paste X only / paste Y only / Smart paste |
 | Ctrl+R · Ctrl+Shift+R | Apply rule by number or name · rule library |
 | Ctrl+I · Ctrl+Shift+L | Piece info · Compare length |
+| Shift+D · Shift+L · Shift+U | Dart · Pleat · Add fullness tools |
+| Ctrl+Alt+D · Shift+Alt+T | Close / reopen dart · Pivot transfer |
 | Ctrl+L · Alt+R | Lock piece · rotate 90° |
 | Ctrl+0, F · Shift+F · Ctrl+1 · +/- | Fit · fit selection · 100 % · zoom |
 | Ctrl+' · Ctrl+Alt+R | Grid · rulers |
@@ -112,13 +120,14 @@ src/
   main.ts            entry: layout, keyboard routing (tool → point tracking → registry), bootstrap
   app.ts             App state: Document, viewport, selection, active size, nested view, drag previews
   commands.ts        command registry: registerCommand({id,title,menu,hotkey,run}), hotkey matching
-  ops-bridge.ts      typed kernel op surface + placeholders (NotWiredError → toast) + wireOps(); kernel-wiring.ts wires it
+  ops-bridge.ts      typed kernel op surface + placeholders (NotWiredError → toast) + wireOps(); kernel-wiring.ts wires it (+ LiveOps wrappers)
+  live.ts            darts / pleats / fullness: per-size geometry, hit-testing, live selection
   hitkit.ts / selection.ts   hit-testing and selection → kernel argument helpers
   geometry.ts        layout transforms, preview resolution, hit-testing, grade helpers
   settings.ts        persisted UI settings (guarded localStorage)
   units-ui.ts        display-unit format/parse on top of kernel parseLengthAuto/formatLength
   canvas/            view.ts (y-up ⇄ screen), canvas.ts (events, pan/zoom, rulers, guides), render.ts, snap.ts
-  tools/             select, pen, internal, shapes, marks (notch/drill/text), seam, walk, construct (smooth/slash/trace), misc (measure/zoom/hand), pick
+  tools/             select, pen, internal, shapes, marks (notch/drill/text), seam, live (dart/pleat/fullness), walk, construct (smooth/slash/trace), misc (measure/zoom/hand), pick
   panels/            inspector, pieces, sizes, grading (+ toolbar), notchgrid, rules, movement, dock, widgets
   ui/                dialog (+ remembered, popover), window, toast, menu (menubar + context menu), palette, statusbar, dom
   actions/           file.ts (native io, import/export, preview, backup), register.ts + per-menu command modules
@@ -131,11 +140,11 @@ cancels, and the undo history stays clean.
 
 `ops-bridge.ts` lists every kernel function the UI uses (`KERNEL_GROUPS`, about 200 functions, grouped by module). `ops` is typed as `Pick<typeof kernel, …>`, so UI calls are type-checked against the kernel's public API. `kernel-wiring.ts → wireKernel()` (called first thing in `main.ts`) replaces the placeholders with the real exports.
 
-The live-object ops for darts / pleats / fullness (`addDart`, `rotateDart`, `toggleDartClosed`, `addPleat`, `addFullness`) still have hand-written signatures and remain placeholders: they show a "not wired yet" toast. To wire them:
+The live-object modules (`ops/darts`, `ops/pleats`, `ops/fullness`) are wired like every other group. Four convenience wrappers with hand-written signatures (`LiveOps`, implemented in `kernel-wiring.ts → liveOpsImpl`) sit on top: `addDart` (→ `createDart`), `rotateDart` (→ `transferDart`, or `rotateDartAroundCenter` when `center` is given), `toggleDartClosed` (→ `closeDart` / `openDart`) and `addPleat` (→ `addPleatAxis` + `openPleat` in one undo step). Fullness is called directly through `addFullness`. To override any op:
 
 ```ts
 import { wireOps } from './ops-bridge';
-wireOps({ addDart: (doc, a) => /* kernel darts op */, /* … */ });
+wireOps({ addDart: (doc, a) => /* … */ });
 ```
 
 Help ▸ Kernel ops status lists every op as `wired` or a placeholder.
@@ -147,5 +156,6 @@ Shared UI infrastructure for the kernel commands:
 - `selection.ts`: selection → segment, run or anchor, with a pick fallback.
 - `ui/window.ts`: draggable non-modal windows.
 - `ui/dialog.ts`: `rememberedDialog` and `popover`.
-- `actions/*-cmds.ts`, `seam-notch.ts`, `point-seg.ts`, `cut-piece.ts`: the menus.
+- `actions/*-cmds.ts`, `seam-notch.ts`, `point-seg.ts`, `cut-piece.ts`: the menus (`live-cmds.ts` = Dart / Pleat / Fullness).
+- `live.ts`: live-object display geometry, hit-testing (`liveNear`), contour hit → `LiveContourPos`, `app.liveSel`; `tools/live.ts` the Dart / Pleat / Fullness tools; `panels/live-inspector.ts` their Inspector sections.
 - `panels/notchgrid.ts`, `rules.ts`, `movement.ts`: the floating editors.

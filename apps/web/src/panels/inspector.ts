@@ -13,11 +13,14 @@ import { reportError } from '../commands';
 import { cornerGallery } from '../actions/seam-notch';
 import { fmt, unitLabel } from '../units-ui';
 import { spanLength, gradeSegment, totalLength } from '@prowdcad/kernel';
+import { liveInspector } from './live-inspector';
 
 export function renderInspector(app: App, host: HTMLElement) {
   clear(host);
   const pa = app.primaryAnchor();
   if (pa) { anchorInspector(app, host, pa); return; }
+  const live = app.currentLive();
+  if (live) { liveInspector(app, host, live); return; }
   const piece = app.primaryPiece();
   if (piece) { pieceInspector(app, host, piece.id); return; }
   host.append(h('div.empty', {}, 'Nothing selected. Click a piece or a point.'));

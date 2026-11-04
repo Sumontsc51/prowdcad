@@ -9,6 +9,7 @@ import { seamTool } from './seam';
 import { walkTool } from './walk';
 import { smoothTool, slashTool, traceTool } from './construct';
 import { pickTool } from './pick';
+import { dartTool, pleatTool, fullnessTool } from './live';
 
 /** Palette order. Tools sharing `group` form one flyout button. */
 export const TOOLS: Tool[] = [
@@ -17,6 +18,7 @@ export const TOOLS: Tool[] = [
   rectTool, circleTool, polygonTool, roundRectTool,
   seamTool,
   notchTool, drillTool, textTool,
+  dartTool, pleatTool, fullnessTool,
   slashTool, traceTool,
   measureTool, walkTool,
   handTool, zoomTool,
@@ -24,5 +26,5 @@ export const TOOLS: Tool[] = [
 ];
 
 export const GROUP_TITLES: Record<string, string> = {
-  select: 'Select', pen: 'Pens', shape: 'Shapes', seam: 'Seam', marks: 'Notch / Drill / Text', cut: 'Cut / Trace', measure: 'Measure / Walk', view: 'Navigate',
+  select: 'Select', pen: 'Pens', shape: 'Shapes', seam: 'Seam', marks: 'Notch / Drill / Text', live: 'Dart / Pleat / Fullness', cut: 'Cut / Trace', measure: 'Measure / Walk', view: 'Navigate',
 };

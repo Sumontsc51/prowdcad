@@ -57,8 +57,8 @@ export interface RawVertex {
 
 export interface RawPoly { pts: RawVertex[]; closed: boolean; type?: ContourType; mode?: 'draw' | 'cut'; name?: string }
 export type RawNotch =
-  | { kind: 'line'; a: Vec; b: Vec; type?: NotchType }
-  | { kind: 'point'; p: Vec; type?: NotchType };
+  | { kind: 'line'; a: Vec; b: Vec; type?: NotchType; gradeA?: Record<SizeId, GradeInc>; gradeB?: Record<SizeId, GradeInc> }
+  | { kind: 'point'; p: Vec; type?: NotchType; grade?: Record<SizeId, GradeInc> };
 export interface RawText { p: Vec; text: string; h: number; rot: number; grade?: Record<SizeId, GradeInc> }
 export interface RawDrill { p: Vec; d: number; grade?: Record<SizeId, GradeInc> }
 
@@ -388,9 +388,37 @@ export function anchorNotch(piece: Piece, raw: RawNotch, line: SizeLine, cutPoly
     if (Math.abs(angleDeg) < 1e-4) angleDeg = 0;
   }
   const anchor = piece.sew.points[prev.i];
+  // Graded notch (flat DXF + RUL): the file carries a grade rule on one notch endpoint. Per size, move
+  // that endpoint by its rule, project it onto that size's sew line and add the change of its arc
+  // distance from the anchor to the base distance (so the base placement method is kept exactly).
+  const perSize: Record<SizeId, number> = Object.fromEntries(line.sizes.map(z => [z.id, d]));
+  const gp = raw.kind === 'line' ? (raw.gradeA ? { p: raw.a, g: raw.gradeA } : raw.gradeB ? { p: raw.b, g: raw.gradeB } : undefined)
+    : raw.grade ? { p: raw.p, g: raw.grade } : undefined;
+  let graded = false;
+  if (gp && line.sizes.length > 1) {
+    const arcFromAnchor = (rc: ResolvedContour, q: Vec) => {
+      const T = rc.cum[rc.cum.length - 1];
+      const RR = ring(rc.pts);
+      // same construction as the base placement: along the notch direction from the outer end
+      const h = u ? linePolyline(q, u, RR) : null;
+      const on = h && Math.abs(h.t) < 100 ? h.pt : q;
+      const v = closestPoint(RR, on).s - rc.cum[rc.anchorIndex[prev.i]];
+      const m = ((v % T) + T) % T;
+      return T - m < 1e-7 ? 0 : m;
+    };
+    // graded endpoint is the outer one when it is on the cut line, else the file's other end
+    const dBase = arcFromAnchor(r, gp.p);
+    for (const z of line.sizes) {
+      if (z.id === line.baseSizeId) continue;
+      const rz = resolveContour(piece.sew, line, z.id);
+      const q = add(gp.p, absoluteOffset(gp.g, line, z.id));
+      perSize[z.id] = Math.max(0, d + arcFromAnchor(rz, q) - dBase);
+      if (Math.abs(perSize[z.id] - d) > 1e-6) graded = true;
+    }
+  }
   const n: Notch = {
     id: newId('n'), contourId: piece.sew.id, type,
-    placement: d < 1e-4 ? { kind: 'anchor', anchorId: anchor.id } : { kind: 'fromPrev', anchorId: anchor.id, dist: Object.fromEntries(line.sizes.map(z => [z.id, Math.round(d * 1e6) / 1e6])) },
+    placement: d < 1e-4 && !graded ? { kind: 'anchor', anchorId: anchor.id } : { kind: 'fromPrev', anchorId: anchor.id, dist: Object.fromEntries(line.sizes.map(z => [z.id, Math.round(perSize[z.id] * 1e6) / 1e6])) },
     depth: Math.round(depth * 1e6) / 1e6, width: setup[type]?.width ?? 0, angleDeg, mode: setup[type]?.mode ?? 'cut', source: 'manual',
   };
   anchor.flags.notchAnchor = true;

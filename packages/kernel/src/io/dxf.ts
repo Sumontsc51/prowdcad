@@ -584,8 +584,10 @@ function scopeToGroup(s: Scope, map: Record<string, LayerRole>, tol: number, tab
     if (p.k === 'text' && (RULE_RE.test(p.text) || ATTR_RE.test(p.text))) continue;
     if (role in NOTCH_ROLE_TYPE) {
       const type = NOTCH_ROLE_TYPE[role as keyof typeof NOTCH_ROLE_TYPE];
-      if (p.k === 'poly' && p.pts.length >= 2) g.notches.push({ kind: 'line', a: p.pts[0], b: p.pts[p.pts.length - 1], type } as RawNotch);
-      else if (p.k === 'point') g.notches.push({ kind: 'point', p: p.p, type });
+      if (p.k === 'poly' && p.pts.length >= 2) {
+        const a = p.pts[0], b = p.pts[p.pts.length - 1];
+        g.notches.push({ kind: 'line', a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y }, type, gradeA: a.grade, gradeB: b.grade } as RawNotch);
+      } else if (p.k === 'point') g.notches.push({ kind: 'point', p: p.p, type, grade: ruleNear(p.p, p.layer) });
       continue;
     }
     switch (role) {
@@ -745,6 +747,21 @@ class DxfWriter {
   }
 }
 
+/** Absolute per-size displacement of every sew-perimeter notch's outer (cut-line) endpoint, by notch id. */
+function perSizeNotchOuter(doc: Document, piece: Piece): Map<Id, Record<SizeId, GradeInc>> {
+  const line = doc.sizeLine(piece);
+  const out = new Map<Id, Record<SizeId, GradeInc>>();
+  const base = new Map(drawPiece(doc, piece, line.baseSizeId).notches.map(n => [n.notch.id, n.a]));
+  for (const sid of doc.sizesOf(piece)) {
+    if (sid === line.baseSizeId) continue;
+    for (const n of drawPiece(doc, piece, sid).notches) {
+      const b0 = base.get(n.notch.id); if (!b0 || n.notch.contourId !== piece.sew.id) continue;
+      const m = out.get(n.notch.id) ?? {}; m[sid] = { dx: n.a.x - b0.x, dy: n.a.y - b0.y }; out.set(n.notch.id, m);
+    }
+  }
+  return out;
+}
+
 /** Assigns rule numbers to distinct increments. Rule 1 = zero rule. */
 class RuleBook {
   rules = new Map<number, Record<SizeId, GradeInc>>();
@@ -834,10 +851,14 @@ export function exportDXF(doc: Document, opt: DXFExportOptions = {}): DXFExportR
       ic.resolved.anchorIndex.forEach((pi, ai) => ruleText(ic.pts[pi], ic.contour.points[ai].grade, layer));
     });
     if (piece.half) W.line(piece.half.a, piece.half.b, '6');
-    // notches
+    // notches. Flat graded export: the notch's outer endpoint carries a grade rule (its per-size
+    // displacement, incremental), so per-size notch distances survive the .rul round trip.
+    const notchAbs = it.graded ? perSizeNotchOuter(doc, piece) : undefined;
     for (const n of d.notches) {
       const layer = n.type === 'slit' ? '4' : n.type === 'T' ? '80' : n.type === 'castle' ? '81' : n.type === 'V' ? '82' : '83';
       W.line(n.a, n.b, layer);
+      const abs = notchAbs?.get(n.notch.id);
+      if (abs) ruleText(n.a, absoluteToIncremental(abs, line), layer);
     }
     // grain
     W.line(d.grain.a, d.grain.b, '7');

@@ -20,6 +20,7 @@ import { toast } from '../ui/toast';
 import { fmt, unitLabel } from '../units-ui';
 import { fs } from './common';
 import { settings } from '../settings';
+import { selectLive } from '../live';
 
 type Drag =
   | { type: 'anchors'; startW: Vec; grab: Vec; refs: AnchorRef[]; base: Map<string, Vec>; moved: boolean; sizeId: string; grade: boolean }
@@ -81,6 +82,11 @@ export const selectTool: Tool = {
       const grabLocal = base.get(ref.anchorId)!;
       drag = { type: 'anchors', startW: p.w, grab: toWorld(rr.piece, grabLocal), refs, base, moved: false, sizeId, grade };
       app.status(grade ? `Grading ${line.sizes.find(s => s.id === sizeId)?.name}` : '');
+      return;
+    }
+    if (h.kind === 'live' && h.pieceId && h.liveKind && h.liveId) {
+      // dart / pleat / fullness: select the object (Inspector shows its section); no drag
+      selectLive(app, { kind: h.liveKind, pieceId: h.pieceId, id: h.liveId });
       return;
     }
     if (h.kind === 'piece' && h.pieceId) {

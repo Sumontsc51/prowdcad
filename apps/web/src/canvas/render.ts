@@ -225,6 +225,7 @@ export function renderOverlay(app: App): string {
   const handlesOut: string[] = [];
   const hitHandles: string[] = [];
   const hitLive: string[] = [];
+  const curLive = app.currentLive();
   const liveHl: string[] = [];
 
   for (const p of app.pieces()) {
@@ -270,7 +271,7 @@ export function renderOverlay(app: App): string {
     }
     // live-object hit targets (active size) + highlight of the selected one
     for (const sh of liveShapes(app, p, active)) {
-      const isLiveSel = app.liveSel?.id === sh.id;
+      const isLiveSel = curLive?.id === sh.id;
       for (const pl of hitLines(sh)) {
         const d = pathS(pl.map(q => v.toScreen(toWorld(p, q))), false);
         if (isLiveSel) liveHl.push(`<path d="${d}" stroke="#ff9f1a" stroke-width="3" fill="none" opacity="0.85"/>`);

@@ -30,7 +30,7 @@ function unlocked(app: App, pieceId: Id): Piece {
 
 /** The selected live object of `kind`, or a canvas pick of one. */
 export async function liveOrPick(app: App, kind: LiveKind, prompt: string): Promise<LiveRef> {
-  const s = app.liveSel;
+  const s = app.currentLive();
   if (s && s.kind === kind && liveExists(app, s)) return s;
   const r = await must(app, { kind: 'live', liveKind: kind, prompt }, 'live');
   selectLive(app, r.hit.ref);

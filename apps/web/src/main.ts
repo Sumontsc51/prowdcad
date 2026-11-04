@@ -24,6 +24,7 @@ import { selectTool } from './tools/select';
 import { wireKernel } from './kernel-wiring';
 import { cornerGallery } from './actions/seam-notch';
 import { downloadSink } from './actions/file';
+import { selectLive } from './live';
 
 wireKernel();
 
@@ -72,6 +73,12 @@ canvas.onContext = p => {
     const isSewGrade = (() => { const q = app.resolveRef({ pieceId: h.pieceId!, contourId: h.contourId!, anchorId: h.anchorId! }); return !!q && q.contour === q.piece.sew && q.anchor.kind === 'grade'; })();
     openContextMenu(e.clientX, e.clientY, ['point.toggleSmooth', 'point.toggleKind', 'point.breakHandle', 'point.joinHandle', 'point.lock', 'point.startPoint', '-', 'point.moveXY', 'point.moveAlong', 'point.setAngle', 'point.round', '-', 'seam.segment', 'seam.trimCorner', 'notch.atPoint', 'notch.corner', 'dart.add', '-', 'grade.copy', 'grade.paste', 'grade.smartPaste', 'grade.zero', '-', 'point.delete'],
       isSewGrade ? [{ label: 'Corner type…', run: () => void cornerGallery(app, { pieceId: h.pieceId!, contourId: h.contourId!, anchorId: h.anchorId! }, { x: e.clientX, y: e.clientY }) }] : []);
+  } else if (h.kind === 'live' && h.pieceId && h.liveKind && h.liveId) {
+    selectLive(app, { kind: h.liveKind, pieceId: h.pieceId, id: h.liveId });
+    const ids = h.liveKind === 'dart'
+      ? ['dart.toggle', 'dart.reopenWidth', 'dart.fix', 'dart.cutting', '-', 'dart.transfer', 'dart.rotateCenter', '-', 'dart.copy', 'dart.paste', 'dart.remove', '-', 'dart.change']
+      : h.liveKind === 'pleat' ? ['pleat.open', 'pleat.close', 'pleat.openAll', 'pleat.closeAll', '-', 'pleat.delete'] : ['fullness.delete'];
+    openContextMenu(e.clientX, e.clientY, ids);
   } else if (h.kind === 'piece' && h.pieceId) {
     if (!app.sel.pieces.includes(h.pieceId)) app.selectPiece(h.pieceId);
     openContextMenu(e.clientX, e.clientY, ['piece.rename', 'piece.lock', 'edit.duplicate', 'piece.saveAsNew', '-', 'piece.rotate90', 'piece.rotate', 'piece.grain', 'piece.rotateToGrain', '-', 'seam.piece', 'seam.reseam', 'seam.lockGrading', 'seam.noSeam', '-', 'piece.scale', 'notch.grid', 'measure.piece', 'view.fitSel', '-', 'piece.delete']);

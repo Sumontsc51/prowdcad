@@ -67,7 +67,7 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
     hint: undefined, run: () => { const l = app.doc.undoLabel(); if (app.doc.undo()) app.status(`Undo: ${l}`); } });
   registerCommand({ id: 'edit.redo', title: 'Redo', menu: 'Edit', group: 0, hotkey: 'Ctrl+Y,Ctrl+Shift+Z', enabled: c => c.app.doc.canRedo(),
     run: () => { const l = app.doc.redoLabel(); if (app.doc.redo()) app.status(`Redo: ${l}`); } });
-  registerCommand({ id: 'edit.delete', title: 'Delete', menu: 'Edit', group: 1, hotkey: 'Delete,Backspace', enabled: c => hasPiece(c) || hasAnchor(c) || !!c.app.liveSel, run: () => deleteSelection(app) });
+  registerCommand({ id: 'edit.delete', title: 'Delete', menu: 'Edit', group: 1, hotkey: 'Delete,Backspace', enabled: c => hasPiece(c) || hasAnchor(c) || !!c.app.currentLive(), run: () => deleteSelection(app) });
   registerCommand({ id: 'edit.duplicate', title: 'Duplicate piece', menu: 'Edit', group: 1, hotkey: 'Ctrl+D', enabled: hasPiece, run: () => {
     const ids: string[] = [];
     tx('Duplicate piece', () => {
@@ -201,7 +201,7 @@ function remapIds(p: Piece): Piece {
 
 /** Delete selected anchors (keeping contours valid) or else the selected pieces. */
 async function deleteSelection(app: App) {
-  if (app.liveSel && !app.sel.anchors.length) { await deleteLive(app, app.liveSel); return; }
+  { const l = app.currentLive(); if (l) { await deleteLive(app, l); return; } }
   if (app.sel.anchors.length) {
     const refs = app.sel.anchors.slice();
     let blocked = 0;

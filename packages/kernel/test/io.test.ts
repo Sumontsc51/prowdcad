@@ -109,6 +109,46 @@ describe('DXF round-trip (acceptance D11)', () => {
     });
   }
 
+  for (const flavor of ['astm', 'aama'] as const) for (const curved of [false, true]) {
+    it(`B2 ${flavor.toUpperCase()} flat + RUL keeps per-size notch distances (curved=${curved})`, () => {
+      const doc = new Document(makeStyle('T', ['2', '4', '6', '8', '10'], '6'));
+      const line = doc.sizeLine(); const ids = line.sizes.map(s => s.id);
+      const g = (dx: number, dy: number) => Object.fromEntries(ids.map((i, k) => [i, k === 0 ? { dx: 0, dy: 0 } : { dx, dy }]));
+      const sew = makeContour([gradePoint(-50, -400), gradePoint(-50, -100, { grade: g(0, 6) }), ...(curved ? [curvePoint(60, -60)] : []), gradePoint(180, -110, { grade: g(8, 6) }), gradePoint(170, -400, { grade: g(8, 0) })]);
+      const p = makePiece('BY', sew, doc.style.activeSizeTableId);
+      const dist = Object.fromEntries(ids.map((i, k) => [i, 100 + k * 3]));
+      p.notches.push({ id: newId('n'), contourId: sew.id, type: 'slit', depth: 6, width: 0, angleDeg: 0, mode: 'cut', placement: { kind: 'fromPrev', anchorId: sew.points[0].id, dist } });
+      doc.transact('a', s => s.pieces.push(p));
+      const r = exportDXF(doc, { flavor });
+      const imp = importDXF(r.dxf, { rul: r.rul });
+      expect(imp.warnings).toEqual([]);
+      const d2 = new Document(makeStyle('x', ['X'], 'X')); const [p2] = addImportToDocument(d2, imp); const line2 = d2.sizeLine(p2);
+      const pl = p2.notches[0].placement;
+      expect(pl.kind).toBe('fromPrev');
+      if (pl.kind !== 'fromPrev') throw new Error();
+      line.sizes.forEach((s, k) => {
+        const s2 = line2.sizes.find(z => z.name === s.name)!.id;
+        expect(pl.dist[s2]).toBeCloseTo(100 + k * 3, 6);
+        const n1 = resolveNotch(p, p.notches[0], line, s.id)!.p, n2 = resolveNotch(p2, p2.notches[0], line2, s2)!.p;
+        expect(Math.hypot(n1.x - n2.x, n1.y - n2.y)).toBeLessThan(1e-5);
+      });
+    });
+  }
+
+  it('B2 nested export keeps per-size notch distances', () => {
+    const doc = new Document(makeStyle('T', ['2', '4', '6', '8', '10'], '6'));
+    const ids = doc.sizeLine().sizes.map(s => s.id);
+    const g = (dx: number, dy: number) => Object.fromEntries(ids.map((i, k) => [i, k === 0 ? { dx: 0, dy: 0 } : { dx, dy }]));
+    const sew = makeContour([gradePoint(-50, -400), gradePoint(-50, -100, { grade: g(0, 6) }), gradePoint(180, -110, { grade: g(8, 6) }), gradePoint(170, -400, { grade: g(8, 0) })]);
+    const p = makePiece('BY', sew, doc.style.activeSizeTableId);
+    p.notches.push({ id: newId('n'), contourId: sew.id, type: 'slit', depth: 6, width: 0, angleDeg: 0, mode: 'cut', placement: { kind: 'fromPrev', anchorId: sew.points[0].id, dist: Object.fromEntries(ids.map((i, k) => [i, 100 + k * 3])) } });
+    doc.transact('a', s => s.pieces.push(p));
+    const imp = importDXF(exportDXF(doc, { nested: true }).dxf);
+    const pl = imp.pieces[0].notches[0].placement;
+    if (pl.kind !== 'fromPrev') throw new Error('kind ' + pl.kind);
+    imp.sizeLine.sizes.forEach((s, k) => expect(pl.dist[s.id]).toBeCloseTo(100 + k * 3, 6));
+  });
+
   it('companion .rul re-imports to the same increments', () => {
     const { doc } = gradedDoc();
     const r = exportDXF(doc, { flavor: 'astm' });

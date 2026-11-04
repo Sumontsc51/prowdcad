@@ -21,7 +21,7 @@
  */
 import type { Document } from '../model/doc';
 import type { Anchor, Contour, GradeInc, Id, Piece, SizeId, SizeLine } from '../model/types';
-import { type ResolvedContour, resolveContour, totalLength } from '../model/contour';
+import { type ResolvedContour, resolveContour, totalLength, anchorPositions, absoluteToIncremental } from '../model/contour';
 import { type Vec, sub, norm, len, rotate } from '../geom/vec';
 import { mod, anchorS } from './measure';
 
@@ -88,8 +88,8 @@ export function scalePiece(doc: Document, pieceId: Id, input: ScaleInput, opts: 
   // M = R · diag(fx, fy) · R⁻¹
   const c = Math.cos(ang), s = Math.sin(ang);
   const M: Mat = [
-    c * c * fx + s * s * fy, c * s * (fy - fx),
-    c * s * (fy - fx), s * s * fx + c * c * fy,
+    c * c * fx + s * s * fy, c * s * (fx - fy),
+    c * s * (fx - fy), s * s * fx + c * c * fy,
   ];
   const det = M[0] * M[3] - M[1] * M[2];
   const MinvT: Mat = [M[3] / det, -M[2] / det, -M[1] / det, M[0] / det];
@@ -98,6 +98,7 @@ export function scalePiece(doc: Document, pieceId: Id, input: ScaleInput, opts: 
   const line = doc.sizeLine(piece0);
   const sizes = doc.sizesOf(piece0);
 
+  const nest = o.scaleGrading === 'nest';
   // old per-size segment lengths for notch rescaling
   const contours = (pc: Piece): Contour[] => [pc.sew, ...pc.internals];
   const resolveAll = (pc: Piece) => {
@@ -119,16 +120,38 @@ export function scalePiece(doc: Document, pieceId: Id, input: ScaleInput, opts: 
     }
     return out;
   };
-  const nest = o.scaleGrading === 'nest';
   const scaleAnchor = (a: Anchor) => {
     const p = P(a); a.x = p.x; a.y = p.y;
     if (a.hIn) a.hIn = apply(M, a.hIn);
     if (a.hOut) a.hOut = apply(M, a.hOut);
     if (nest) a.grade = gradeMap(a.grade, a.gradeAxisDeg);
+    const imp = implicitByIdx.get(a.id);
+    if (imp) { a.grade = absoluteToIncremental(imp, line); delete a.gradeAxisDeg; }
     if (a.corner?.manualPoints) a.corner.manualPoints = a.corner.manualPoints.map(P);
     if (a.corner?.lockedPerSize) for (const k of Object.keys(a.corner.lockedPerSize)) a.corner.lockedPerSize[k] = a.corner.lockedPerSize[k].map(P);
   };
   const scaleXY = (e: { x: number; y: number; grade: Record<SizeId, GradeInc> }) => { const p = P(e); e.x = p.x; e.y = p.y; if (nest) e.grade = gradeMap(e.grade); };
+
+  // Implicit (proportionally interpolated) curve-point grading is not invariant under a non-uniform
+  // scale: the chord proportions change. In 'nest' mode materialise it (absolute offset per size,
+  // transformed by M) so every size scales exactly like the base.
+  const implicitAbs = new Map<Anchor, Record<SizeId, GradeInc>>();
+  if (nest && Math.abs(fx - fy) > 1e-15) {
+    for (const ct of [...contours(piece0), ...(piece0.manualCut ? [piece0.manualCut] : [])]) {
+      const perSize = sizes.map(sz => anchorPositions(ct.points, line, sz, ct.closed));
+      ct.points.forEach((a, i) => {
+        if (a.kind !== 'curve' || (a.grade && Object.keys(a.grade).length > 0)) return;
+        const abs: Record<SizeId, GradeInc> = {};
+        let any = false;
+        sizes.forEach((sz, k) => { const o = { x: perSize[k][i].x - a.x, y: perSize[k][i].y - a.y }; if (Math.hypot(o.x, o.y) > 1e-12) any = true; const m = apply(M, o); abs[sz] = { dx: m.x, dy: m.y }; });
+        if (any) implicitAbs.set(a, abs);
+      });
+    }
+  }
+
+  // transact snapshots the style, but the piece object is the same; key by anchor id for safety
+  const implicitByIdx = new Map<Id, Record<SizeId, GradeInc>>();
+  for (const [a, abs] of implicitAbs) implicitByIdx.set(a.id, abs);
 
   doc.transact('Scale piece', () => {
     const pc = doc.piece(pieceId);

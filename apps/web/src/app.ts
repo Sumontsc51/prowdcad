@@ -103,6 +103,14 @@ export class App {
   }
 
   // ───── selection ─────
+  /** The selected live object when it is still valid (exists, its piece selected, no point selection). */
+  currentLive(): LiveRef | null {
+    const l = this.liveSel; if (!l) return null;
+    if (this.sel.anchors.length || !this.sel.pieces.includes(l.pieceId)) return null;
+    const p = this.doc.style.pieces.find(x => x.id === l.pieceId); if (!p) return null;
+    const list: { id: Id }[] = l.kind === 'dart' ? p.darts : l.kind === 'pleat' ? p.pleats : p.fullness ?? [];
+    return list.some(o => o.id === l.id) ? l : null;
+  }
   selectPiece(id: Id | null, additive = false) {
     if (!additive) this.liveSel = null;
     if (!id) { if (!additive) this.sel = { pieces: [], anchors: [] }; }
