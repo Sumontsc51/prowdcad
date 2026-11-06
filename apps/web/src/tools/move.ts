@@ -26,7 +26,7 @@ import { ICON } from './tool';
 import { ops, type AnchorRef } from '../ops-bridge';
 import { settings, saveSettings, type Settings } from '../settings';
 import { constrain45, toWorld, toLocal, dirToLocal, dirToWorld, resolveFor, contourById, deepClone, layoutOf, pieceWorldBox } from '../geometry';
-import { snapPoint } from '../canvas/snap';
+import { snapPoint, SNAP_LABEL } from '../canvas/snap';
 import { candidatesAt, itemHighlight, SEL_COLOR } from '../selpick';
 import { contourNear } from '../hitkit';
 import { sizeNameOf } from '../selection';
@@ -94,9 +94,13 @@ const isNumKey = (e: KeyboardEvent) => !e.ctrlKey && !e.metaKey && !e.altKey && 
 /** Candidate under the cursor: SVG anchor targets first (they carry the nested-view size), then geometry. */
 function pointUnder(app: App, p: Ptr): { ref: AnchorRef; sizeId?: string } | null {
   const h = p.hit;
-  if (h.kind === 'anchor' && h.pieceId && h.anchorId) return { ref: { pieceId: h.pieceId, contourId: h.contourId!, anchorId: h.anchorId }, sizeId: h.sizeId };
+  // a nested-view instance of another size: only its SVG target knows the size
+  if (h.kind === 'anchor' && h.pieceId && h.anchorId && h.sizeId && h.sizeId !== app.sizeOf(app.doc.piece(h.pieceId))) return { ref: { pieceId: h.pieceId, contourId: h.contourId!, anchorId: h.anchorId }, sizeId: h.sizeId };
+  // geometry: coincident points rank selected first, then sew before internal (candidatesAt)
   const c = candidatesAt(app, p.w, 'points', { kinds: ['point'] })[0];
-  return c && c.item.k === 'point' ? { ref: c.item.ref } : null;
+  if (c && c.item.k === 'point') return { ref: c.item.ref, sizeId: h.kind === 'anchor' && h.anchorId === c.item.ref.anchorId ? h.sizeId : undefined };
+  if (h.kind === 'anchor' && h.pieceId && h.anchorId) return { ref: { pieceId: h.pieceId, contourId: h.contourId!, anchorId: h.anchorId }, sizeId: h.sizeId };
+  return null;
 }
 
 function grade(c: Contour, i: number, dir: 1 | -1): number {
@@ -123,7 +127,7 @@ export const MP_MODES: { id: MPMode; label: string; title: string }[] = [
 const MP_NAME: Record<MPMode, string> = { single: 'Single', smooth: 'Smooth', h: 'Horizontal', v: 'Vertical', along: 'Along line', group: 'Group' };
 
 type MPSpec = { kind: 'delta'; d: Vec } | { kind: 'abs'; p: Vec } | { kind: 'along'; dist: number };
-interface MPOp { kind: 'press' | 'drag' | 'carry'; startW: Vec; grabW: Vec; s: Vec; dW: Vec; spec: MPSpec | null; lastW: Vec; err: string | null }
+interface MPOp { kind: 'press' | 'drag' | 'carry'; startW: Vec; grabW: Vec; s: Vec; dW: Vec; spec: MPSpec | null; lastW: Vec; err: string | null; /** pressed again on the picked-up point (click, then press-drag) */ again?: boolean; /** snap glyph label of the current target */ snap?: string }
 const MP: {
   pick: { ref: AnchorRef; sizeId?: SizeId } | null;
   before: ReturnType<App['snapshotSel']> | null;
@@ -240,10 +244,12 @@ function mpSpecFromCursor(app: App, op: MPOp, w: Vec, e: MouseEvent | PointerEve
     return { kind: 'along', dist };
   }
   let target = { x: op.grabW.x + w.x - op.startW.x, y: op.grabW.y + w.y - op.startW.y };
+  op.snap = undefined;
   if (e.shiftKey) target = constrain45(op.grabW, target);
   else if (!e.altKey) {
     const ex = new Set(mode === 'group' ? groupRefs(app).map(r => r.anchorId) : [MP.pick!.ref.anchorId]);
-    target = snapPoint(app, target, { exclude: ex }).p;
+    const sn = snapPoint(app, target, { exclude: ex, from: op.grabW });
+    target = sn.p; op.snap = SNAP_LABEL[sn.kind];
   }
   let dW = { x: target.x - op.grabW.x, y: target.y - op.grabW.y };
   if (mode === 'h') dW = { x: dW.x, y: 0 };
@@ -256,8 +262,18 @@ function mpPreview(app: App, spec: MPSpec): string | null { return previewWith(a
 
 function mpLabel(): string { const m = mpMode(); return m === 'smooth' ? 'Move smooth' : m === 'group' ? 'Move points' : m === 'along' ? 'Move along line' : m === 'h' ? 'Move point horizontal' : m === 'v' ? 'Move point vertical' : 'Move point'; }
 
+/** True when the spec moves nothing (no zero-delta undo steps). */
+function mpIsNoop(app: App, spec: MPSpec): boolean {
+  if (spec.kind === 'delta') return Math.hypot(spec.d.x, spec.d.y) < 1e-9;
+  if (spec.kind === 'along') return Math.abs(spec.dist) < 1e-9;
+  const piece = mpPiece(app); if (!piece) return true;
+  const cur = ops.pointPos(app.doc, MP.pick!.ref, MP.pick!.sizeId ?? app.doc.baseSize(piece));
+  return Math.hypot(spec.p.x - cur.x, spec.p.y - cur.y) < 1e-9;
+}
+
 function mpCommit(app: App, spec: MPSpec, label = mpLabel()): boolean {
   if (!MP.pick) return false;
+  if (mpIsNoop(app, spec)) { MP.op = null; app.cancelPreview(); app.status('Not moved (zero distance)'); return false; }
   const ok = commitWith(app, mpPieceIds(app), label, d => mpApply(app, d, spec));
   MP.op = null;
   if (ok) {
@@ -322,6 +338,50 @@ async function mpInput(app: App, typed?: string) {
   if (mpCommit(app, spec)) MP.last[mpMode()] = { mode: res.mode, v: res.v };
 }
 
+/**
+ * Curve points that follow the picked grade point: the curve points without own grading between its
+ * neighbouring grade points (they are placed by interpolation in graded sizes, and the curve through
+ * them re-shapes in every size). Empty for curve points, Smooth / Along / Group modes.
+ */
+function mpFollowers(app: App): { piece: Piece; contour: Contour; idx: number[] } | null {
+  if (!mpValid(app) || !['single', 'h', 'v'].includes(mpMode())) return null;
+  const piece = app.doc.piece(MP.pick!.ref.pieceId); const c = contourById(piece, MP.pick!.ref.contourId); if (!c) return null;
+  const i = c.points.findIndex(a => a.id === MP.pick!.ref.anchorId); if (i < 0 || c.points[i].kind !== 'grade') return null;
+  const n = c.points.length; const idx: number[] = [];
+  for (const dir of [-1, 1] as const) {
+    for (let k = 1; k < n; k++) {
+      const j = c.closed ? (((i + dir * k) % n) + n) % n : i + dir * k;
+      if (j < 0 || j >= n || j === i || c.points[j].kind === 'grade') break;
+      if (!Object.keys(c.points[j].grade ?? {}).length) idx.push(j);
+    }
+  }
+  return idx.length ? { piece, contour: c, idx } : null;
+}
+/** Ghost of the curve before the move + "follows" marks on the curve points that follow (UX: "other points move"). */
+function mpFollowOverlay(app: App): string {
+  const f = mpFollowers(app); if (!f || !MP.op || MP.op.kind === 'press') return '';
+  const pv = app.preview.get(f.piece.id); if (!pv) return '';
+  const sizes = [app.sizeOf(f.piece), ...(app.nested && app.sel.pieces.includes(f.piece.id) ? app.doc.sizesOf(f.piece).filter(s => s !== app.sizeOf(f.piece) && !app.nestedHidden.has(s)) : [])];
+  const ci = f.contour === f.piece.sew ? -1 : f.piece.internals.indexOf(f.contour);
+  const out: string[] = [];
+  let labelled = false;
+  for (const sid of sizes) {
+    let r0, r1; try { r0 = resolveFor(app.doc, f.piece, sid); r1 = resolveFor(app.doc, pv, sid); } catch { continue; }
+    const c0 = ci < 0 ? r0.sew : r0.internals[ci], c1 = ci < 0 ? r1.sew : r1.internals[ci]; if (!c0 || !c1) continue;
+    const pts = c0.pts.map(q => app.view.toScreen(toWorld(f.piece, q)));
+    out.push(`<path d="${pts.map((q, k) => `${k ? 'L' : 'M'}${fs(q.x)} ${fs(q.y)}`).join('')}${c0.closed ? 'Z' : ''}" fill="none" stroke="#8a93a6" stroke-width="1" stroke-dasharray="4 3" opacity="0.8"/>`);
+    for (const j of f.idx) {
+      const a = c0.anchorPos[j], b = c1.anchorPos[j]; if (!a || !b) continue;
+      const sa = app.view.toScreen(toWorld(f.piece, a)), sb = app.view.toScreen(toWorld(pv, b));
+      const moved = Math.hypot(a.x - b.x, a.y - b.y) > 0.01;
+      out.push(`<circle cx="${fs(sb.x)}" cy="${fs(sb.y)}" r="6" fill="none" stroke="#7b61ff" stroke-width="1.4" stroke-dasharray="2 2"/>`);
+      if (moved) out.push(`<path d="M${fs(sa.x)} ${fs(sa.y)}L${fs(sb.x)} ${fs(sb.y)}" stroke="#7b61ff" stroke-width="1" opacity="0.7"/>`);
+      if (!labelled) { out.push(`<text x="${fs(sb.x + 8)}" y="${fs(sb.y + 14)}" class="tool-note">follows</text>`); labelled = true; }
+    }
+  }
+  return out.join('');
+}
+
 export const movePointTool: Tool = {
   id: 'movePoint', title: 'Move Point', group: 'move', hotkey: 'G', icon: ICON.movePoint, cursor: 'crosshair',
   activate(app) { MP.op = null; MP.frozen = false; MP.tackDrag = null; mpAdopt(app); },
@@ -341,7 +401,9 @@ export const movePointTool: Tool = {
     const extra = conn ? ` · ${conn} connected internal point${conn > 1 ? 's' : ''} follow${conn > 1 ? '' : 's'} (point connection)` : '';
     if (MP.op && MP.op.kind !== 'press') {
       const v = MP.op.spec?.kind === 'along' ? `Along ${fmt(MP.op.spec.dist)} ${unitLabel()}` : fmtV(dirToLocal(piece, MP.op.dW));
-      return `${head} · ${v} · ${MP.op.kind === 'carry' ? 'click to place' : 'release to place'} · type a value or right-click = input box · Shift H/V/45° · Alt no snap · Esc cancel${extra}${MP.op.err ? ' · ⚠ ' + MP.op.err : ''}`;
+      const fl = mpFollowers(app);
+      const follow = fl ? ` · ${fl.idx.length} curve point${fl.idx.length > 1 ? 's' : ''} follow${fl.idx.length > 1 ? '' : 's'} (no own grading) — use Move Point ▸ Single on ${fl.idx.length > 1 ? 'them' : 'it'} to fix ${fl.idx.length > 1 ? 'them' : 'it'}, or Point ▸ Pin curve point` : '';
+      return `${head} · ${v} · ${MP.op.kind === 'carry' ? 'click to place' : 'release to place'} · type a value or right-click = input box · Shift H/V/45° · Alt no snap · Esc cancel${extra}${follow}${MP.op.err ? ' · ⚠ ' + MP.op.err : ''}`;
     }
     const what = m === 'group' ? `Group: ${groupRefs(app).length} point(s) · drag one of them` : m === 'smooth' ? 'Drag the point (tacks fix the blended range; drag a tack to change it)' : m === 'along' ? 'Drag along the line' : 'Drag the point, or click it then click the new spot';
     return `${head} · ${what} · type dX dY or right-click = input box · arrows nudge · ⌫ undo pick · Esc = Select${extra}`;
@@ -351,8 +413,11 @@ export const movePointTool: Tool = {
     trackClient(p);
     if (inputBoxOpen() || MP.frozen) return;
     if (MP.op?.kind === 'carry') {
-      const spec = mpSpecFromCursor(app, MP.op, p.w, p.e);
-      MP.op.spec = spec; mpCommit(app, spec); return;
+      const op = MP.op;
+      // pressed again where it was picked up (click, then press-drag): start a drag, never a 0-delta move
+      if (Math.hypot(p.s.x - op.s.x, p.s.y - op.s.y) < 6) { MP.op = { ...op, kind: 'press', s: p.s, again: true }; app.cancelPreview(); return; }
+      const spec = mpSpecFromCursor(app, op, p.w, p.e);
+      op.spec = spec; mpCommit(app, spec); return;
     }
     // smooth: grab a tack
     if (mpMode() === 'smooth' && mpValid(app) && MP.tacks) {
@@ -412,6 +477,7 @@ export const movePointTool: Tool = {
       app.invalidate(); return;
     }
     const op = MP.op; if (!op || MP.frozen) return;
+    if (op.kind === 'press' && op.again) { mpCancelOp(app); app.status('Put back (clicked the picked-up point again)'); app.invalidate(); return; }
     if (op.kind === 'press') {
       op.kind = 'carry';
       const spec = mpSpecFromCursor(app, op, p.w, p.e); op.spec = spec;
@@ -491,9 +557,11 @@ export const movePointTool: Tool = {
         out.push(tack(app.view.toScreen(w), MP.tackDrag?.which === which));
       }
     }
+    out.push(mpFollowOverlay(app));
     if (MP.op && MP.op.kind !== 'press') {
       const a = app.view.toScreen(MP.op.grabW), b = app.view.toScreen({ x: MP.op.grabW.x + MP.op.dW.x, y: MP.op.grabW.y + MP.op.dW.y });
       out.push(`<path d="M${fs(a.x)} ${fs(a.y)}L${fs(b.x)} ${fs(b.y)}" stroke="${SEL_COLOR}" stroke-width="1" stroke-dasharray="3 3"/>` + screenMarker(b, 'cross', SEL_COLOR, 7));
+      if (MP.op.snap) out.push(`<text x="${fs(b.x + 9)}" y="${fs(b.y - 9)}" class="tool-note snap-note">${MP.op.snap}</text>`);
     }
     return out.join('');
   },
@@ -507,7 +575,7 @@ function tack(s: Vec, active: boolean): string {
 // ───────────────────────── Move Line / Segment ─────────────────────────
 
 type LPick = { kind: 'segment'; seg: SegSel } | { kind: 'internal'; c: ContourSel };
-interface LOp { kind: 'press' | 'drag' | 'carry'; startW: Vec; s: Vec; dW: Vec; lastW: Vec; err: string | null }
+interface LOp { kind: 'press' | 'drag' | 'carry'; startW: Vec; s: Vec; dW: Vec; lastW: Vec; err: string | null; again?: boolean }
 const ML: { pick: LPick | null; before: ReturnType<App['snapshotSel']> | null; op: LOp | null; frozen: boolean; hover: SelItem | null; last: { mode: string; v: Record<string, number> } | null } =
   { pick: null, before: null, op: null, frozen: false, hover: null, last: null };
 const mlMode = (): Settings['moveLineMode'] => settings.moveLineMode ?? 'translate';
@@ -560,6 +628,7 @@ function mlDeltaFromCursor(app: App, op: LOp, w: Vec, e: MouseEvent | PointerEve
 }
 function mlCommit(app: App, dLocal: Vec, label = 'Move line'): boolean {
   const pk = ML.pick!; ML.op = null;
+  if (Math.hypot(dLocal.x, dLocal.y) < 1e-9) { app.cancelPreview(); app.status('Not moved (zero distance)'); return false; }
   const ok = commitWith(app, [mlPieceId(pk)], label, d => mlApply(app, d, pk, dLocal));
   if (ok) { ML.last = { mode: 'rel', v: { dx: dLocal.x, dy: dLocal.y } }; app.status(`Line moved ${fmt(dLocal.x)}, ${fmt(dLocal.y)} ${unitLabel()}`); }
   return ok;
@@ -623,7 +692,10 @@ export const moveLineTool: Tool = {
   down(app, p) {
     trackClient(p);
     if (inputBoxOpen() || ML.frozen) return;
-    if (ML.op?.kind === 'carry') { mlCommit(app, mlDeltaFromCursor(app, ML.op, p.w, p.e)); return; }
+    if (ML.op?.kind === 'carry') {
+      if (Math.hypot(p.s.x - ML.op.s.x, p.s.y - ML.op.s.y) < 6) { ML.op = { ...ML.op, kind: 'press', s: p.s, again: true }; app.cancelPreview(); return; }
+      mlCommit(app, mlDeltaFromCursor(app, ML.op, p.w, p.e)); return;
+    }
     const c = candidatesAt(app, p.w, 'all', { kinds: ['segment', 'internal'] })[0];
     if (!c) { app.status('Nothing to pick here: click a segment or an internal line'); return; }
     const pk: LPick = c.item.k === 'segment' ? { kind: 'segment', seg: c.item.seg } : { kind: 'internal', c: (c.item as { c: ContourSel }).c };
@@ -651,6 +723,7 @@ export const moveLineTool: Tool = {
   },
   up(app, p) {
     const op = ML.op; if (!op || ML.frozen) return;
+    if (op.kind === 'press' && op.again) { ML.op = null; app.cancelPreview(); app.status('Put back (clicked the picked-up line again)'); return; }
     if (op.kind === 'press') { op.kind = 'carry'; app.invalidate(); return; }
     if (op.kind === 'drag') mlCommit(app, mlDeltaFromCursor(app, op, p.w, p.e));
   },
@@ -705,7 +778,7 @@ const PC_MODES = [
   { id: 'flip', label: 'Flip', title: 'Flip Piece: click = left ⇄ right, Shift+click = up ⇄ down' },
 ];
 type XF = { rot?: number; flip?: 'h' | 'v' };
-interface POp { kind: 'press' | 'drag' | 'carry'; ids: Id[]; base: Map<Id, PieceLayout>; startW: Vec; s: Vec; d: Vec; xf: XF[]; pivot: Vec; a0: number; deg: number; lastW: Vec }
+interface POp { kind: 'press' | 'drag' | 'carry'; ids: Id[]; base: Map<Id, PieceLayout>; startW: Vec; s: Vec; d: Vec; xf: XF[]; pivot: Vec; a0: number; deg: number; lastW: Vec; again?: boolean }
 const PCS: { op: POp | null; frozen: boolean; hover: Id | null } = { op: null, frozen: false, hover: null };
 const pcMode = (): PMode => settings.pieceToolMode ?? 'move';
 
@@ -723,6 +796,7 @@ function pcPreview(app: App) {
 function pcCommit(app: App, label: string) {
   const op = PCS.op!; PCS.op = null; const mode = pcMode();
   const lay = new Map(op.ids.map(id => [id, pcLayout(op, id, mode)]));
+  if ([...lay].every(([id, L]) => JSON.stringify(normalizeLayout(L)) === JSON.stringify(normalizeLayout(op.base.get(id)!)))) { app.preview.clear(); app.status('Not moved'); app.invalidate(); return; }
   app.preview.clear();
   try { app.doc.transact(label, () => { for (const [id, L] of lay) app.doc.piece(id).layout = L; }); } catch (err) { reportError(err, label); }
   app.invalidate();
@@ -751,7 +825,17 @@ export function flipPieces(app: App, ids: Id[], axis: 'h' | 'v') {
   if (locked) { toast(lockedMsg(locked), 'warn'); return; }
   try { ops.transformPieceLayouts(app.doc, ids, { flip: axis, pivot: pcCentre(app, ids) }, axis === 'h' ? 'Flip piece left ⇄ right' : 'Flip piece up ⇄ down'); app.status(`Flipped ${ids.length} piece(s) ${axis === 'h' ? 'left ⇄ right' : 'up ⇄ down'} (sheet placement; exports keep the authored geometry)`); } catch (err) { reportError(err, 'Flip piece'); }
 }
+/** Noun → verb: an op on the selected pieces (Rotate pivots about their centre), for typed input. */
+function pcAdopt(app: App): POp | null {
+  const ids = app.sel.pieces.filter(id => app.doc.style.pieces.some(p => p.id === id));
+  if (!ids.length) return null;
+  const locked = ids.map(id => app.doc.piece(id)).find(p => p.locked);
+  if (locked) { toast(lockedMsg(locked), 'warn'); return null; }
+  const c = pcCentre(app, ids);
+  return { kind: 'carry', ids, base: new Map(ids.map(id => [id, { ...layoutOf(app.doc.piece(id)) }])), startW: c, s: app.view.toScreen(c), d: { x: 0, y: 0 }, xf: [], pivot: c, a0: 0, deg: 0, lastW: c };
+}
 async function pcInput(app: App, typed?: string) {
+  if (!PCS.op && !inputBoxOpen() && pcMode() !== 'flip') PCS.op = pcAdopt(app);
   const op = PCS.op; if (!op || inputBoxOpen()) return;
   op.kind = 'carry'; PCS.frozen = true;
   const mode = pcMode();
@@ -781,7 +865,11 @@ export const pieceTool: Tool = {
     const m = pcMode(); const head = `Piece · ${m === 'move' ? 'Move' : m === 'rotate' ? 'Rotate' : 'Flip'}`;
     const op = PCS.op;
     if (m === 'flip') return `${head} · Click a piece = flip left ⇄ right · Shift+click = up ⇄ down (selected pieces flip together) · Esc = Select`;
-    if (!op || op.kind === 'press') return `${head} · Select piece to ${m === 'rotate' ? 'rotate (about its centre)' : 'move'} · drag, or click then click · type a value or right-click = input box · arrows nudge selected pieces · Esc = Select`;
+    if (!op || op.kind === 'press') {
+      const sel = app.sel.pieces.map(id => app.piece(id)?.name).filter(Boolean);
+      if (sel.length && !op) return `${head} · ${sel.length > 1 ? `${sel.length} selected pieces` : sel[0]}: type ${m === 'rotate' ? 'an angle' : 'dX dY'} (or right-click) · or drag a piece${m === 'rotate' ? ' (about its centre)' : ''} · arrows nudge · Esc = Select`;
+      return `${head} · Select piece to ${m === 'rotate' ? 'rotate (about its centre)' : 'move'} · drag, or click then click · type a value or right-click = input box · arrows nudge selected pieces · Esc = Select`;
+    }
     const n = op.ids.length > 1 ? `${op.ids.length} pieces · ` : '';
     if (m === 'rotate') return `${head} · ${n}${(Math.round(op.deg * 100) / 100)}° · ${op.kind === 'carry' ? 'click to set' : 'release to set'} · Ctrl = 15° steps · type an angle or right-click = input box · Esc cancel`;
     return `${head} · ${n}dX ${fmt(op.d.x)} dY ${fmt(op.d.y)} ${unitLabel()} · R/Shift+R ±90° · Q W ±1° · A S ±10° · X Y flip · Shift H/V/45° · ${op.kind === 'carry' ? 'click to place' : 'release to place'} · right-click = input box · Esc cancel`;
@@ -790,7 +878,10 @@ export const pieceTool: Tool = {
     trackClient(p);
     if (inputBoxOpen() || PCS.frozen) return;
     const mode = pcMode();
-    if (PCS.op?.kind === 'carry') { pcCommit(app, mode === 'rotate' ? 'Rotate piece' : 'Move piece'); return; }
+    if (PCS.op?.kind === 'carry') {
+      if (Math.hypot(p.s.x - PCS.op.s.x, p.s.y - PCS.op.s.y) < 6 && !PCS.op.xf.length) { PCS.op = { ...PCS.op, kind: 'press', s: p.s, again: true }; app.cancelPreview(); return; }
+      pcCommit(app, mode === 'rotate' ? 'Rotate piece' : 'Move piece'); return;
+    }
     const pc = pcPieceAt(app, p.w);
     if (!pc) { app.status('Nothing to pick here: click a piece'); return; }
     const e = p.e as MouseEvent;
@@ -821,13 +912,14 @@ export const pieceTool: Tool = {
   },
   up(app) {
     const op = PCS.op; if (!op || PCS.frozen) return;
+    if (op.kind === 'press' && op.again) { PCS.op = null; app.cancelPreview(); app.status('Put back'); return; }
     if (op.kind === 'press') { op.kind = 'carry'; app.invalidate(); return; }
     if (op.kind === 'drag') pcCommit(app, pcMode() === 'rotate' ? 'Rotate piece' : 'Move piece');
   },
   context(app, p) {
     trackClient(p);
     if (inputBoxOpen()) { inputBoxCommit(); return true; }
-    if (PCS.op) { void pcInput(app); return true; }
+    if (PCS.op || (pcMode() !== 'flip' && app.sel.pieces.length)) { void pcInput(app); return true; }
     return false;
   },
   key(app, e) {
@@ -841,7 +933,7 @@ export const pieceTool: Tool = {
       const xf: XF | null = k === 'r' ? { rot: e.shiftKey ? -90 : 90 } : k === 'q' ? { rot: 1 } : k === 'w' ? { rot: -1 } : k === 'a' ? { rot: 10 } : k === 's' ? { rot: -10 } : k === 'x' ? { flip: 'h' } : k === 'y' ? { flip: 'v' } : null;
       if (xf) { op.xf.push(xf); pcPreview(app); return true; }
     }
-    if (op && isNumKey(e)) { void pcInput(app, e.key); return true; }
+    if (isNumKey(e) && (op || (pcMode() !== 'flip' && app.sel.pieces.length))) { void pcInput(app, e.key); return true; }
     return false;
   },
   nudge(app, dx, dy) {

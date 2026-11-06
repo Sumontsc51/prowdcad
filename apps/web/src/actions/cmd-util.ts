@@ -6,8 +6,10 @@ import { Cancelled } from '../selection';
 import { pick, type PickOptions, type PickResult } from '../tools/pick';
 import { toLocal } from '../geometry';
 
-export const hasPiece = (c: CommandCtx) => c.app.sel.pieces.length > 0 || c.app.sel.anchors.length > 0;
-export const hasAnchor = (c: CommandCtx) => c.app.sel.anchors.length > 0;
+export const hasPiece = needs((c: CommandCtx) => c.app.sel.pieces.length > 0 || c.app.sel.anchors.length > 0, 'a selected piece (or one of its points)');
+export const hasAnchor = needs((c: CommandCtx) => c.app.sel.anchors.length > 0, 'a selected point');
+/** Tag an enabled() predicate with what it needs: greyed menu items show it as their tooltip. */
+export function needs<F extends (c: CommandCtx) => boolean>(fn: F, what: string): F { (fn as F & { need?: string }).need = what; return fn; }
 export const always = () => true;
 
 export function onePiece(app: App): Piece {

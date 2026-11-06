@@ -66,7 +66,7 @@ const cases = [
     expect: (h, c) => [req(c.after.name === 'NEW STYLE', 'style name not set'), req(c.after.pieces.length === 1 && c.after.pieces[0].seamDefault === 12, 'block piece / seam not created'), req(Q.line(c.after).sizes.map(s => s.name).join() === 'XS,S,M', 'sizes not set'), req(Q.line(c.after).baseSizeId === Q.sizeId(c.after, 'S'), 'base not S')] },
   { id: 'file.new#dirty', title: 'New… (with unsaved changes → discard confirm)', invoke: async h => { await h.selectPiece('FRONT'); await h.key('Alt+r'); await h.cmd('file.new'); },
     drive: async h => { await h.waitDialog(); h._t1 = await h.dlgTitle(); h._m1 = await h.dlg().locator('.dlg-msg').textContent().catch(() => ''); await h.ok(); await h.waitDialog(); await h.ok(); }, undo: false,
-    expect: (h, c) => req(/Discard/i.test(h._m1 || ''), 'no discard-changes confirmation'), after: async (h, c, r) => { r.notes.push(`confirm dialog title: "${h._t1}" (same title as the form that follows)`); } },
+    expect: (h, c) => req(/Discard/i.test(h._m1 || ''), 'no discard-changes confirmation'), after: async (h, c, r) => { if (h._t1 === 'New style') { r.status = 'fail'; r.msgs.push('the discard confirm has the same title as the form that follows ("New style")'); } else r.notes.push(`confirm dialog title: "${h._t1}"`); } },
   { id: 'file.open', sel: noFSA, notes: [FSA_NOTE], invoke: chooser([f('e2e-open.prowd.json')], 'file.open'), undo: false,
     expect: (h, c) => [req(c.after.name === 'OPENED STYLE', 'opened style not loaded'), req(c.after.pieces.length === 2, 'piece count')] },
   { id: 'file.save', sel: noFSA, notes: [FSA_NOTE], change: 'maybe', undo: false, drive: async h => { await h.waitDialog(3000).catch(() => {}); if (await h.hasDialog()) { h._askedName = await h.dlgTitle(); await h.ok(); } },
@@ -114,6 +114,15 @@ const cases = [
   { id: 'edit.nudgeStep', change: false, drive: DLG({ v: '2.5' }), expect: async h => req((await setting('nudgeMm')(h)) === 2.5, 'nudge step not stored') },
   { id: 'edit.hotkeys', change: false, drive: async h => { await h.waitDialog(); const ta = h.dlg().locator('textarea'); const j = JSON.parse(await ta.inputValue()); h._n = Object.keys(j).length; j['view.grid'] = 'Ctrl+Alt+G'; await ta.fill(JSON.stringify(j)); await h.ok(); h._g0 = await setting('showGrid')(h); await h.key('Control+Alt+g'); },
     expect: async h => [req(h._n >= 240, `JSON map lists only ${h._n} commands`), req((await setting('hotkeys')(h))['view.grid'] === 'Ctrl+Alt+G', 'override not stored'), req((await setting('showGrid')(h)) === !h._g0, 'new chord Ctrl+Alt+G did not toggle the grid')] },
+  // Fix pass: Edit ▸ Keyboard preset ▸ AccuMark keys (UX-RESEARCH §1.5); E.reset restores the default map
+  { id: 'edit.keysAccuMark', change: false, sel: A('FRONT', 'UA'),
+    drive: async h => { await h.key('Alt+F12'); h._t1 = await appv('app.tool.id + "/" + settings.movePointMode')(h); await h.key('Escape'); await h.key('Shift+F2'); h._t2 = await appv('app.tool.id + "/" + settings.pieceToolMode')(h); await h.key('Escape'); },
+    expect: async h => { const hk = await h.ev(() => window.__e2e.settings.hotkeys); return [req(hk['move.single'] === 'Alt+F12' && hk['edit.duplicate'] === 'Ctrl+Shift+D', 'preset not applied: ' + JSON.stringify(hk)), req(h._t1 === 'movePoint/single', 'Alt+F12 → ' + h._t1), req(h._t2 === 'movePiece/move', 'Shift+F2 → ' + h._t2)]; } },
+  { id: 'edit.keysDefault', change: false, pre: h => h.ev(() => window.__e2e.C.runCommand('edit.keysAccuMark')),
+    expect: async h => { const hk = await h.ev(() => window.__e2e.settings.hotkeys); return req(!Object.keys(hk).length, 'overrides left: ' + JSON.stringify(hk)); } },
+  { id: 'edit.hotkeys#preset', title: 'Keyboard shortcuts dialog: Preset ▸ AccuMark keys', change: false, invoke: h => h.cmd('edit.hotkeys'),
+    drive: async h => { await h.waitDialog(); await h.fill('preset', 'accumark'); await h.ok(); },
+    expect: async h => { const hk = await h.ev(() => window.__e2e.settings.hotkeys); return req(hk['move.smooth'] === 'Alt+F11', 'preset not applied from the dialog: ' + JSON.stringify(hk)); } },
   { id: 'edit.toolbar', change: false, drive: async h => { await h.waitDialog(); h._b0 = await h.page.locator('#palette .tool-btn').count(); await h.fill('measure', false); await h.fill('walk', false); await h.ok(); },
     expect: async h => { const hid = await setting('hiddenTools')(h); const b1 = await h.page.locator('#palette .tool-btn').count(); return [req(hid.includes('measure') && hid.includes('walk'), 'hiddenTools not stored'), req(b1 === h._b0 - 1, `palette buttons ${h._b0}→${b1} (measure group should vanish)`)]; } },
 
@@ -215,6 +224,18 @@ const cases = [
   { id: 'point.breakHandle', sel: A('FRONT', 'AH1') },
   { id: 'point.joinHandle', pre: P((app, ops, doc, E) => ops.breakHandle(doc, E.P('FRONT').id, E.findA('FRONT', 'AH1').a.id)), sel: A('FRONT', 'AH1') },
   { id: 'point.resetHandles', pre: P((app, ops, doc, E) => doc.transact('pre', () => { const a = E.findA('FRONT', 'AH1').a; a.hIn = { x: 10, y: -20 }; a.hOut = { x: -10, y: 20 }; })), sel: A('FRONT', 'AH1'), expect: (h, c) => req(!an(c.after, 'FRONT', 'AH1').hIn, 'handles not reset') },
+  // Fix pass: curve points that follow their neighbours can be pinned (own grading = current per-size positions)
+  { id: 'point.pin', sel: A('FRONT', 'AH1'), expect: (h, c) => { const a0 = an(c.before, 'FRONT', 'AH1'), a1 = an(c.after, 'FRONT', 'AH1'); return [req(!Object.keys(a0.grade || {}).length && Object.keys(a1.grade || {}).length === 4, 'AH1 grading not materialised: ' + JSON.stringify(a1.grade)), req(a1.x === a0.x && a1.y === a0.y, 'base position changed'), req(!otherChanged(c.before, c.after, 'FRONT', ['AH1']).length, 'other points changed')]; },
+    after: async (h, c, r) => { // pinned: moving the neighbouring grade point UA no longer moves AH1 in any size
+      const pos = s => h.ev(s => window.__e2e.L('FRONT', 'AH1', s), s);
+      const sids = await h.ev(() => window.__e2e.sizeIds()); const p0 = []; for (const s of sids) p0.push(await pos(s));
+      await h.ev(() => { const E = window.__e2e; E.ops.movePoint(E.app.doc, E.P('FRONT').id, E.findA('FRONT', 'UA').a.id, { dx: 25, dy: -15 }); });
+      const p1 = []; for (const s of sids) p1.push(await pos(s));
+      await h.key('Control+z');
+      if (p0.some((q, i) => Math.hypot(q.x - p1[i].x, q.y - p1[i].y) > 1e-6)) { r.status = 'fail'; r.msgs.push('pinned AH1 still moves with UA: ' + JSON.stringify([p0, p1])); }
+    } },
+  { id: 'point.unpin', pre: P((app, ops, doc, E) => ops.pinCurvePoints(doc, E.P('FRONT').id, [E.findA('FRONT', 'AH1').a.id], true)), sel: A('FRONT', 'AH1'),
+    expect: (h, c) => [req(Object.keys(an(c.before, 'FRONT', 'AH1').grade || {}).length > 0, 'precondition: AH1 not pinned'), req(!Object.keys(an(c.after, 'FRONT', 'AH1').grade || {}).length, 'AH1 still has own grading')] },
   { id: 'point.lock', sel: A('FRONT', 'UA'), expect: (h, c) => req(an(c.after, 'FRONT', 'UA').flags.locked === true, 'not locked') },
   { id: 'point.startPoint', sel: A('FRONT', 'UA'), expect: (h, c) => req(an(c.after, 'FRONT', 'UA').flags.startPoint === true, 'not start point') },
   { id: 'point.add', sel: A('FRONT', 'SS_HEM'), drive: DLG({ how: 'prev', d: '100' }), expect: (h, c) => { const p = pc(c.after, 'FRONT'); const n = p.sew.points.find(a => !pc(c.before, 'FRONT').sew.points.some(b => b.id === a.id)); return [req(n && near(n.x, 260, 0.01) && near(n.y, 100, 0.01), 'new point not at (260,100): ' + JSON.stringify(n && [n.x, n.y])), req(c.afterSel.anchors.length === 1, 'new point not selected')]; } },
@@ -320,7 +341,7 @@ const cases = [
   { id: 'grade.applyRule', pre: P((app, ops, doc, E) => { const lib = ops.createLibrary(doc, 'LIB'); const L = app.sizeLine(); const v = {}; for (const s of L.sizes.slice(1)) v[s.id] = { dx: 7, dy: 1 }; ops.createRuleFromValues(doc, lib, v, { number: 1, name: 'R1' }); }), sel: A('FRONT', 'UA'), drive: DLG({ r: '1' }), expect: (h, c) => req(an(c.after, 'FRONT', 'UA').ruleId != null, 'rule not applied') },
   { id: 'grade.detachRule', pre: P((app, ops, doc, E) => { const lib = ops.createLibrary(doc, 'LIB'); const L = app.sizeLine(); const v = {}; for (const s of L.sizes.slice(1)) v[s.id] = { dx: 7, dy: 1 }; ops.createRuleFromValues(doc, lib, v, { number: 1, name: 'R1' }); ops.applyRule(doc, E.P('FRONT').id, [E.findA('FRONT', 'UA').a.id], 1); }), sel: A('FRONT', 'UA'), expect: (h, c) => req(an(c.after, 'FRONT', 'UA').ruleId == null, 'rule still attached') },
   { id: 'grade.movement', change: false, expect: async h => req(await h.ev(() => !!document.querySelector('.fwin')), 'movement window not open') },
-  { id: 'grade.nest', sel: async h => { await h.selectPiece('FRONT'); await h.key('Control+d'); await h.selectPiece('FRONT'); await h.selectPiece('FRONT COPY', true); }, drive: async h => { await h.waitDialog(); h._nm = await h.dlg().locator('[data-key="name"]').inputValue(); await h.ok(); }, expect: (h, c) => [req(c.after.pieces.length === 4, 'no nest piece'), req(/\S/.test((h._nm || '').split('NEST')[0]), `default name for a nest of "FRONT" + "FRONT COPY" is "${h._nm}" (base name lost)`)] },
+  { id: 'grade.nest', sel: async h => { await h.selectPiece('FRONT'); await h.key('Control+d'); await h.selectPiece('FRONT'); await h.selectPiece('FRONT COPY', true); }, drive: async h => { await h.waitDialog(); h._nm = await h.dlg().locator('[data-key="name"]').inputValue(); await h.ok(); }, expect: (h, c) => [req(c.after.pieces.length === 4, 'no nest piece'), req(h._nm === 'FRONT NEST', `default name for a nest of "FRONT" + "FRONT COPY" is "${h._nm}" (want "FRONT NEST")`), req(c.after.pieces.some(p => p.name === 'FRONT NEST'), 'piece FRONT NEST not created')] },
   { id: 'size.deleteUngraded', pre: P((app, ops, doc) => ops.appendSize(doc, 'XXL', { extrapolate: false })), drive: OK(), expect: (h, c) => req(!Q.line(c.after).sizes.some(s => s.name === 'XXL'), 'XXL kept') },
   { id: 'size.deleteInvisible', pre: P((app, ops, doc) => doc.transact('pre', () => { const L = app.sizeLine(); for (const p of doc.style.pieces) p.sizes = L.sizes.slice(0, 3).map(s => s.id); })), drive: OK(), expect: (h, c) => req(Q.line(c.after).sizes.length === 3, 'XL kept') },
   { id: 'size.axis2', drive: OK(), expect: (h, c) => req(!!c.after.sizeTables[0].axis2, 'no axis 2') },

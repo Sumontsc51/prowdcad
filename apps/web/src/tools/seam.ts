@@ -16,6 +16,7 @@ import { rememberedDialog } from '../ui/dialog';
 import { DoubleClick } from '../ui/dom';
 import { reportError } from '../commands';
 import { screenMarker } from './common';
+import { resolveFor } from '../geometry';
 import { fmt, unitLabel } from '../units-ui';
 import { toast } from '../ui/toast';
 
@@ -82,7 +83,7 @@ export const seamTool: Tool = {
     let s = '';
     const a = pc.sew.points.findIndex(q => q.id === first!.anchorId);
     if (hoverTo) s += `<path d="${screenPath(app, runWorld(app, pc, pc.sew, first.anchorId, hoverTo))}" fill="none" stroke="#ff9f1a" stroke-width="4" opacity="0.6"/>`;
-    const r = app.doc.resolvePiece(pc.id, app.sizeOf(pc));
+    const r = resolveFor(app.doc, pc, app.sizeOf(pc));
     if (a >= 0) { const L = pc.layout ?? { x: 0, y: 0, angleDeg: 0 }; void L; s += screenMarker(app.view.toScreen(runWorld(app, pc, pc.sew, first.anchorId, first.anchorId)[0] ?? r.sew.anchorPos[a]), 'square', '#ff9f1a', 6); }
     return s;
   },

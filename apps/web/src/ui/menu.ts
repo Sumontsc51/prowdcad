@@ -11,7 +11,8 @@ function itemFor(c: Command, close: () => void): HTMLElement {
   const hk = effectiveHotkey(c.id).split(',')[0];
   return h('button.menu-item' + (en ? '' : '.disabled'), {
     onclick: (e: Event) => { e.stopPropagation(); close(); void runCommand(c.id); },
-    title: c.hint ?? '',
+    // a greyed item says why (UX: users find the function grey and get stuck)
+    title: en ? (c.hint ?? '') : `Not available now — needs ${(c.enabled as { need?: string } | undefined)?.need ?? 'a selection it can work on (select the object first)'}`,
   }, h('span.check', {}, chk === undefined ? '' : chk ? '✓' : ''), h('span.mlabel', {}, c.title), h('span.hint', {}, c.hint && !hk ? c.hint : hk));
 }
 
@@ -32,7 +33,16 @@ function buildDrop(path: string, close: () => void): HTMLElement {
   return drop;
 }
 
+let closeOpenMenu: (() => void) | null = null;
+/** Close an open menubar drop-down or context menu. True when one was open (Esc then does nothing else). */
+export function closeMenus(): boolean {
+  const had = !!openRoot || !!ctx;
+  closeOpenMenu?.(); closeContextMenu();
+  return had;
+}
+
 export function mountMenubar(app: App, host: HTMLElement) {
+  closeOpenMenu = () => { openRoot?.classList.remove('open'); openRoot = null; };
   const render = () => {
     const wasOpen = openRoot?.dataset.menu;
     clear(host);

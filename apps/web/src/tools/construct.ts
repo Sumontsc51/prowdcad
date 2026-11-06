@@ -11,12 +11,12 @@
  * Trace (Shift+T): click anchors (straight joins) and/or Alt-click two points of one contour to
  *   take the contour run between them; Enter → ops.traceSegments → new piece.
  */
-import type { Vec, Id, SmoothPreview, TraceItem } from '@prowdcad/kernel';
+import type { Vec, Id, SmoothPreview, TraceItem, Piece } from '@prowdcad/kernel';
 import type { App } from '../app';
 import { ICON, type Tool } from './tool';
 import { anchorNear, pieceUnder, runWorld, screenPath } from '../hitkit';
 import { ops } from '../ops-bridge';
-import { toLocal, toWorld, constrain45 } from '../geometry';
+import { toLocal, toWorld, constrain45, resolveFor } from '../geometry';
 import { reportError } from '../commands';
 import { rememberedDialog } from '../ui/dialog';
 import { fmt, unitLabel } from '../units-ui';
@@ -69,7 +69,7 @@ export const smoothTool: Tool = {
     let s = '';
     if (SM.to) s += `<path d="${screenPath(app, runWorld(app, pc, c, SM.from, SM.to))}" fill="none" stroke="#ff9f1a" stroke-width="4" opacity="0.35"/>`;
     if (SM.preview) s += `<path d="${screenPath(app, SM.preview.polyline.map(q => toWorld(pc, q)))}" fill="none" stroke="#d6309b" stroke-width="2"/>`;
-    const r = app.doc.resolvePiece(pc.id, app.doc.baseSize(pc));
+    const r = resolveFor(app.doc, pc, app.doc.baseSize(pc));
     const rc = c === pc.sew ? r.sew : r.internals[pc.internals.indexOf(c)];
     c.points.forEach((a, i) => {
       if (a.id === SM!.from || a.id === SM!.to || SM!.keep.has(a.id)) s += screenMarker(app.view.toScreen(toWorld(pc, rc.anchorPos[i])), 'square', SM!.keep.has(a.id) ? '#2ecc71' : '#ff9f1a', 6);
@@ -80,20 +80,36 @@ export const smoothTool: Tool = {
 
 // ───────────── Slash ─────────────
 
-let SL: { pieceId: Id; pts: Vec[]; hover: Vec | null } | null = null;
+let SL: { pieceId: Id | null; pts: Vec[]; hover: Vec | null } | null = null;
+
+/** The visible piece whose outline the world segment a→b crosses (a slash that starts outside a piece). */
+function pieceCrossed(app: App, a: Vec, b: Vec): Piece | null {
+  const cross = (p: Vec, q: Vec, r: Vec, s: Vec) => {
+    const d = (q.x - p.x) * (s.y - r.y) - (q.y - p.y) * (s.x - r.x); if (Math.abs(d) < 1e-12) return false;
+    const t = ((r.x - p.x) * (s.y - r.y) - (r.y - p.y) * (s.x - r.x)) / d, u = ((r.x - p.x) * (q.y - p.y) - (r.y - p.y) * (q.x - p.x)) / d;
+    return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+  };
+  for (let k = app.doc.style.pieces.length - 1; k >= 0; k--) {
+    const pc = app.doc.style.pieces[k]; if (app.hiddenPieces.has(pc.id)) continue;
+    const pts = resolveFor(app.doc, pc, app.sizeOf(pc)).sew.pts.map(q => toWorld(pc, q));
+    for (let i = 0; i < pts.length; i++) if (cross(a, b, pts[i], pts[(i + 1) % pts.length])) return pc;
+  }
+  return null;
+}
 
 function slashPoint(app: App, w: Vec, shift: boolean): Vec {
   if (SL && SL.pts.length && shift) return constrain45(SL.pts[SL.pts.length - 1], w);
   const s = snapPoint(app, w, { noGrid: true });
   if (s.kind === 'anchor') return s.p;
-  if (SL) { const pc = app.doc.style.pieces.find(x => x.id === SL!.pieceId); if (pc) { const o = snapOutline(app, pc, w, 10); if (o) return o.world; } }
+  if (SL?.pieceId) { const pc = app.doc.style.pieces.find(x => x.id === SL!.pieceId); if (pc) { const o = snapOutline(app, pc, w, 10); if (o) return o.world; } }
   return s.p;
 }
 
 async function commitSlash(app: App) {
   if (!SL || SL.pts.length < 2) { toast('Click at least two points across the piece', 'warn'); return; }
+  if (!SL.pieceId) { toast('The slash does not cross a piece: click points across a piece', 'warn'); return; }
   const s = SL; SL = null; app.invalidate('canvas');
-  const pc = app.doc.piece(s.pieceId);
+  const pc = app.doc.piece(s.pieceId!);
   const r = await rememberedDialog('slash', {
     title: `Slash ${pc.name}`, fields: [
       { kind: 'radio', key: 'grade', label: 'New cut points', value: 'auto', options: [{ value: 'auto', label: 'Auto grade (proportional)' }, { value: 'zero', label: 'Zero grade' }] },
@@ -117,10 +133,17 @@ export const slashTool: Tool = {
   down(app, p) {
     const w = slashPoint(app, p.w, p.e.shiftKey);
     if (!SL) {
+      // on, inside or OUTSIDE the outline (AccuMark): outside, the piece is the one the slash crosses next
       const pc = pieceUnder(app, p.w) ?? pieceUnder(app, w);
-      if (!pc) { app.status('Start on or inside a piece'); return; }
-      if (pc.locked) { toast('Piece is locked', 'warn'); return; }
-      SL = { pieceId: pc.id, pts: [w], hover: null }; app.invalidate('canvas'); return;
+      if (pc?.locked) { toast('Piece is locked', 'warn'); return; }
+      SL = { pieceId: pc?.id ?? null, pts: [w], hover: null };
+      if (!pc) app.status('Slash starts outside a piece: click the next point across the piece');
+      app.invalidate('canvas'); return;
+    }
+    if (!SL.pieceId) {
+      const pc = pieceCrossed(app, SL.pts[SL.pts.length - 1], w) ?? pieceUnder(app, w);
+      if (pc?.locked) { toast('Piece is locked', 'warn'); return; }
+      if (pc) SL.pieceId = pc.id;
     }
     SL.pts.push(w); app.invalidate('canvas');
   },
@@ -149,7 +172,7 @@ function traceWorld(app: App): Vec[] {
   const out: Vec[] = [];
   for (const it of TR.items) {
     const pc = app.doc.style.pieces.find(x => x.id === it.pieceId); if (!pc) continue;
-    if ('anchorId' in it) { const f = app.doc.findAnchor(pc, it.anchorId); if (f) { const r = app.doc.resolvePiece(pc.id, app.sizeOf(pc)); const rc = f.contour === pc.sew ? r.sew : r.internals[pc.internals.indexOf(f.contour)]; out.push(toWorld(pc, rc.anchorPos[f.index])); } }
+    if ('anchorId' in it) { const f = app.doc.findAnchor(pc, it.anchorId); if (f) { const r = resolveFor(app.doc, pc, app.sizeOf(pc)); const rc = f.contour === pc.sew ? r.sew : r.internals[pc.internals.indexOf(f.contour)]; out.push(toWorld(pc, rc.anchorPos[f.index])); } }
     else { const c = [pc.sew, ...pc.internals].find(x => x.id === (it.contourId ?? pc.sew.id)); if (c) out.push(...runWorld(app, pc, c, it.from, it.to, it.reverse)); }
   }
   return out;
@@ -195,7 +218,7 @@ export const traceTool: Tool = {
     if (!TR) return '';
     const pts = traceWorld(app);
     let s = `<path d="${screenPath(app, pts)}" fill="none" stroke="#16a085" stroke-width="2.2"/>`;
-    if (TR.pending) { const pc = app.doc.style.pieces.find(x => x.id === TR!.pending!.pieceId); const f = pc && app.doc.findAnchor(pc, TR.pending.anchorId); if (pc && f) { const r = app.doc.resolvePiece(pc.id, app.sizeOf(pc)); const rc = f.contour === pc.sew ? r.sew : r.internals[pc.internals.indexOf(f.contour)]; s += screenMarker(app.view.toScreen(toWorld(pc, rc.anchorPos[f.index])), 'square', '#16a085', 6); } }
+    if (TR.pending) { const pc = app.doc.style.pieces.find(x => x.id === TR!.pending!.pieceId); const f = pc && app.doc.findAnchor(pc, TR.pending.anchorId); if (pc && f) { const r = resolveFor(app.doc, pc, app.sizeOf(pc)); const rc = f.contour === pc.sew ? r.sew : r.internals[pc.internals.indexOf(f.contour)]; s += screenMarker(app.view.toScreen(toWorld(pc, rc.anchorPos[f.index])), 'square', '#16a085', 6); } }
     return s + `<text x="12" y="20" class="tool-note">${fs(TR.items.length)} item(s)</text>`;
   },
 };

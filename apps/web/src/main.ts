@@ -11,7 +11,7 @@ import { App } from './app';
 import { Canvas } from './canvas/canvas';
 import { TOOLS } from './tools/index';
 import { mountPalette } from './ui/palette';
-import { mountMenubar, openContextMenu, closeContextMenu } from './ui/menu';
+import { mountMenubar, openContextMenu, closeMenus } from './ui/menu';
 import { mountStatusbar } from './ui/statusbar';
 import { mountDocks } from './panels/dock';
 import { trackingKey } from './panels/grading';
@@ -81,7 +81,7 @@ canvas.onContext = p => {
   if (h.kind === 'anchor' && h.pieceId) {
     if (!app.isAnchorSelected({ anchorId: h.anchorId! })) app.selectAnchor({ pieceId: h.pieceId, contourId: h.contourId!, anchorId: h.anchorId! });
     const isSewGrade = (() => { const q = app.resolveRef({ pieceId: h.pieceId!, contourId: h.contourId!, anchorId: h.anchorId! }); return !!q && q.contour === q.piece.sew && q.anchor.kind === 'grade'; })();
-    openContextMenu(e.clientX, e.clientY, ['point.toggleSmooth', 'point.toggleKind', 'point.breakHandle', 'point.joinHandle', 'point.lock', 'point.startPoint', '-', 'move.single', 'move.smooth', 'move.group', 'point.moveXY', 'point.moveAlong', 'move.curve', 'point.setAngle', 'point.round', '-', 'seam.segment', 'seam.trimCorner', 'notch.atPoint', 'notch.corner', 'dart.add', '-', 'grade.copy', 'grade.paste', 'grade.smartPaste', 'grade.zero', '-', 'point.delete'],
+    openContextMenu(e.clientX, e.clientY, ['point.toggleSmooth', 'point.toggleKind', 'point.pin', 'point.unpin', 'point.breakHandle', 'point.joinHandle', 'point.lock', 'point.startPoint', '-', 'move.single', 'move.smooth', 'move.group', 'point.moveXY', 'point.moveAlong', 'move.curve', 'point.setAngle', 'point.round', '-', 'seam.segment', 'seam.trimCorner', 'notch.atPoint', 'notch.corner', 'dart.add', '-', 'grade.copy', 'grade.paste', 'grade.smartPaste', 'grade.zero', '-', 'point.delete'],
       isSewGrade ? [{ label: 'Corner type…', run: () => void cornerGallery(app, { pieceId: h.pieceId!, contourId: h.contourId!, anchorId: h.anchorId! }, { x: e.clientX, y: e.clientY }) }] : []);
   } else if (h.kind === 'live' && h.pieceId && h.liveKind && h.liveId) {
     selectLive(app, { kind: h.liveKind, pieceId: h.pieceId, id: h.liveId });
@@ -106,24 +106,48 @@ canvas.onContext = p => {
 };
 
 // ───────────── keyboard ─────────────
+/** time of the last Esc that cancelled something (menu, pick, draft, move) */
+let escConsumedAt = 0;
+/** Space tap: when Space went down, and whether the canvas was panned while it was held */
+let spaceDown = 0;
+let lastModifyTool: string | null = null;
+canvas.onSpacePan = () => { spaceDown = 0; };
+// a click or any other key in between means the next Esc is a fresh one
+window.addEventListener('pointerdown', () => { escConsumedAt = 0; }, true);
 window.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') escConsumedAt = 0;
   if (dialogOpen()) return;
   if (e.code === 'Space' && !isTyping()) {
-    if (!app.space) { app.space = true; app.invalidate('canvas'); }
+    if (!app.space) { app.space = true; spaceDown = e.repeat ? 0 : performance.now(); app.invalidate('canvas'); }
     e.preventDefault(); return;
   }
   if (isTyping()) return;
-  if (e.key === 'Escape') closeContextMenu();
+  // Esc on an open menu only closes the menu (it never also clears the selection)
+  if (e.key === 'Escape' && closeMenus()) { e.preventDefault(); escConsumedAt = performance.now(); return; }
+  // Space tap (press + release < 220 ms, no pan): Move / Modify tool ⇄ Select, selection kept (handled on keyup)
   // 1) active tool (drafts: Enter / Esc / Backspace)
-  if (app.tool?.key?.(app, e)) { e.preventDefault(); return; }
+  if (app.tool?.key?.(app, e)) { e.preventDefault(); if (e.key === 'Escape') escConsumedAt = performance.now(); return; }
   // 2) grading point tracking (arrow keys)
   if (trackingKey(app, e, (x, y) => { app.view.cx = x; app.view.cy = y; app.invalidate('canvas'); })) { e.preventDefault(); return; }
   // 3) command registry (menus + user hotkey map)
   const cmd = commandForEvent(e);
+  if (cmd?.id === 'edit.deselect' && e.key === 'Escape' && performance.now() - escConsumedAt < 500 && app.hasSelection()) {
+    // the previous Esc already cancelled something: a quick second Esc does not also drop the selection
+    e.preventDefault(); escConsumedAt = 0; app.status('Selection kept · press Esc again to clear it'); return;
+  }
   if (cmd) { e.preventDefault(); void runCommand(cmd.id); return; }
   // browser zoom / save etc. are suppressed for chords we own only
 });
-window.addEventListener('keyup', e => { if (e.code === 'Space') { app.space = false; app.invalidate('canvas'); } });
+window.addEventListener('keyup', e => {
+  if (e.code !== 'Space') return;
+  const tap = spaceDown && performance.now() - spaceDown < 220 && !dialogOpen() && !isTyping() && !app.tool?.busy?.(app);
+  spaceDown = 0;
+  app.space = false; app.invalidate('canvas');
+  if (!tap) return;
+  // Space tap (UX-RESEARCH §2.3.6): a Move / Modify tool → Select, keeping the selection; a second tap → back
+  if (app.tool && app.tool.id !== 'select' && !app.tool.hidden) { lastModifyTool = app.tool.id; app.setTool('select'); app.status(`Select (Space tap) · Space again = back to ${app.tools.find(t => t.id === lastModifyTool)?.title ?? 'the last tool'}`); }
+  else if (app.tool?.id === 'select' && lastModifyTool) { const id = lastModifyTool; lastModifyTool = null; app.setTool(id); }
+});
 window.addEventListener('blur', () => { if (app.space) { app.space = false; app.invalidate('canvas'); } });
 document.addEventListener('contextmenu', e => { if ((e.target as Element).closest?.('#app')) e.preventDefault(); });
 

@@ -302,11 +302,15 @@ export function renderOverlay(app: App): string {
           const fill = selA ? SEL_COLOR : '#ffffff';
           const sz = selA ? 4.4 : isSel ? 3.6 : 2.6;
           if (a.kind === 'grade') anchorsOut.push(`<rect x="${fs(s.x - sz)}" y="${fs(s.y - sz)}" width="${fs(sz * 2)}" height="${fs(sz * 2)}" fill="${fill}" stroke="${col}" stroke-width="1.3"/>`);
-          else anchorsOut.push(`<circle cx="${fs(s.x)}" cy="${fs(s.y)}" r="${fs(sz * 0.9)}" fill="${fill}" stroke="${col}" stroke-width="1.2"/>`);
+          else {
+            anchorsOut.push(`<circle cx="${fs(s.x)}" cy="${fs(s.y)}" r="${fs(sz * 0.9)}" fill="${fill}" stroke="${col}" stroke-width="1.2"/>`);
+            // pinned curve point (own grading): a dot in the middle; a following one stays hollow
+            if (isActive && Object.keys(a.grade ?? {}).length) anchorsOut.push(`<circle cx="${fs(s.x)}" cy="${fs(s.y)}" r="1.3" fill="${col}"/>`);
+          }
           if (a.flags.startPoint && c === p.sew && isActive) anchorsOut.push(`<circle cx="${fs(s.x)}" cy="${fs(s.y)}" r="7" fill="none" stroke="#e67e22" stroke-width="1"/>`);
           if (a.flags.locked && isActive) anchorsOut.push(`<path d="M${fs(s.x + 4)} ${fs(s.y - 9)}h5v4h-5z" fill="#888"/>`);
           // ~9 px anchor hit target
-          hitAnchors.push(`<circle cx="${fs(s.x)}" cy="${fs(s.y)}" r="9" fill="transparent" data-hit="anchor" data-piece="${p.id}" data-contour="${c.id}" data-anchor="${a.id}" data-size="${sid}" style="cursor:move"/>`);
+          hitAnchors.push(`<circle cx="${fs(s.x)}" cy="${fs(s.y)}" r="9" fill="transparent" data-hit="anchor" data-piece="${p.id}" data-contour="${c.id}" data-anchor="${a.id}" data-size="${sid}" style="cursor:move"><title>${esc(anchorTip(a, ai))}</title></circle>`);
           // handles for selected anchors (active size, smooth or explicit)
           if (selA && (a.smooth || a.hIn || a.hOut)) {
             const hh = rc.handles[ai];
@@ -393,3 +397,12 @@ export function renderRuler(app: App, axis: 'x' | 'y', lenPx: number, thick: num
 
 export { sizeFor };
 export type { Piece };
+
+/** Tooltip of a point: kind, name, and for curve points whether they follow their neighbours. */
+function anchorTip(a: { kind: string; name?: string; grade?: Record<string, unknown> }, i: number): string {
+  const head = `${a.kind === 'grade' ? 'Grade point' : 'Curve point'} ${i + 1}${a.name ? ' ' + a.name : ''}`;
+  if (a.kind === 'grade') return head;
+  return Object.keys(a.grade ?? {}).length
+    ? `${head} · pinned: own grading, keeps its position when a neighbour moves (Point ▸ Unpin)`
+    : `${head} · follows its neighbouring grade points in graded sizes (no own grading) · Point ▸ Pin curve point keeps it in place`;
+}

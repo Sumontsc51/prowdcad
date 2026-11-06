@@ -2,7 +2,7 @@
  * All built-in commands. Menus, hotkeys and context menus come from here. Commands backed by
  * kernel ops that have not landed yet call ops-bridge placeholders (→ "not wired yet" toast).
  */
-import { registerCommand, type CommandCtx, hotkeyMap, allCommands, normalizeChord } from '../commands';
+import { registerCommand, type CommandCtx, hotkeyMap, allCommands, normalizeChord, getCommand } from '../commands';
 import type { App } from '../app';
 import type { Canvas } from '../canvas/canvas';
 import { settings, saveSettings } from '../settings';
@@ -14,6 +14,7 @@ import { registerCutPiece } from './cut-piece';
 import { registerGrade } from './grade-cmds';
 import { registerLive, deleteLive } from './live-cmds';
 import { registerMoveCmds, selectAllByFilter } from './move-cmds';
+import { needs } from './cmd-util';
 import { ops, opStatus, type SegmentRef, type AnchorRef } from '../ops-bridge';
 import { showDialog, alertDialog, confirmDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
@@ -25,7 +26,7 @@ import { fmt, unitLabel } from '../units-ui';
 
 export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
   const hasPiece = (c: CommandCtx) => c.app.sel.pieces.length > 0;
-  const hasAnchor = (c: CommandCtx) => c.app.sel.anchors.length > 0;
+  const hasAnchor = needs((c: CommandCtx) => c.app.sel.anchors.length > 0, 'a selected point');
   const tx = (label: string, fn: () => void) => app.doc.transact(label, fn);
   const selPieces = () => app.sel.pieces.map(id => app.doc.piece(id));
   const segRef = (): SegmentRef => {
@@ -44,7 +45,7 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
   registerCommand({ id: 'file.open', title: 'Open…', menu: 'File', group: 0, hotkey: 'Ctrl+O', run: () => openFile(app) });
   registerCommand({ id: 'file.save', title: 'Save', menu: 'File', group: 1, hotkey: 'Ctrl+S', run: () => saveFile(app, false) });
   registerCommand({ id: 'file.saveAs', title: 'Save As…', menu: 'File', group: 1, hotkey: 'Ctrl+Shift+S', run: () => saveFile(app, true) });
-  registerCommand({ id: 'file.import', title: 'Import (DXF + RUL / SVG / PLT)…', menu: 'File', group: 2, hotkey: 'Ctrl+Shift+I', run: () => importFile(app) });
+  registerCommand({ id: 'file.import', title: 'Import (DXF + RUL / SVG / PLT)…', menu: 'File', group: 2, hotkey: 'Ctrl+Alt+I,Ctrl+Shift+I', run: () => importFile(app) });
   registerCommand({ id: 'file.merge', title: 'Merge from another style…', menu: 'File', group: 2, run: () => mergeFromFile(app) });
   registerCommand({ id: 'file.export.dxf', title: 'DXF (AAMA / ASTM) + RUL…', menu: 'File/Export', hotkey: 'Ctrl+Shift+E', run: () => exportDXF(app) });
   registerCommand({ id: 'file.export.svg', title: 'SVG…', menu: 'File/Export', run: () => exportSVGFile(app) });
@@ -100,6 +101,8 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
     if (r) { settings.nudgeMm = r.v as number; saveSettings(); }
   } });
   registerCommand({ id: 'edit.hotkeys', title: 'Keyboard shortcuts…', menu: 'Edit', group: 4, run: () => editHotkeys(rebuildUi) });
+  registerCommand({ id: 'edit.keysAccuMark', title: 'AccuMark keys', menu: 'Edit/Keyboard preset', checked: () => currentKeyPreset() === 'accumark', run: () => applyKeyPreset('accumark', rebuildUi) });
+  registerCommand({ id: 'edit.keysDefault', title: 'ProwdCAD (default)', menu: 'Edit/Keyboard preset', checked: () => currentKeyPreset() === 'prowdcad', run: () => applyKeyPreset('prowdcad', rebuildUi) });
   registerCommand({ id: 'edit.toolbar', title: 'Customize toolbar…', menu: 'Edit', group: 4, run: () => customizeToolbar(app, rebuildUi) });
 
   registerSeamNotch(app);
@@ -117,7 +120,7 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
   registerCommand({ id: 'view.fitSel', title: 'Zoom to selection', menu: 'View', group: 0, hotkey: 'Shift+F', enabled: hasPiece, run: () => canvas.zoomFit(app.sel.pieces) });
   registerCommand({ id: 'view.zoomIn', title: 'Zoom in', menu: 'View', group: 0, hotkey: 'Ctrl+=,Ctrl++,+,=', run: () => canvas.zoomBy(1.25) });
   registerCommand({ id: 'view.zoomOut', title: 'Zoom out', menu: 'View', group: 0, hotkey: 'Ctrl+-,-', run: () => canvas.zoomBy(0.8) });
-  registerCommand({ id: 'view.zoom100', title: 'Actual size (100%)', menu: 'View', group: 0, hotkey: 'Ctrl+1', run: () => canvas.zoom100() });
+  registerCommand({ id: 'view.zoom100', title: 'Actual size (100%)', menu: 'View', group: 0, hotkey: 'Ctrl+Alt+0,Ctrl+1', run: () => canvas.zoom100() });
   const toggle = (id: string, title: string, key: keyof typeof settings, hotkey?: string, after?: () => void) =>
     registerCommand({ id, title, menu: 'View', group: 1, hotkey, checked: () => !!settings[key], run: () => { (settings as unknown as Record<string, boolean>)[key] = !settings[key]; saveSettings(); after?.(); } });
   toggle('view.grid', 'Grid', 'showGrid', "Ctrl+'");
@@ -251,17 +254,51 @@ async function deleteSelection(app: App) {
   app.sel = { pieces: [], anchors: [] };
 }
 
+/**
+ * "AccuMark keys" preset (docs/UX-RESEARCH.md §1.5): the Gerber AccuMark function keys on top of the
+ * ProwdCAD defaults. Keys AccuMark uses for something else move out of the way (Alt+S Seam →
+ * Shift+Alt+S, Ctrl+D Duplicate → Ctrl+Shift+D). Alt+F4 / Ctrl+F4 / F11 cannot be captured by a page.
+ */
+export const ACCUMARK_KEYS: Record<string, string> = {
+  'move.single': 'Alt+F12', 'move.smooth': 'Alt+F11', 'move.group': 'Alt+F2', 'point.alignH': 'Shift+Alt+H,Alt+F3', 'point.delete': 'Alt+F1',
+  'move.line': 'Ctrl+F2', 'move.lineParallel': 'Ctrl+F11', 'seg.divide': 'Ctrl+F10', 'seg.swap': 'Alt+S', 'seam.segment': 'Shift+Alt+S',
+  'move.piece': 'Shift+F2', 'move.pieceFlip': 'Shift+F9', 'move.pieceRotate': 'Shift+F10', 'tool.walk': 'W,Shift+W',
+  'edit.selectAll': 'Ctrl+A', 'edit.deselect': 'Escape,Ctrl+D', 'edit.duplicate': 'Ctrl+Shift+D',
+};
+export const KEY_PRESETS: { id: string; label: string; map: Record<string, string> }[] = [
+  { id: 'prowdcad', label: 'ProwdCAD (default)', map: {} },
+  { id: 'accumark', label: 'AccuMark keys (Alt+F12 Move Single Point, Shift+F2 Move Piece, …)', map: ACCUMARK_KEYS },
+];
+/** Which preset the current overrides equal ('' = customised). */
+export function currentKeyPreset(): string {
+  const cur = JSON.stringify(Object.entries(settings.hotkeys).sort());
+  for (const p of KEY_PRESETS) if (JSON.stringify(Object.entries(p.map).filter(([id]) => getCommand(id)).sort()) === cur) return p.id;
+  return '';
+}
+export function applyKeyPreset(id: string, rebuildUi: () => void) {
+  const p = KEY_PRESETS.find(x => x.id === id); if (!p) return;
+  settings.hotkeys = Object.fromEntries(Object.entries(p.map).filter(([cid]) => getCommand(cid)));
+  saveSettings(); rebuildUi();
+  toast(`Keyboard preset: ${p.label.split(' (')[0]}`, 'ok');
+}
+
 async function editHotkeys(rebuildUi: () => void) {
   const json = JSON.stringify(hotkeyMap(), null, 2);
+  const cur = currentKeyPreset();
   const r = await showDialog({
     title: 'Keyboard shortcuts', wide: true,
-    message: 'Edit the JSON map  command-id → chord. Several chords: "Ctrl+Y,Ctrl+Shift+Z". Empty string = unbound. Modifiers: Ctrl (= Cmd), Alt, Shift.',
-    fields: [{ kind: 'textarea', key: 'j', label: '', value: json, rows: 22, mono: true }],
+    message: 'Pick a preset, or edit the JSON map  command-id → chord. Several chords: "Ctrl+Y,Ctrl+Shift+Z". Empty string = unbound. Modifiers: Ctrl (= Cmd), Alt, Shift.',
+    fields: [
+      { kind: 'select', key: 'preset', label: 'Preset', value: cur || 'custom', options: [...KEY_PRESETS.map(p => ({ value: p.id, label: p.label })), ...(cur ? [] : [{ value: 'custom', label: 'Custom (your edits below)' }])],
+        hint: 'Choosing a preset replaces your custom keys when you press OK. AccuMark keys: Alt+F12 Move Single Point · Alt+F11 Move Smooth · Alt+F2 Move Points · Alt+F3 Align · Alt+F1 Delete point · Ctrl+F2 Move Line · Ctrl+F11 Move Parallel · Ctrl+F10 Split · Alt+S Swap line · Shift+F2 Move Piece · Shift+F9 Flip · Shift+F10 Rotate · Shift+W Walk · Ctrl+D Clear selection.' },
+      { kind: 'textarea', key: 'j', label: '', value: json, rows: 20, mono: true },
+    ],
     buttons: [{ id: 'reset', label: 'Reset to defaults', danger: true }],
     validate: v => { try { const o = JSON.parse(String(v.j)); return typeof o === 'object' && o && !Array.isArray(o) ? null : 'Must be a JSON object'; } catch (e) { return 'Invalid JSON: ' + (e as Error).message; } },
   });
   if (!r) return;
   if (r.__button === 'reset') { settings.hotkeys = {}; saveSettings(); rebuildUi(); toast('Shortcuts reset', 'ok'); return; }
+  if (r.preset !== 'custom' && r.preset !== cur) { applyKeyPreset(String(r.preset), rebuildUi); return; }
   const o = JSON.parse(String(r.j)) as Record<string, string>;
   const out: Record<string, string> = {};
   const defaults: Record<string, string> = {};

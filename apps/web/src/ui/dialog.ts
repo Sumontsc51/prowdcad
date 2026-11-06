@@ -16,7 +16,7 @@ export type FieldDef =
   | { kind: 'number'; key: string; label: string; value: number; min?: number; max?: number; step?: number; hint?: string; suffix?: string }
   | { kind: 'text'; key: string; label: string; value: string; placeholder?: string; hint?: string }
   | { kind: 'textarea'; key: string; label: string; value: string; rows?: number; mono?: boolean; hint?: string }
-  | { kind: 'select'; key: string; label: string; value: string; options: { value: string; label: string }[]; hint?: string }
+  | { kind: 'select'; key: string; label: string; value: string; options: { value: string; label: string }[]; hint?: string; remember?: boolean }
   | { kind: 'radio'; key: string; label: string; value: string; options: { value: string; label: string }[]; hint?: string }
   | { kind: 'checkbox'; key: string; label: string; value: boolean; hint?: string };
 
@@ -94,7 +94,8 @@ export function showDialog(opt: DialogOptions): Promise<DialogValues | null> {
         const inp = (el.matches('input,select,textarea') ? el : el.querySelector('input,select,textarea')) as HTMLInputElement;
         switch (def.kind) {
           case 'length': {
-            const v = parseLen(inp.value);
+            // an untouched field keeps its exact value (the display may be rounded to 1/16")
+            const v = inp.value === fmt(def.value) ? def.value : parseLen(inp.value);
             if (!Number.isFinite(v)) return `${def.label}: not a valid length`;
             if (def.min != null && v < def.min) return `${def.label}: must be ≥ ${fmt(def.min)} ${unitLabel()}`;
             out[key] = v; break;
@@ -176,6 +177,7 @@ export async function rememberedDialog(id: string, opt: DialogOptions): Promise<
   const last = settings.last[id] ?? {};
   for (const f of opt.fields ?? []) {
     if (f.key.startsWith('_')) continue; // '_'-prefixed fields are context values: never remembered
+    if ('remember' in f && f.remember === false) continue; // context-driven default (e.g. export scope = the selection)
     const v = last[f.key];
     if (v !== undefined && typeof v === typeof f.value) {
       if ((f.kind === 'select' || f.kind === 'radio') && !f.options.some(o => o.value === v)) continue;
@@ -185,7 +187,8 @@ export async function rememberedDialog(id: string, opt: DialogOptions): Promise<
   const r = await showDialog(opt);
   if (r && !r.__button) {
     const keep: Record<string, string | number | boolean> = {};
-    for (const [k, v] of Object.entries(r)) if (!k.startsWith('_')) keep[k] = v;
+    const ctxKeys = new Set((opt.fields ?? []).filter(f => 'remember' in f && f.remember === false).map(f => f.key));
+    for (const [k, v] of Object.entries(r)) if (!k.startsWith('_') && !ctxKeys.has(k)) keep[k] = v;
     settings.last[id] = keep; saveSettings();
   }
   return r;

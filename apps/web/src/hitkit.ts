@@ -8,7 +8,7 @@ import {
 } from '@prowdcad/kernel';
 import type { App } from './app';
 import type { AnchorRef } from './ops-bridge';
-import { resolveFor, toWorld, toLocal, pieceAtWorld } from './geometry';
+import { resolveFor, toWorld, toLocal, pieceAtWorld, type ShownContour } from './geometry';
 import { ops } from './ops-bridge';
 
 export interface AnchorHit { piece: Piece; contour: Contour; index: number; anchor: Anchor; world: Vec; local: Vec; ref: AnchorRef; dpx: number }
@@ -61,6 +61,10 @@ export function segmentIds(c: Contour, rc: ResolvedContour, k: number): { from?:
   const g = rc.gradeIdx; if (k < 0 || !g.length) return {};
   if (!c.closed && k >= g.length - 1) return {};
   const a = g[k], b = c.closed ? g[(k + 1) % g.length] : g[k + 1];
+  if (a === undefined || b === undefined || !c.points[a] || !c.points[b]) return {};
+  // a live half piece: the stored fold edge is interior once opened (no segment there)
+  const fold = (rc as ShownContour).foldAfter;
+  if (fold !== undefined && c.closed) { const n = c.points.length; const span = g.length === 1 ? n : (b - a + n) % n; if ((fold - a + n) % n < span) return {}; }
   return { from: c.points[a].id, to: c.points[b].id };
 }
 

@@ -315,6 +315,166 @@ async function noSelectionProbe(h, fixtures, registry) {
   return out;
 }
 
+// ───────────────────────── I. fix-pass regressions (docs/E2E-REPORT.md "Fix pass") ─────────────────────────
+async function fixes(h, fixtures) {
+  const out = [];
+  const T = async (name, fn, fixture = 'base') => {
+    const r = { name }; const e0 = h.pageErrors.length;
+    try { await h.reset(fixtures[fixture]); Object.assign(r, await fn()); } catch (e) { r.pass = false; r.error = String(e.message || e).split('\n')[0]; await h.escapeAll(); }
+    const pe = h.pageErrors.slice(e0); if (pe.length) { r.pass = false; r.pageErrors = pe.slice(0, 3); }
+    out.push(r); process.stdout.write(`  fix ${r.pass ? '✓' : '✗'} ${name} ${r.pass ? '' : (r.got ?? r.error ?? '') + (r.pageErrors ? ' page errors: ' + r.pageErrors.join(' | ') : '')}\n`);
+  };
+  const half = P((app, ops, doc, E) => ops.setHalf(doc, E.P('FRONT').id, { a: { x: 0, y: 0 }, b: { x: 0, y: 622 } }, { openAtOutput: true }));
+  const conn = async () => { await addInternal([[260, 465, 'CN_A'], [150, 420, 'CN_B']])(h); await P((app, ops, doc, E) => ops.globalCheckConnections(doc, E.P('FRONT').id))(h); await h.settle(); };
+  const unit = v => h.page.locator('select.sb-unit').selectOption(v).then(() => h.settle());
+  const tool = () => h.ev(() => window.__e2e.app.tool.id);
+  const prompt = () => h.ev(() => document.querySelector('.sb-prompt')?.textContent ?? '');
+
+  // B1 — half piece: hovering the mirrored half never throws; the fold-axis point is selectable and movable
+  await T('B1 half piece: hover the mirrored half (no TypeError), click CF_NECK selects it, Move Point moves it', async () => {
+    await half(h); await h.settle(); await h.ensureSelect();
+    for (const [x, y] of [[-130, 300], [-200, 20], [-60, 640], [-5, 400], [-130, 0]]) { const c = await h.toClient({ x, y }); await h.page.mouse.move(c.x, c.y); await h.settle(10); }
+    await h.clickA('FRONT', 'CF_NECK'); const sel = await h.sel();
+    await h.key('g'); const w = await h.W('FRONT', 'CF_NECK'); await h.dragW(w, { x: w.x + 12, y: w.y + 6 }, { steps: 8, mods: ['Alt'] });
+    const a = an(await h.state(), 'FRONT', 'CF_NECK');
+    return { got: `selection ${JSON.stringify(sel.anchors)}; CF_NECK (${Q.r4(a.x)},${Q.r4(a.y)})`, pass: sel.anchors[0] === 'FRONT/CF_NECK' && near(a.x, 12, 0.6) && near(a.y, 628, 0.6) };
+  });
+  await T('B1 half piece: Select · Lines filter: a click on the mirrored half selects no fold-edge segment, a click on the authored half selects its segment', async () => {
+    await half(h); await h.settle(); await h.ensureSelect(); await h.key('3');
+    await h.clickW({ x: -260, y: 200 }); const s1 = await h.sel();
+    await h.clickSeg('FRONT', 'SS_HEM', 'UA', 0.5); const s2 = await h.sel();
+    return { got: `mirrored half: ${JSON.stringify(s1.segments)}; authored: ${JSON.stringify(s2.segments)}`, pass: !s1.segments.length && s2.segments.length === 1 };
+  });
+  // B2 — typed value equal to the rounded display is committed exactly (grading table: units part; here Inspector + dialog)
+  await T('B2 Inspector: typing the shown rounded "10 1/4" over 260 mm sets exactly 260.35 mm (in16)', async () => {
+    await unit('in16'); await h.selectA('FRONT', 'SS_HEM'); const loc = inspInput(h, /^X/); const shown = await loc.inputValue(); await typeInto(h, loc, shown);
+    const x = an(await h.state(), 'FRONT', 'SS_HEM').x; return { got: `shown "${shown}" → x ${x}`, pass: shown === '10 1/4' && near(x, 260.35, 1e-6) };
+  });
+  await T('B2 dialog: an untouched length field keeps its exact value (seam 10 mm shown as 3/8" → OK keeps 10)', async () => {
+    await unit('in16'); await h.selectA('FRONT', 'SS_HEM'); await h.cmd('seam.segment'); await h.waitDialog(); const v = await h.dlg().locator('[data-key="v"]').inputValue(); await h.ok();
+    const sa = an(await h.state(), 'FRONT', 'SS_HEM').seamAfter ?? pc(await h.state(), 'FRONT').seamDefault; return { got: `field "${v}" → seam ${sa}`, pass: sa === 10 };
+  });
+  // B3 — export scope follows the selection even after an "All pieces" export
+  await T('B3 export: after exporting All, selecting FRONT → Pieces = Selected (1), the select shows it, the PDF has FRONT only', async () => {
+    await h.key('Control+p'); await h.waitDialog(); await h.ok(); await h.settle(100);
+    await h.ev(() => { window.__e2e.downloads.length = 0; });
+    await h.selectPiece('FRONT'); await h.key('Control+p'); await h.waitDialog();
+    const sel = h.dlg().locator('[data-key="pieces"]'); const v = await sel.inputValue(); const label = await sel.locator('option:checked').textContent();
+    await h.ok(); await h.settle(150); await h.ev(() => window.__e2e._dl);
+    const d = (await h.downloads()).find(x => x.name.endsWith('.pdf')); const t = d ? Buffer.from(d.b64, 'base64').toString('latin1') : '';
+    return { got: `value ${v} "${label}", PDF FRONT ${/FRONT/.test(t)} BACK ${/BACK/.test(t)}`, pass: v === 'sel' && /Selected \(1\)/.test(label) && /FRONT/.test(t) && !/BACK/.test(t) };
+  });
+  await T('B3 export: SVG / DXF / PLT also default to Selected after an All export', async () => {
+    const res = {};
+    for (const id of ['file.export.svg', 'file.export.dxf']) { await h.reset(fixtures.base); await h.cmd(id); await h.waitDialog(); await h.ok(); await h.settle(60); await h.selectPiece('BACK'); await h.cmd(id); await h.waitDialog(); res[id] = await h.dlg().locator('[data-key="pieces"]').inputValue(); await h.cancel(); }
+    return { got: JSON.stringify(res), pass: Object.values(res).every(v => v === 'sel') };
+  });
+  // B5 — Move Point prefers the selected sew point over the coincident internal end
+  await T('B5 Move Point grabs the selected sew point UA (not the coincident internal end CN_A); CN_A follows by the connection', async () => {
+    await conn(); await h.selectA('FRONT', 'UA'); const s0 = (await h.sel()).anchors;
+    await h.key('g'); const w = await h.W('FRONT', 'UA'); await h.dragW(w, { x: w.x + 15, y: w.y - 10 }, { steps: 10, mods: ['Alt'] });
+    const st = await h.state(); const ua = an(st, 'FRONT', 'UA'), cn = an(st, 'FRONT', 'CN_A');
+    return { got: `selected ${JSON.stringify(s0)}; UA (${Q.r4(ua.x)},${Q.r4(ua.y)}), CN_A (${Q.r4(cn.x)},${Q.r4(cn.y)})`, pass: s0[0] === 'FRONT/UA' && near(ua.x, 275, 0.6) && near(cn.x, ua.x, 1e-6) && near(cn.y, ua.y, 1e-6) };
+  });
+  await T('B5 Select: a click on coincident UA / CN_A takes the sew point first; Tab reaches CN_A', async () => {
+    await conn(); await h.ensureSelect(); await h.clickA('FRONT', 'UA'); const a = (await h.sel()).anchors; await h.key('Tab'); const b = (await h.sel()).anchors;
+    return { got: `click ${JSON.stringify(a)}, Tab ${JSON.stringify(b)}`, pass: a[0] === 'FRONT/UA' && b[0] === 'FRONT/CN_A' };
+  });
+  // B8 — snap-to-grid hotkey
+  await T("B8 Ctrl+Shift+' toggles Snap to grid (not the grid display)", async () => {
+    const g0 = await h.ev(() => [window.__e2e.settings.snapGrid, window.__e2e.settings.showGrid]); await h.key("Control+Shift+'"); const g1 = await h.ev(() => [window.__e2e.settings.snapGrid, window.__e2e.settings.showGrid]);
+    await h.key("Control+'"); const g2 = await h.ev(() => [window.__e2e.settings.snapGrid, window.__e2e.settings.showGrid]);
+    return { got: `[snap, grid] ${JSON.stringify(g0)} → ${JSON.stringify(g1)} → Ctrl+' ${JSON.stringify(g2)}`, pass: g1[0] !== g0[0] && g1[1] === g0[1] && g2[1] !== g1[1] && g2[0] === g1[0] };
+  });
+  // B9 — click, then press again on the picked-up point: a drag, no zero-delta undo step
+  await T('B9 Move Point: click UA then immediately press-drag it 20 mm → one undo step, UA +20', async () => {
+    await h.key('g'); const w = await h.W('FRONT', 'UA'); const r0 = await h.ev(() => window.__e2e.app.doc.revision());
+    await h.clickW(w); await h.dragW(w, { x: w.x + 20, y: w.y }, { steps: 10, mods: ['Alt'] });
+    const ua = an(await h.state(), 'FRONT', 'UA'); const steps = (await h.ev(() => window.__e2e.app.doc.revision())) - r0;
+    return { got: `UA.x ${Q.r4(ua.x)}, revisions ${steps}`, pass: near(ua.x, 280, 0.6) && near(ua.y, 465, 0.6) && steps === 1 };
+  });
+  await T('B9 Move Point: click UA then click it again on the same spot → put back, no undo step', async () => {
+    await h.key('g'); const w = await h.W('FRONT', 'UA'); const r0 = await h.ev(() => window.__e2e.app.doc.revision());
+    await h.clickW(w); await h.clickW(w); const steps = (await h.ev(() => window.__e2e.app.doc.revision())) - r0;
+    return { got: `revisions ${steps}`, pass: steps === 0 };
+  });
+  // B11 — Inspector X / Y follows point connections (same op as Move XY)
+  await T('B11 Inspector X +15 on UA: the connected internal end CN_A follows', async () => {
+    await conn(); await h.selectA('FRONT', 'UA'); const loc = inspInput(h, /^X/); await typeInto(h, loc, String(+(await loc.inputValue()) + 15));
+    const st = await h.state(); const ua = an(st, 'FRONT', 'UA'), cn = an(st, 'FRONT', 'CN_A');
+    return { got: `UA.x ${ua.x}, CN_A.x ${cn.x}`, pass: near(ua.x, 275, 1e-6) && near(cn.x, 275, 1e-6) };
+  });
+  await T('B11 Inspector Y on a non-base size edits only that size (L), connection follows', async () => {
+    await conn(); await h.selectA('FRONT', 'UA'); await h.page.locator('select.sb-size').selectOption({ label: 'L' }); await h.settle();
+    const y0 = an(await h.state(), 'FRONT', 'UA').y;
+    const loc = inspInput(h, /^Y/); await typeInto(h, loc, String(+(await loc.inputValue()) - 4));
+    const st = await h.state(); const g = abs(st, 'FRONT', 'UA'); const ua = an(st, 'FRONT', 'UA'), cn = abs(st, 'FRONT', 'CN_A');
+    return { got: `UA base y ${y0} → ${ua.y}, abs L ${JSON.stringify(g.L)}, XL ${JSON.stringify(g.XL)}, CN_A abs L ${JSON.stringify(cn.L)}`, pass: ua.y === y0 && near(g.L.dy, 1, 1e-6) && near(g.XL.dy, 10, 1e-6) && near(cn.L.dy, -4, 1e-6) };
+  });
+  // grading table: the incremental cascade is explained, Absolute edits one size
+  await T('Grading table: the Incremental note warns that larger sizes follow; Absolute edit of L leaves XL', async () => {
+    await h.selectA('FRONT', 'UA'); await h.key('Control+g'); await h.settle(80);
+    const note = await h.page.locator('.gr-note').textContent();
+    await typeInto(h, h.page.locator('table.gr tr.sel input.num').nth(4), '12'); const st1 = await h.ev(() => window.__e2e.app.statusMsg);
+    await h.page.locator('.gr-bar button', { hasText: 'Absolute' }).click(); await h.settle(60);
+    const note2 = await h.page.locator('.gr-note').textContent();
+    const xl0 = abs(await h.state(), 'FRONT', 'UA').XL.dx;
+    await typeInto(h, h.page.locator('table.gr tr.sel input.num').nth(4), '15'); const g = abs(await h.state(), 'FRONT', 'UA');
+    return { got: `note "${note}" · status "${st1}" · abs note "${note2}" · L ${g.L.dx} XL ${xl0}→${g.XL.dx}`, pass: /XL follows L/.test(note) && /moved sizes L, XL/.test(st1) && /that size only/.test(note2) && near(g.L.dx, 15, 1e-9) && near(g.XL.dx, xl0, 1e-9) };
+  });
+  // Esc: closing a menu never clears the selection; a second Esc right after a cancel keeps it too
+  await T('Esc on an open menu closes it and keeps the selection; Esc again (later) clears', async () => {
+    await h.selectA('FRONT', 'UA'); await h.openMenu('Point'); await h.page.keyboard.press('Escape'); await h.settle();
+    const open = await h.page.locator('.menu-root.open').count(); const s1 = (await h.sel()).anchors;
+    await h.page.waitForTimeout(600); await h.page.keyboard.press('Escape'); await h.settle(); const s2 = (await h.sel()).anchors;
+    return { got: `menu open ${open}, after Esc ${JSON.stringify(s1)}, after a later Esc ${JSON.stringify(s2)}`, pass: !open && s1[0] === 'FRONT/UA' && !s2.length };
+  });
+  // curve points that follow their neighbours: ghost + "follows" marks + prompt while a grade point is dragged
+  await T('Move Point drag of UA: ghost of the old curve, AH1 / AH2 marked "follows", prompt explains and names Pin', async () => {
+    await h.key('g'); const w = await h.W('FRONT', 'UA'); const a = await h.toClient(w);
+    await h.page.mouse.move(a.x, a.y); await h.page.mouse.down(); for (let i = 1; i <= 6; i++) await h.page.mouse.move(a.x + i * 4, a.y - i * 2); await h.settle(30);
+    const ov = await h.ev(() => ({ follows: [...document.querySelectorAll('svg.sheet text.tool-note')].filter(t => t.textContent === 'follows').length, ghost: document.querySelectorAll('svg.sheet path[stroke="#8a93a6"]').length }));
+    const pr = await prompt(); await h.page.mouse.up(); await h.settle();
+    return { got: `overlay ${JSON.stringify(ov)}; prompt "${pr}"`, pass: ov.follows === 1 && ov.ghost >= 1 && /2 curve points follow/.test(pr) && /Pin curve point/.test(pr) };
+  });
+  await T('Curve point tooltip: AH1 says it follows its neighbours; after Point ▸ Pin it says pinned', async () => {
+    await h.selectA('FRONT', 'AH1');
+    const tip = () => h.ev(() => { const E = window.__e2e; const id = E.findA('FRONT', 'AH1').a.id; return document.querySelector(`circle[data-hit="anchor"][data-anchor="${id}"] title`)?.textContent ?? ''; });
+    const t0 = await tip(); await h.cmd('point.pin'); await h.settle(); const t1 = await tip();
+    const insp = await h.page.locator('section[data-panel="inspector"] .prow').filter({ has: h.page.locator('.plabel', { hasText: /^Grading$/ }) }).textContent();
+    return { got: `"${t0}" → "${t1}"; inspector "${insp}"`, pass: /follows its neighbouring/.test(t0) && /pinned/.test(t1) && /Pinned/.test(insp) };
+  });
+  // Space tap: Move tool ⇄ Select, selection kept
+  await T('Space tap: Move Point → Select (selection kept) → Space again → Move Point', async () => {
+    await h.selectA('FRONT', 'UA'); await h.key('g'); const t0 = await tool();
+    await h.page.keyboard.press('Space'); await h.settle(); const t1 = await tool(); const s1 = (await h.sel()).anchors;
+    await h.page.keyboard.press('Space'); await h.settle(); const t2 = await tool();
+    return { got: `${t0} → ${t1} (sel ${JSON.stringify(s1)}) → ${t2}`, pass: t0 === 'movePoint' && t1 === 'select' && s1[0] === 'FRONT/UA' && t2 === 'movePoint' };
+  });
+  // snaps: midpoint, intersection, perpendicular foot
+  await T('Snaps: midpoint of a segment, intersection of two lines, perpendicular foot from the start point', async () => {
+    await addInternal([[60, 300, 'YK_A'], [200, 300, 'YK_B']])(h); await h.settle();
+    const r = await h.ev(async () => {
+      const S = await import('/src/canvas/snap.ts'); const app = window.__e2e.app;
+      const mid = S.snapPoint(app, { x: 532, y: 3 });                 // BACK hem BL–BR → (530, 0)
+      const int = S.snapPoint(app, { x: 132, y: 302 });               // internal IL (x 130) × YK (y 300) → (130, 300)
+      const perp = S.snapPoint(app, { x: 128, y: 196 }, { from: { x: 20, y: 200 } }); // foot on IL from (20,200) → (130, 200)
+      return { mid, int, perp };
+    });
+    const ok = (s, k, x, y) => s.kind === k && near(s.p.x, x, 1e-3) && near(s.p.y, y, 1e-3); // the fixture outline comes from canvas clicks (± 1e-5 mm)
+    // and a real Move Point drag lands exactly on the midpoint
+    await h.key('g'); const w = await h.W('BACK', 'TR'); await h.dragW(w, { x: 531.5, y: 2.5 }, { steps: 10 });
+    const tr = an(await h.state(), 'BACK', 'TR');
+    return { got: `${JSON.stringify(r)}; BACK/TR → (${Q.r4(tr.x)},${Q.r4(tr.y)})`, pass: ok(r.mid, 'mid', 530, 0) && ok(r.int, 'int', 130, 300) && ok(r.perp, 'perp', 130, 200) && near(tr.x, r.mid.p.x, 1e-9) && near(tr.y, r.mid.p.y, 1e-9) };
+  });
+  // greyed menu items say what they need
+  await T('A greyed menu item explains what it needs (tooltip)', async () => {
+    await h.openMenu('Point'); const t = await h.page.locator('.menu-root.open .menu-item.disabled').first().getAttribute('title'); await h.page.keyboard.press('Escape');
+    return { got: t, pass: /needs/i.test(t || '') };
+  });
+  return out;
+}
+
 async function run(h, fixtures, results, ONLY) {
   const S = {};
   const want = k => !ONLY || ONLY.test('special:' + k);
@@ -326,6 +486,7 @@ async function run(h, fixtures, results, ONLY) {
   if (want('exportScope')) S.exportScope = await exportScope(h, fixtures);
   if (want('fsa')) S.fsa = await fsaProbe(h, fixtures);
   if (want('noSelection')) S.noSelection = await noSelectionProbe(h, fixtures, results.registry);
+  if (want('fixes')) S.fixes = await fixes(h, fixtures);
   void runCase; void req;
   return S;
 }

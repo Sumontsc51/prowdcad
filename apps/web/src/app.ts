@@ -104,6 +104,7 @@ export class App {
         this.activeSize = this.doc.sizeTable().axis1.baseSizeId;
         this.nestedHidden.clear(); this.hiddenPieces.clear(); this.preview.clear();
         this.savedRev = this.doc.revision();
+        this.statusMsg = ''; // a message about the previous document must not survive a reload
       }
       this.pruneSelection();
       this.invalidate();
@@ -226,6 +227,7 @@ export class App {
     const sub = s.anchors.length + s.segments.length + s.internals.length + s.notches.length + s.marks.length + (this.currentLive() ? 1 : 0);
     return sub || s.pieces.length;
   }
+  hasSelection(): boolean { const s = this.sel; return !!(s.pieces.length || s.anchors.length || s.segments.length || s.internals.length || s.notches.length || s.marks.length || this.liveSel); }
   clearSelection() { this.sel = emptySelection(); this.liveSel = null; this.invalidate(); }
   /** Click semantics: replace (plain click), add (Shift), toggle (Ctrl), remove. */
   applySel(it: SelItem, mode: 'replace' | 'add' | 'toggle' | 'remove' = 'replace') {

@@ -81,7 +81,7 @@ export function registerGrade(app: App) {
     const out = ops.angleGrading(app.doc, s.pieceId, s.ids, r.how === 'deg' ? { deg: r.deg as number, preserve: !!r.keep } : r.how === 'reset' ? { deg: 0, preserve: !!r.keep } : { aim: r.how as 'next' | 'prev', preserve: !!r.keep });
     app.status(`Grade axis ${out.map(d => d.toFixed(2) + '°').join(', ')}`);
   } });
-  registerCommand({ id: 'grade.parallel', title: 'Grade parallel…', menu: 'Grade/Edit', run: async () => {
+  registerCommand({ id: 'grade.parallel', title: 'Grade parallel…', noop: 'Grade parallel: nothing to change (the run already grades parallel)', menu: 'Grade/Edit', run: async () => {
     const run = await runOrPick(app, 'Grade parallel: click the segment');
     const r = await rememberedDialog('grade.parallel', { title: 'Grade parallel', fields: [
       { kind: 'radio', key: 'adj', label: 'Adjust', value: 'last', options: [{ value: 'last', label: 'End point' }, { value: 'first', label: 'Start point' }] },
@@ -108,7 +108,7 @@ export function registerGrade(app: App) {
     if (r) ops.gradeProportionally(app.doc, a.hit.piece.id, ids, a.hit.anchor.id, b.hit.anchor.id, r.by === 'auto' ? {} : { by: r.by as 'arc' | 'chord' });
   } });
   // rules / movement / nest
-  registerCommand({ id: 'grade.rules', title: 'Rule library…', menu: 'Grade', group: 3, hotkey: 'Ctrl+Shift+R', run: () => openRuleLibrary(app) });
+  registerCommand({ id: 'grade.rules', title: 'Rule library…', menu: 'Grade', group: 3, hotkey: 'Shift+Alt+R,Ctrl+Shift+R', run: () => openRuleLibrary(app) });
   registerCommand({ id: 'grade.applyRule', title: 'Apply rule (number / name)…', menu: 'Grade', group: 3, hotkey: 'Ctrl+R', enabled: hasAnchor, run: async () => {
     const r = await rememberedDialog('grade.applyRule', { title: 'Apply rule', fields: [{ kind: 'text', key: 'r', label: 'Rule number or name', value: '' }] });
     if (!r || !String(r.r).trim()) return;
@@ -122,7 +122,7 @@ export function registerGrade(app: App) {
     const line = app.sizeLine();
     const r = await showDialog({ title: 'Graded nest (reverse grading)', message: `Pieces in selection order (smallest → largest):\n${ids.map((id, i) => `${i + 1}. ${app.doc.piece(id).name}`).join('\n')}`, fields: [
       ...ids.map((id, i) => ({ kind: 'select' as const, key: 's' + i, label: app.doc.piece(id).name, value: line.sizes[Math.min(i, line.sizes.length - 1)].id, options: line.sizes.map(s => ({ value: s.id, label: s.name })) })),
-      { kind: 'text', key: 'name', label: 'New piece name', value: app.doc.piece(ids[0]).name.replace(/[_ ]?\w+$/, '') + ' NEST' },
+      { kind: 'text', key: 'name', label: 'New piece name', value: nestName(app.doc.piece(ids[0]).name, line.sizes.map(s => s.name)) },
     ] });
     if (!r) return;
     const sizeIds = ids.map((_, i) => String(r['s' + i]));
@@ -154,4 +154,15 @@ export function registerGrade(app: App) {
     ops.setAxis2(app.doc, names, String(r.base).trim(), { name: String(r.name) });
     toast(`Axis 2: ${names.join(' ')}`, 'ok');
   } });
+}
+
+/**
+ * Default name of a graded nest: the first piece's name without a trailing size suffix
+ * ("FRONT_S" / "FRONT S" / "FRONT_2" → "FRONT"), plus " NEST". A single-word name is kept whole.
+ */
+export function nestName(name: string, sizeNames: string[]): string {
+  const m = name.match(/^(.*\S)[_ \-]([A-Za-z0-9]+)$/);
+  const sizes = new Set(sizeNames.map(s => s.toUpperCase()));
+  const base = m && (sizes.has(m[2].toUpperCase()) || /^\d+$/.test(m[2]) || /^copy$/i.test(m[2])) ? m[1] : name;
+  return `${base.trim() || name} NEST`;
 }

@@ -16,7 +16,7 @@ import { segmentIds, screenPath } from './hitkit';
 import { liveShapes, hitLines } from './live';
 import { notchesFor } from './canvas/render';
 
-export interface Cand { item: SelItem; dpx: number; prio: number; label: string; world: Vec }
+export interface Cand { item: SelItem; dpx: number; prio: number; label: string; world: Vec; /** a point on the sew line (wins over a coincident internal point) */ sew?: boolean }
 
 export const SEL_COLOR = '#ff8a00';
 export const FILTERS: { id: SelFilter; label: string; key: string; title: string }[] = [
@@ -68,9 +68,12 @@ export function candidatesAt(app: App, w: Vec, filter: SelFilter = settings.selF
       contours.forEach((c, ci) => {
         const rc = rcs[ci]; if (!rc) return;
         c.points.forEach((a, i) => {
-          if (a.kind !== 'grade' && !selPieces.has(p.id) && !allCurve) return;
-          const q = rc.anchorPos[i]; const d = Math.hypot(q.x - l.x, q.y - l.y);
-          if (d <= tol) out.push({ item: { k: 'point', ref: { pieceId: p.id, contourId: c.id, anchorId: a.id } }, dpx: d * sc, prio: PRIO.point, label: `${a.kind === 'grade' ? 'Grade pt' : 'Curve pt'} ${i + 1}${a.name ? ' ' + a.name : ''} · ${p.name}`, world: toWorld(p, q) });
+          // curve points of an unselected piece are not drawn, but a click right on one takes it
+          // directly (AccuMark / TUKAcad): tighter radius so the segment stays easy to pick
+          const curveHidden = a.kind !== 'grade' && !selPieces.has(p.id) && !allCurve;
+          const q = rc.anchorPos[i]; if (!q) return;
+          const d = Math.hypot(q.x - l.x, q.y - l.y);
+          if (d <= (curveHidden ? tol * 0.6 : tol)) out.push({ item: { k: 'point', ref: { pieceId: p.id, contourId: c.id, anchorId: a.id } }, dpx: d * sc, prio: PRIO.point, label: `${a.kind === 'grade' ? 'Grade pt' : 'Curve pt'} ${i + 1}${a.name ? ' ' + a.name : ''} · ${p.name}`, world: toWorld(p, q), sew: ci === 0 });
         });
       });
     }
@@ -132,7 +135,27 @@ export function candidatesAt(app: App, w: Vec, filter: SelFilter = settings.selF
   out.sort((a, b) => a.prio - b.prio || a.dpx - b.dpx);
   // one entry per object
   const seen = new Set<string>();
-  return out.filter(c => { const k = selItemKey(c.item); if (seen.has(k)) return false; seen.add(k); return true; });
+  return rankCoincident(app, out.filter(c => { const k = selItemKey(c.item); if (seen.has(k)) return false; seen.add(k); return true; }));
+}
+
+/**
+ * Coincident points (drawn within 1.5 px of each other): the selected one wins, then the sew-line
+ * point before an internal one (AccuMark: the perimeter point has priority), then the nearest.
+ * So a Move tool grabs the selected sew point, not the internal end lying on it.
+ */
+function rankCoincident(app: App, list: Cand[]): Cand[] {
+  const pts = list.filter(c => c.item.k === 'point');
+  if (pts.length < 2) return list;
+  const sc = app.view.scale;
+  const out: Cand[] = []; const used = new Set<Cand>();
+  for (const c of list) {
+    if (used.has(c)) continue;
+    if (c.item.k !== 'point') { out.push(c); used.add(c); continue; }
+    const group = pts.filter(o => !used.has(o) && Math.hypot(o.world.x - c.world.x, o.world.y - c.world.y) * sc <= 1.5);
+    group.sort((a, b) => (+app.isSelected(b.item) - +app.isSelected(a.item)) || (+!!b.sew - +!!a.sew) || a.dpx - b.dpx);
+    for (const g of group) { out.push(g); used.add(g); }
+  }
+  return out;
 }
 
 function segName(c: Contour, from: Id, to: Id): string {

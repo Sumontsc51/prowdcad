@@ -28,6 +28,8 @@ export interface Command {
   checked?(ctx: CommandCtx): boolean;
   /** hint shown in menus for stub commands etc. */
   hint?: string;
+  /** message toasted when the command ran but changed nothing (instead of a silent no-op) */
+  noop?: string;
 }
 
 export const MENUS = ['File', 'Edit', 'Piece', 'Point', 'Segment', 'Seam', 'Notch', 'Cut', 'Dart', 'Grade', 'Measure', 'View', 'Help'] as const;
@@ -80,8 +82,10 @@ export async function runCommand(id: string): Promise<void> {
   const c = registry.get(id);
   if (!c || !ctxRef) { toast(`Unknown command ${id}`, 'error'); return; }
   if (!isEnabled(c)) return;
+  const snap = c.noop ? JSON.stringify(ctxRef.app.doc.style.pieces) : '';
   try {
     await c.run(ctxRef);
+    if (c.noop && JSON.stringify(ctxRef.app.doc.style.pieces) === snap) toast(c.noop, 'info');
   } catch (err) {
     reportError(err, c.title);
   }
@@ -137,15 +141,38 @@ export function chordFromEvent(e: KeyboardEvent): string {
   return [...m, key].join('+');
 }
 
+/** Unshifted symbol of a physical key (US layout), for chords written as "Ctrl+Shift+'". */
+const CODE_SYMBOL: Record<string, string> = {
+  Quote: "'", Semicolon: ';', Comma: ',', Period: '.', Slash: '/', Backslash: '\\', BracketLeft: '[', BracketRight: ']',
+  Minus: '-', Equal: '=', Backquote: '`', Digit0: '0', Digit1: '1', Digit2: '2', Digit3: '3', Digit4: '4', Digit5: '5', Digit6: '6', Digit7: '7', Digit8: '8', Digit9: '9',
+};
+/**
+ * The same event as "Shift + unshifted symbol" ("Ctrl+Shift+'" for Ctrl+Shift+Quote, whose e.key is '"'),
+ * or null. chordFromEvent drops Shift for symbols (the symbol encodes it), so such bindings were unreachable.
+ */
+export function shiftedSymbolChord(e: KeyboardEvent): string | null {
+  if (!e.shiftKey || e.key.length !== 1 || /^[a-z]$/i.test(e.key)) return null;
+  const sym = CODE_SYMBOL[e.code]; if (!sym) return null;
+  const m: string[] = [];
+  if (e.ctrlKey || e.metaKey) m.push('Ctrl');
+  if (e.altKey) m.push('Alt');
+  m.push('Shift');
+  return [...m, sym].join('+');
+}
+
 /** Find the command bound to this key event (or undefined). */
 export function commandForEvent(e: KeyboardEvent): Command | undefined {
-  const chord = chordFromEvent(e);
-  for (const c of allCommands()) {
-    const hk = effectiveHotkey(c.id);
-    if (!hk) continue;
-    for (const one of hk.split(',')) if (normalizeChord(one) === chord) return c;
-  }
-  return undefined;
+  const find = (chord: string) => {
+    for (const c of allCommands()) {
+      const hk = effectiveHotkey(c.id);
+      if (!hk) continue;
+      for (const one of hk.split(',')) if (normalizeChord(one) === chord) return c;
+    }
+    return undefined;
+  };
+  const alt = shiftedSymbolChord(e);
+  // an explicit Shift+symbol binding wins over the plain symbol chord (Ctrl+Shift+' = snap, Ctrl+' = grid)
+  return (alt ? find(alt) : undefined) ?? find(chordFromEvent(e));
 }
 
 /** The full current hotkey map (id → chord) for the JSON editor. */

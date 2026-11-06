@@ -21,8 +21,12 @@ export function renderGrading(app: App, host: HTMLElement) {
   const line = app.sizeLine();
   const bar = h('div.gr-bar');
   const mode = h('div.seg');
+  const TIP = {
+    inc: 'Incremental: each cell is the step from the previous size. Editing L moves L AND every larger size (XL, …) by the same amount: the sizes after it are built on it.',
+    abs: 'Absolute: each cell is the offset from the base size ★. Editing L changes L only; every other size keeps its position (AccuMark-style per-size break).',
+  };
   for (const [abs, label] of [[false, 'Incremental'], [true, 'Absolute']] as const) {
-    mode.append(h('button' + (app.gradeAbsolute === abs ? '.on' : ''), { onclick: () => { app.gradeAbsolute = abs; app.invalidate('panels'); } }, label));
+    mode.append(h('button' + (app.gradeAbsolute === abs ? '.on' : ''), { title: abs ? TIP.abs : TIP.inc, onclick: () => { app.gradeAbsolute = abs; app.invalidate('panels'); } }, label + (abs ? ' (one size only)' : '')));
   }
   const track = h('button.btn.sm' + (app.pointTracking ? '.on' : ''), { title: 'Point Tracking: ←/→ previous/next grade point, ↑/↓ size (Alt+T)', onclick: () => { app.pointTracking = !app.pointTracking; app.invalidate('panels'); } }, app.pointTracking ? '◉ Tracking' : '○ Tracking');
   bar.append(mode, track, h('span.dim', {}, unitLabel()));
@@ -35,6 +39,9 @@ export function renderGrading(app: App, host: HTMLElement) {
   }
   bar.append(tools);
   host.append(bar);
+  host.append(h('div.gr-note' + (app.gradeAbsolute ? '' : '.warn'), { title: app.gradeAbsolute ? TIP.abs : TIP.inc }, app.gradeAbsolute
+    ? 'Absolute view: offsets from the base size ★ — editing a size changes that size only.'
+    : 'Incremental view: an edit also shifts every larger size (XL follows L). Use “Absolute (one size only)” to change one size.'));
   if (!piece) { host.append(h('div.empty', {}, 'Select a piece to see its grading.')); return; }
   const live = app.doc.piece(piece.id);
   const gpts = live.sew.points.map((a, i) => ({ a, i })).filter(x => x.a.kind === 'grade');
@@ -82,7 +89,15 @@ function writeCell(app: App, pieceId: string, anchorId: string, sizeId: SizeId, 
   const view = app.gradeAbsolute ? 'absolute' : 'incremental';
   const curMap = app.gradeAbsolute ? incrementalToAbsolute(a.grade ?? {}, line) : absoluteToIncremental(incrementalToAbsolute(a.grade ?? {}, line), line);
   const cur: GradeInc = curMap[sizeId] ?? { dx: 0, dy: 0 };
-  try { ops.setGrade(app.doc, pieceId, anchorId, sizeId, { ...cur, [axis]: v }, { view }); } catch (err) { reportError(err, 'Grade'); }
+  const abs0 = incrementalToAbsolute(a.grade ?? {}, line);
+  try { ops.setGrade(app.doc, pieceId, anchorId, sizeId, { ...cur, [axis]: v }, { view }); } catch (err) { reportError(err, 'Grade'); return; }
+  if (!app.gradeAbsolute) {
+    // say which sizes an incremental edit moved (the cascade an AccuMark user does not expect)
+    const a1 = app.doc.piece(pieceId).sew.points.find(q => q.id === anchorId)!;
+    const abs1 = incrementalToAbsolute(a1.grade ?? {}, line);
+    const moved = line.sizes.filter(s => { const p = abs0[s.id] ?? { dx: 0, dy: 0 }, q = abs1[s.id] ?? { dx: 0, dy: 0 }; return Math.hypot(p.dx - q.dx, p.dy - q.dy) > 1e-9; }).map(s => s.name);
+    if (moved.length > 1) app.status(`Incremental edit moved sizes ${moved.join(', ')} · switch to Absolute (one size only) to change one size`);
+  }
 }
 
 const TOOLBAR: [string, string, string][] = [

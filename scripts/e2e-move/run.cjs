@@ -473,6 +473,43 @@ test('modes', async h => {
   }
 });
 
+// ───────────────────────── fix pass (docs/E2E-REPORT.md "Fix pass") ─────────────────────────
+test('fixpass', async h => {
+  await h.fixture();
+  // B4: Rotate Piece adopts the selected piece; typing opens the angle box
+  await h.key('v');
+  await h.click({ x: 500, y: 150 });
+  await h.ev(() => window.__mv.C.runCommand('move.pieceRotate')); await h.settle();
+  check('fixpass · Rotate Piece prompt names the selected piece', (await h.ev(() => window.__mv.prompt())).includes('BACK'), await h.ev(() => window.__mv.prompt()));
+  await h.page.keyboard.press('9'); await h.settle(40);
+  check('fixpass · typing with the piece selected opens the input box', await h.ev(() => window.__mv.ibox()));
+  await h.type('0'); await h.page.keyboard.press('Enter'); await h.settle(60);
+  check('fixpass · BACK rotated 90°', await h.ev(() => Math.abs((window.__mv.P('BACK').layout?.angleDeg ?? 0) - 90) < 1e-9), await h.ev(() => JSON.stringify(window.__mv.P('BACK').layout)));
+  await h.key('Control+z');
+  // B9: click B (pick up), press again on B and drag: one undo step, B moved; never a 0-delta step
+  await h.ev(() => { window.__mv.settings.pieceToolMode = 'move'; window.__mv.app.setTool('movePoint'); }); await h.settle();
+  const before = await h.anchors(); const rev0 = await h.ev(() => window.__mv.app.doc.revision());
+  const B = await h.W('FRONT', 'B');
+  await h.click(B);
+  await h.drag(B, { x: B.x + 14, y: B.y + 6 }, { mods: ['Alt'] });
+  const ch = changedKeys(before, await h.anchors());
+  check('fixpass · click then press-drag moves only B', ch.length === 1 && ch[0] === 'FRONT/B', ch.join(','));
+  check('fixpass · … in one undo step', (await h.ev(() => window.__mv.app.doc.revision())) - rev0 === 1);
+  // Space tap: Move Point → Select → Move Point, selection kept
+  await h.page.keyboard.press('Space'); await h.settle(30);
+  check('fixpass · Space tap → Select', await h.ev(() => window.__mv.app.tool.id === 'select'));
+  check('fixpass · selection kept', (await h.sel()).anchors.length === 1);
+  await h.page.keyboard.press('Space'); await h.settle(30);
+  check('fixpass · Space tap again → Move Point', await h.ev(() => window.__mv.app.tool.id === 'movePoint'));
+  // curve points that follow: pin C, then moving B (its neighbour) leaves C in every size
+  await h.ev(() => { const T = window.__mv; T.ops.pinCurvePoints(T.app.doc, T.P('FRONT').id, [T.A('FRONT', 'C').a.id], true); });
+  const posC = {}; for (const s of ['S', 'M', 'L', 'XL']) posC[s] = await h.W('FRONT', 'C', s);
+  const B2 = await h.W('FRONT', 'B');
+  await h.drag(B2, { x: B2.x - 10, y: B2.y + 8 }, { mods: ['Alt'] });
+  let same = true; for (const s of ['S', 'M', 'L', 'XL']) { const p = await h.W('FRONT', 'C', s); if (!near(p.x, posC[s].x, 1e-9) || !near(p.y, posC[s].y, 1e-9)) same = false; }
+  check('fixpass · pinned curve point C keeps every size when B moves', same);
+});
+
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
   const vite = await startVite();

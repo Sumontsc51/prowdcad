@@ -164,15 +164,30 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <div class="tbl"><table>
         <thead><tr><th>Area</th><th>What it is for</th></tr></thead>
         <tbody>
-          <tr><td>Menu bar (top)</td><td>File, Edit, Piece, Point, Segment, Seam, Notch, Cut, Dart, Grade, Measure, View, Help. Every command shows its shortcut.</td></tr>
-          <tr><td>Tool palette (left)</td><td>Select, Pen, shapes, internal lines, notch/drill, measure, hand. A small triangle on a button means there are more tools behind it: right-click or long-press to open them.</td></tr>
-          <tr><td>Sheet (centre)</td><td>An endless white sheet in millimetres with rulers and a grid. Drag from a ruler to make a guide line. Wheel zooms at the cursor; Space+drag or middle-drag pans.</td></tr>
+          <tr><td>Menu bar (top)</td><td>File, Edit, Piece, Point, Segment, Seam, Notch, Cut, Dart, Grade, Measure, View, Help. Every command shows its shortcut. A greyed item tells you what it needs when you hover it, for example "needs a selected point".</td></tr>
+          <tr><td>Tool-options strip (under the menus)</td><td>The active tool, its modes (Select: the selection filter; Move Point: Single / Smooth / Horizontal / Vertical / Along line / Group) and an amber badge <em>Editing size L grading</em> whenever an edit changes the grading of a size other than the base.</td></tr>
+          <tr><td>Tool palette (left)</td><td>Select, the Move tools, Pen, shapes, internal lines, notch/drill, measure, hand. A small triangle on a button means there are more tools behind it: right-click or long-press to open them.</td></tr>
+          <tr><td>Sheet (centre)</td><td>An endless white sheet in millimetres with rulers and a grid. Drag from a ruler to make a guide line. Wheel zooms at the cursor; hold Space and drag (or middle-drag) to pan.</td></tr>
           <tr><td>Pieces / Sizes / Inspector (right)</td><td>The piece list, the size chips (click one to make it the active size) with <em>Nested view</em>, and the Inspector, which shows and edits whatever is selected.</td></tr>
           <tr><td>Grading table (bottom)</td><td>Opens with <kbd>Ctrl+G</kbd>. One row per grade point, two columns (dX, dY) per size.</td></tr>
-          <tr><td>Status bar</td><td>Cursor position, display unit, active size, zoom, and a hint for the current tool.</td></tr>
+          <tr><td>Status bar</td><td>Cursor position, display unit, active size, zoom, and the step prompt of the current tool: what to click next and what right-click, Enter and Esc do.</td></tr>
         </tbody>
       </table></div>
-      <p>Every tool works the same way: <kbd>Enter</kbd> finishes, <kbd>Esc</kbd> cancels, <kbd>Backspace</kbd> removes the last point you placed. <kbd>F1</kbd> lists every shortcut.</p>
+      <h3>Select only selects</h3>
+      <p>The Select tool (<kbd>V</kbd>) never moves anything. It picks points, segments, internal lines, notches, drills, darts and pieces, and the selection <strong>stays</strong> while you run commands, undo, switch sizes or switch tools. You move things with the Move tools (Chapter 6), which take the current selection straight away.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>With Select</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>Click</td><td>Select that object (replaces the selection). <kbd>Shift</kbd>+click adds, <kbd>Ctrl</kbd>+click toggles.</td></tr>
+          <tr><td>Click on empty sheet, or <kbd>Esc</kbd></td><td>Clear the selection. An <kbd>Esc</kbd> that closes a menu or cancels a pick does not also clear it; press <kbd>Esc</kbd> once more.</td></tr>
+          <tr><td>Drag left → right</td><td><strong>Window</strong> box (blue): selects what is fully inside.</td></tr>
+          <tr><td>Drag right → left</td><td><strong>Crossing</strong> box (green, dashed): selects what the box touches. <kbd>Shift</kbd>+drag adds, <kbd>Ctrl</kbd>+drag toggles.</td></tr>
+          <tr><td>Several objects under the cursor</td><td>The status bar lists them; <kbd>Tab</kbd> steps through them. A point on the sew line wins over an internal point lying on top of it.</td></tr>
+          <tr><td>Double-click a piece</td><td>Select all of its points.</td></tr>
+          <tr><td>Filter keys <kbd>0</kbd>–<kbd>5</kbd></td><td><kbd>0</kbd> All · <kbd>1</kbd> Pieces · <kbd>2</kbd> Points · <kbd>3</kbd> Lines (sew segments) · <kbd>4</kbd> Internals (also darts, pleats, fullness) · <kbd>5</kbd> Marks (notches, drills, texts). The chips in the tool-options strip show the filter.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Every tool works the same way: <kbd>Enter</kbd> finishes, <kbd>Esc</kbd> cancels, <kbd>Backspace</kbd> removes the last point you placed. A quick tap of <kbd>Space</kbd> in a Move tool jumps back to Select with the selection kept; tap it again to return to the Move tool. <kbd>F1</kbd> lists every shortcut.</p>
     </section>
 
     <section id="units">
@@ -243,17 +258,36 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
         <div class="tile"><kbd>I</kbd><h4>Internal line</h4><p>Start inside a piece. Double-click or Enter ends a line, clicking the start closes a shape. Right-click gives an exact length and mirror options.</p></div>
         <div class="tile"><kbd>Shift+T</kbd><h4>Trace</h4><p>Click around existing lines and points to make a new piece from them.</p></div>
       </div>
-      <p><strong>Grade points and curve points.</strong> Grade points (squares) are corners and carry grading. Curve points (circles) shape the curve between them and move with the grading of their neighbours. Use as few curve points as give the shape you want.</p>
+      <p><strong>Snapping.</strong> While you draw or move, the cursor snaps to, in this order: a point, the <em>intersection</em> of two lines, the <em>midpoint</em> of a segment, the <em>perpendicular</em> foot from where the move started, a guide, and the grid (<span class="menu">View ▸ Snap</span>; <kbd>Ctrl+Shift+'</kbd> toggles grid snap). The Move tools show a small label (<code>pt</code>, <code>int</code>, <code>mid</code>, <code>perp</code>) next to the target. Hold <kbd>Alt</kbd> to switch snapping off for one drag.</p>
+      <p><strong>Grade points and curve points.</strong> Grade points (squares) are corners and carry grading. Curve points (circles) shape the curve between them. A curve point without grading of its own <em>follows</em> its neighbouring grade points in the other sizes, so it moves when they move. To keep it where it is, select it and use <span class="menu">Point ▸ Pin curve point (keep position)</span>: it then gets its own grading and shows a dot in the middle. <span class="menu">Point ▸ Unpin</span> makes it follow again. Use as few curve points as give the shape you want.</p>
     </section>
 
     <section id="points">
       <h2><small>Chapter 6</small>Points and segments</h2>
-      <p>With the Select tool (<kbd>V</kbd>) drag a point to move it, drag a handle to bend a curve (<kbd>Alt</kbd> breaks the handle so the two sides move apart), drag a piece to move it. Arrow keys nudge (<kbd>Shift</kbd> = ×10). Type exact values in the Inspector.</p>
+      <p>Select what you want to change (Chapter 2), then press a Move key. The Move tool takes the selection straight away; or start the tool first and click the point, line or piece. Each move is <strong>one undo step</strong>, and the moved object stays selected so you can move it again.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Key</th><th>Tool</th><th>What moves</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>G</kbd></td><td>Move Point</td><td><strong>Single</strong> (default): exactly the point you grab, with its own handles. Nothing else is stored differently. Other modes (<kbd>Tab</kbd> cycles, or <span class="menu">Point ▸ Modify Points</span>): <em>Smooth</em> (the curve points between the two tacks blend; drag a tack to another point to change the range), <em>Horizontal</em>, <em>Vertical</em>, <em>Along line</em> (slides on its own line), <em>Group</em> (every selected point by the same amount).</td></tr>
+          <tr><td><kbd>Shift+G</kbd></td><td>Move Line</td><td>A sew segment (grade point to grade point) or a whole internal line: both ends and the curve points between them by the same amount. <em>Parallel</em> mode moves it straight out or in.</td></tr>
+          <tr><td><kbd>Ctrl+Shift+G</kbd></td><td>Move / Rotate / Flip Piece</td><td>The piece's place on the sheet (exports keep the drawn geometry). While dragging: <kbd>R</kbd> / <kbd>Shift+R</kbd> ±90°, <kbd>Q</kbd> <kbd>W</kbd> ±1°, <kbd>A</kbd> <kbd>S</kbd> ±10°, <kbd>X</kbd> <kbd>Y</kbd> flip. In Rotate mode with a piece selected, just type the angle.</td></tr>
+          <tr><td><kbd>Shift+C</kbd></td><td>Curve / Handle</td><td>Drag a handle to bend a curve (<kbd>Alt</kbd> breaks the pair); click a handle and type its length and angle; <kbd>Shift</kbd>+click a point = corner ⇄ smooth.</td></tr>
+        </tbody>
+      </table></div>
+      <h3>Moving a point</h3>
+      <ol class="steps">
+        <li><div><strong>Drag it</strong>: press on the point and drag. Or <strong>click it, then click the new spot</strong> (AccuMark style). Clicking the picked-up point again on the same spot puts it back.</div></li>
+        <li><div><strong>Type it</strong>: with a point picked, type a number (or right-click). The <em>input box</em> opens next to the cursor with <em>dX dY</em>, <em>Distance ∠</em> and <em>Absolute X Y</em>. Fractions and units work: <code>1 1/8</code>, <code>2cm</code>. <kbd>Tab</kbd> = next field, <kbd>Enter</kbd> or right-click = OK, <kbd>Esc</kbd> = cancel. <kbd>Enter</kbd> with nothing typed repeats the last move. Note: <code>12,5</code> in the first field means dX 12, dY 5; the box says so. For a decimal type <code>12.5</code>.</div></li>
+        <li><div><kbd>Shift</kbd> = horizontal / vertical / 45°, <kbd>Alt</kbd> = no snap, arrow keys nudge (<kbd>Shift</kbd> = ×10), <kbd>Backspace</kbd> undoes the pick, <kbd>Esc</kbd> when idle goes back to Select.</div></li>
+      </ol>
+      <div class="note"><strong>"The other points moved"</strong>Move Point · Single never changes another point's stored position. Two things can still look like it: (1) an internal point tied to the moved point by a <em>point connection</em> (Piece ▸ Connections) follows it and is marked "connected"; (2) curve points without their own grading follow their neighbours in the other sizes. While you drag a grade point, ProwdCAD draws the old curve dashed, rings the curve points that follow (labelled "follows") and says so in the status bar. To fix them in place, move them with Move Point ▸ Single, or select them and use <span class="menu">Point ▸ Pin curve point</span>.</div>
+      <p>On a size other than the base (amber badge) a move changes only that size's grading; the base and the other sizes stay where they are. The Inspector X / Y boxes do the same thing as Move Point, connections included.</p>
       <div class="tbl"><table>
         <thead><tr><th>Command</th><th>Where</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td>Move XY</td><td>Point · <kbd>Alt+M</kbd></td><td>Move by dX/dY or to an absolute position.</td></tr>
           <tr><td>Move proportional</td><td>Point</td><td>Move a point and blend the curve points around it.</td></tr>
+          <tr><td>Pin / Unpin curve point</td><td>Point · right-click a point</td><td>Give a curve point its own grading so it keeps its position in every size, or let it follow its neighbours again.</td></tr>
           <tr><td>Add point</td><td>Point · <kbd>Alt+A</kbd></td><td>At a distance from the previous or next point, or at a percentage.</td></tr>
           <tr><td>Set angle / Round corner</td><td>Point</td><td>Force a corner angle, or fillet it with a radius.</td></tr>
           <tr><td>Points cleanup</td><td>Point</td><td>Remove extra points from imported files without changing the shape.</td></tr>
@@ -328,6 +362,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
     <section id="grading">
       <h2><small>Chapter 11</small>Grading</h2>
       <p>Grading is stored as the step from one size to the next. In the table, the column for a size holds the step <em>into</em> that size: with base size M, the M column is the S → M step and the L column the M → L step. Switch to <em>Absolute</em> to see each size's total offset from the base.</p>
+      <div class="note"><strong>Editing one size only</strong>In the <em>Incremental</em> view a cell is a step, so changing the L cell also moves XL and every larger size (the table says so above the rows, and the status bar names the sizes that moved). To change one size only, click <em>Absolute (one size only)</em> and type the size's total offset there. Moving a point on the sheet with the L size active also changes L only.</div>
       <div class="tbl"><table>
         <thead><tr><th>Underarm, front</th><th class="num">S</th><th class="num">M ★</th><th class="num">L</th><th class="num">XL</th><th class="num">2XL</th></tr></thead>
         <tbody>
@@ -352,7 +387,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
         </tbody>
       </table></div>
       <p><strong>Sizes panel.</strong> Insert or append sizes; inserting a half size between two sizes splits their step in half automatically. <em>Axis 2</em> adds a second size dimension, for example Short / Regular / Long.</p>
-      <p><strong>Rule library</strong> (<kbd>Ctrl+Shift+R</kbd>) stores named rules you apply by number or name. <strong>Movement programs</strong> move points by a set amount per millimetre of a body measurement, e.g. front side seam 0.5 mm per +1 mm chest, the basis for made-to-measure.</p>
+      <p><strong>Rule library</strong> (<kbd>Shift+Alt+R</kbd>) stores named rules you apply by number or name. <strong>Movement programs</strong> move points by a set amount per millimetre of a body measurement, e.g. front side seam 0.5 mm per +1 mm chest, the basis for made-to-measure.</p>
     </section>
 
     <section id="measure">
@@ -391,18 +426,39 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <div class="tbl"><table>
         <thead><tr><th>Keys</th><th>Action</th></tr></thead>
         <tbody>
-          <tr><td><kbd>V</kbd> <kbd>P</kbd> <kbd>I</kbd> <kbd>R</kbd> <kbd>C</kbd></td><td>Select · Pen · Internal line · Rectangle · Circle</td></tr>
+          <tr><td><kbd>V</kbd> <kbd>G</kbd> <kbd>Shift+G</kbd> <kbd>Ctrl+Shift+G</kbd> <kbd>Shift+C</kbd></td><td>Select · Move Point · Move Line · Move / Rotate / Flip Piece · Curve / Handle</td></tr>
+          <tr><td><kbd>0</kbd> <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd></td><td>Selection filter (in Select): All · Pieces · Points · Lines · Internals · Marks</td></tr>
+          <tr><td><kbd>Tab</kbd></td><td>Select: next object under the cursor · Move tools: next mode</td></tr>
+          <tr><td><kbd>Space</kbd> tap / hold</td><td>Tap: Move tool ⇄ Select (selection kept) · hold and drag: pan</td></tr>
+          <tr><td>Arrow keys (<kbd>Shift</kbd> = ×10)</td><td>Nudge, in a Move tool only (Select never moves anything)</td></tr>
+          <tr><td><kbd>P</kbd> <kbd>I</kbd> <kbd>R</kbd> <kbd>C</kbd></td><td>Pen · Internal line · Rectangle · Circle</td></tr>
           <tr><td><kbd>S</kbd> <kbd>N</kbd> <kbd>D</kbd> <kbd>T</kbd></td><td>Seam · Notch · Drill · Text</td></tr>
           <tr><td><kbd>Shift+D</kbd> <kbd>Shift+L</kbd> <kbd>Shift+U</kbd></td><td>Dart · Pleat · Fullness</td></tr>
           <tr><td><kbd>K</kbd> <kbd>W</kbd> <kbd>M</kbd> <kbd>H</kbd> <kbd>Z</kbd></td><td>Slash · Walk · Measure · Hand · Zoom</td></tr>
           <tr><td><kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd></td><td>Undo / redo</td></tr>
           <tr><td><kbd>Ctrl+S</kbd> <kbd>Ctrl+O</kbd> <kbd>Ctrl+Alt+N</kbd></td><td>Save · Open · New</td></tr>
-          <tr><td><kbd>Ctrl+Shift+I</kbd> <kbd>Ctrl+Shift+E</kbd> <kbd>Ctrl+P</kbd></td><td>Import · Export DXF · Export PDF</td></tr>
+          <tr><td><kbd>Ctrl+Alt+I</kbd> <kbd>Ctrl+Shift+E</kbd> <kbd>Ctrl+P</kbd></td><td>Import · Export DXF · Export PDF</td></tr>
           <tr><td><kbd>Ctrl+D</kbd> <kbd>Ctrl+L</kbd> <kbd>Alt+R</kbd></td><td>Duplicate piece · Lock piece · Rotate 90°</td></tr>
           <tr><td><kbd>Ctrl+G</kbd> <kbd>Alt+N</kbd> <kbd>Alt+T</kbd></td><td>Grading table · Nested view · Point tracking</td></tr>
           <tr><td><kbd>Ctrl+[</kbd> <kbd>Ctrl+]</kbd> <kbd>Ctrl+B</kbd></td><td>Previous size · Next size · Base size</td></tr>
+          <tr><td><kbd>Shift+Alt+N</kbd> <kbd>Shift+Alt+R</kbd></td><td>Notch grid · Rule library</td></tr>
           <tr><td><kbd>Ctrl+I</kbd> <kbd>Ctrl+Shift+L</kbd></td><td>Piece info · Compare length</td></tr>
-          <tr><td><kbd>Ctrl+0</kbd> or <kbd>F</kbd></td><td>Fit everything on screen</td></tr>
+          <tr><td><kbd>Ctrl+0</kbd> or <kbd>F</kbd> · <kbd>Ctrl+Alt+0</kbd></td><td>Fit everything on screen · 100 %</td></tr>
+          <tr><td><kbd>Ctrl+'</kbd> · <kbd>Ctrl+Shift+'</kbd></td><td>Grid on/off · Snap to grid on/off</td></tr>
+        </tbody>
+      </table></div>
+      <p>Chrome and Edge keep a few keys for themselves (<kbd>Ctrl+Shift+N</kbd>, <kbd>Ctrl+Shift+I</kbd>, <kbd>Ctrl+Shift+R</kbd>, <kbd>Ctrl+1</kbd>), so ProwdCAD's own keys for those commands are the browser-safe ones in the table; the old ones still work where the browser lets them through.</p>
+      <h3>AccuMark keys</h3>
+      <p>If your hands know Gerber AccuMark, choose <span class="menu">Edit ▸ Keyboard preset ▸ AccuMark keys</span> (or the <em>Preset</em> box in <span class="menu">Edit ▸ Keyboard shortcuts</span>). <span class="menu">Keyboard preset ▸ ProwdCAD (default)</span> switches back.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>AccuMark key</th><th>ProwdCAD tool</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>Alt+F12</kbd> · <kbd>Alt+F11</kbd> · <kbd>Alt+F2</kbd></td><td>Move Single Point · Move Smooth · Move Points (group)</td></tr>
+          <tr><td><kbd>Alt+F3</kbd> · <kbd>Alt+F1</kbd></td><td>Align 2 points · Delete point</td></tr>
+          <tr><td><kbd>Ctrl+F2</kbd> · <kbd>Ctrl+F11</kbd> · <kbd>Ctrl+F10</kbd></td><td>Move Line · Move Parallel · Split (divide internal)</td></tr>
+          <tr><td><kbd>Alt+S</kbd></td><td>Swap line (internal ⇄ perimeter); Seam of segment moves to <kbd>Shift+Alt+S</kbd></td></tr>
+          <tr><td><kbd>Shift+F2</kbd> · <kbd>Shift+F9</kbd> · <kbd>Shift+F10</kbd></td><td>Move Piece · Flip Piece · Rotate Piece</td></tr>
+          <tr><td><kbd>Shift+W</kbd> · <kbd>Ctrl+A</kbd> · <kbd>Ctrl+D</kbd></td><td>Walk pieces · Select all · Clear selection (Duplicate moves to <kbd>Ctrl+Shift+D</kbd>)</td></tr>
         </tbody>
       </table></div>
     </section>
@@ -411,12 +467,24 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <h2><small>Chapter 15</small>Troubleshooting</h2>
       <h3>The browser closed and I had not saved</h3>
       <p>Open ProwdCAD again in the same browser. It offers to restore the last auto-backup (made every 30 seconds). Choose <em>Restore</em>.</p>
+      <h3>Dragging a point does nothing, it draws a box</h3>
+      <p>That is the Select tool: it only selects (a drag is a selection box). Press <kbd>G</kbd> for Move Point, <kbd>Shift+G</kbd> for Move Line or <kbd>Ctrl+Shift+G</kbd> for a piece. If you really want to drag points in Select, turn on <span class="menu">Edit ▸ Allow drag-move in Select</span>; it moves only what you grab.</p>
+      <h3>I moved one point and the points next to it moved</h3>
+      <p>Their stored positions did not change. Curve points without their own grading follow their neighbouring grade points in the other sizes (the hollow circles; Nested view shows it best), and the curve through a moved point re-shapes. While you drag, the old curve is drawn dashed and those points are marked "follows". Pin them with <span class="menu">Point ▸ Pin curve point</span>, or move them yourself with Move Point ▸ Single. An internal point marked "connected" follows on purpose (Piece ▸ Connections).</p>
+      <h3>Move Point grabs the wrong one of two points on top of each other</h3>
+      <p>The selected point wins, then the sew-line point. Select the one you want first (in Select, click and press <kbd>Tab</kbd> until the status bar names it), then press <kbd>G</kbd>.</p>
       <h3>My exported PDF or DXF has only one piece</h3>
-      <p>When a piece is selected, the export dialog's <em>Pieces</em> box starts on <em>Selected</em>. Click an empty spot on the sheet first, or set <em>Pieces</em> to <em>All pieces</em>.</p>
+      <p>When a piece is selected, the export dialog's <em>Pieces</em> box starts on <em>Selected</em> (the hint under it names the pieces); otherwise on <em>All pieces</em>. It is never carried over from your last export. Click an empty spot on the sheet first, or set <em>Pieces</em> to <em>All pieces</em>.</p>
+      <h3>A menu item is grey</h3>
+      <p>Hover it: the tooltip says what it needs, for example a selected point. Select that first.</p>
+      <h3>I typed the value the box shows and nothing changed</h3>
+      <p>In inch-fraction mode values are shown rounded to 1/16" (a dotted underline marks a rounded value; the tooltip shows the exact one). Typing the shown value, for example <code>3/8</code>, now sets exactly 3/8". If nothing happens, check the cursor is not still in another box.</p>
       <h3>A shortcut does nothing</h3>
-      <p>The cursor is probably still in a number box. Press <kbd>Esc</kbd> or click the sheet, then try again.</p>
+      <p>The cursor is probably still in a number box. Press <kbd>Esc</kbd> or click the sheet, then try again. Keys such as <kbd>Ctrl+Shift+N</kbd> are kept by the browser; use the key listed in Chapter 14.</p>
+      <h3>Esc did not clear my selection</h3>
+      <p>An <kbd>Esc</kbd> that closes a menu, or that comes right after another <kbd>Esc</kbd> that cancelled something, keeps the selection. Press <kbd>Esc</kbd> again.</p>
       <h3>A size looks wrong but the base size is fine</h3>
-      <p>Open the grading table, switch to <em>Absolute</em>, and check that size's column. Remember the M column holds the S → M step.</p>
+      <p>Open the grading table, switch to <em>Absolute</em>, and check that size's column. Remember the M column holds the S → M step, and an incremental edit of L also moves the larger sizes.</p>
       <h3>An imported DXF has no seam allowance</h3>
       <p>When the file only has a cut line, ProwdCAD treats it as the sew line with no seam and says so in the import report. Use <span class="menu">Seam ▸ Internal → seam</span> if the file carried the sew line as an internal line.</p>
     </section>

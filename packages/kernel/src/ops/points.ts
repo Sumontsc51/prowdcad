@@ -472,6 +472,49 @@ export function togglePointKind(doc: Document, pieceId: Id, anchorId: Id): 'grad
   });
 }
 
+/**
+ * True when anchor `anchorId` is a curve point WITHOUT its own grading: in graded sizes it is placed
+ * proportionally between its neighbouring grade points, so it visibly "follows" them when they move.
+ */
+export function curvePointFollows(piece: Piece, anchorId: Id): boolean {
+  const { anchor: a } = findAnchorIn(piece, anchorId);
+  return a.kind === 'curve' && Object.keys(a.grade ?? {}).length === 0;
+}
+
+/**
+ * Pin (keep position) / unpin curve points.
+ *
+ * pin = true: each curve point that follows its neighbours gets explicit grading equal to its current
+ * per-size position (zeros included), so a later move of a neighbouring grade point (base or any size)
+ * no longer moves it in any size. Its base position never changed anyway.
+ * pin = false: the explicit grading is dropped and the point follows its neighbours again.
+ * Grade points are ignored. Returns the number of points changed (one undo step).
+ */
+export function pinCurvePoints(doc: Document, pieceId: Id, anchorIds: Id[], pin = true): number {
+  return doc.transact(pin ? 'Pin curve points' : 'Unpin curve points', () => {
+    const piece = piecesHas(doc, pieceId), line = doc.sizeLine(piece);
+    let n = 0;
+    for (const id of anchorIds) {
+      const { contour, index } = findAnchorIn(piece, id);
+      const a = contour.points[index];
+      if (a.kind !== 'curve') continue;
+      const follows = Object.keys(a.grade ?? {}).length === 0;
+      if (pin && follows) {
+        const by = positionsBySize(contour, line);
+        const z: Record<SizeId, GradeInc> = {};
+        const off: Record<SizeId, Vec> = {};
+        for (const s of sizeIds(line)) off[s] = sub(by[s][index], by[line.baseSizeId][index]);
+        const g = gradeFromOffsets(line, off);
+        if (Object.keys(g).length) a.grade = g;
+        else { for (const s of sizeIds(line)) z[s] = { dx: 0, dy: 0 }; a.grade = z; }
+        delete a.gradeAxisDeg;
+        n++;
+      } else if (!pin && !follows) { a.grade = {}; delete a.gradeAxisDeg; n++; }
+    }
+    return n;
+  });
+}
+
 /** Smooth (tangent-continuous) vs corner. Turning smooth on aligns explicit handles (keeps their lengths). */
 export function setSmooth(doc: Document, pieceId: Id, anchorId: Id, smooth: boolean): void {
   doc.transact('Set smooth', () => {

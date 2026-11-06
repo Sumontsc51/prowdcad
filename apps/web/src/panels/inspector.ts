@@ -102,12 +102,12 @@ function anchorInspector(app: App, host: HTMLElement, pa: NonNullable<ReturnType
   const ro = piece.locked || !!a.flags.locked;
 
   // position: base size edits the anchor; other sizes edit its grading for that size
+  // Same op as Move Point / Move XY (ops.movePoint): point connections follow, and on a non-base size
+  // only that size's grading changes. The untouched axis gets a zero delta (never rounded).
   const setPos = (axis: 'x' | 'y', v: number) => {
-    if (isBase) set(`Point ${axis.toUpperCase()}`, an => { an[axis] = v; });
-    else {
-      const target = { ...pos, [axis]: v };
-      try { ops.dragGrade(app.doc, ref.pieceId, ref.anchorId, active, target); } catch (err) { reportError(err, 'Grade'); }
-    }
+    const d = v - pos[axis];
+    if (Math.abs(d) < 1e-12) return;
+    try { ops.movePoint(app.doc, ref.pieceId, ref.anchorId, axis === 'x' ? { dx: d, dy: 0 } : { dx: 0, dy: d }, { sizeId: isBase ? undefined : active }); } catch (err) { reportError(err, `Point ${axis.toUpperCase()}`); }
   };
   host.append(
     row(`X${isBase ? '' : ` (${sizeName})`}`, lengthInput(pos.x, v => setPos('x', v), { readOnly: ro }), unitTag()),
@@ -117,6 +117,11 @@ function anchorInspector(app: App, host: HTMLElement, pa: NonNullable<ReturnType
     row('Smooth', checkbox(a.smooth, v => set('Smooth', an => { an.smooth = v; if (!v) { delete an.hIn; delete an.hOut; } }))),
     row('Locked', checkbox(!!a.flags.locked, v => set('Lock point', an => { an.flags.locked = v || undefined; }))),
   );
+  if (a.kind === 'curve') {
+    const pinned = Object.keys(a.grade ?? {}).length > 0;
+    host.append(row('Grading', h('span.val', { title: pinned ? 'Own grading: keeps its position in every size when a neighbouring grade point moves' : 'No own grading: in graded sizes it is placed between its neighbouring grade points, so it moves when they move' }, pinned ? 'Pinned (own) ' : 'Follows neighbours '),
+      ro ? '' : h('button.btn.sm', { title: pinned ? 'Unpin: follow the neighbouring grade points again' : 'Pin (keep position): give it its own grading', onclick: () => { try { ops.pinCurvePoints(app.doc, ref.pieceId, [ref.anchorId], !pinned); } catch (err) { reportError(err, 'Pin'); } } }, pinned ? 'Unpin' : 'Pin')));
+  }
   // handles
   host.append(h('div.insp-title', {}, 'Handles'));
   const hh = rc.handles[index];

@@ -6,7 +6,7 @@ import { area, perimeter } from '../src/geom/poly';
 import {
   addPointOnSegment, movePoint, moveAlongContour, moveProportional, multiMove, alignPoints, setAngle, cornerAngle,
   roundCorner, addSplineSupportPoints, pointsCleanup, deletePoint, togglePointKind, setSmooth, breakHandle, joinHandle,
-  setStartPoint, anchorAt,
+  setStartPoint, anchorAt, pinCurvePoints, curvePointFollows,
 } from '../src/ops/points';
 import { maxDev } from '../src/geom/draft-geom';
 
@@ -220,3 +220,59 @@ describe('cleanup, delete, kinds, handles, start', () => {
 });
 
 void resolveContour;
+
+describe('pin curve points (keep position)', () => {
+  function curveSetup() {
+    const doc = new Document(makeStyle('t', ['S', 'M', 'L', 'XL'], 'M'));
+    const ids = doc.sizeLine().sizes.map(s => s.id);
+    const c = makeContour([gradePoint(0, 0), gradePoint(100, 0), curvePoint(120, 50), curvePoint(110, 100), gradePoint(80, 150), gradePoint(0, 150)]);
+    // the two grade points around the curve grade differently, so the curve points interpolate
+    c.points[1].grade = { [ids[1]]: { dx: 10, dy: 0 }, [ids[2]]: { dx: 10, dy: 0 }, [ids[3]]: { dx: 10, dy: 0 } };
+    c.points[4].grade = { [ids[1]]: { dx: 4, dy: 8 }, [ids[2]]: { dx: 4, dy: 8 }, [ids[3]]: { dx: 4, dy: 8 } };
+    const piece = makePiece('X', c, doc.style.activeSizeTableId);
+    doc.transact('add', s => s.pieces.push(piece));
+    return { doc, pid: piece.id, ids, p: () => doc.piece(piece.id) };
+  }
+  const posAll = (doc: Document, pid: string, ids: string[], i: number) => ids.map(s => doc.resolvePiece(pid, s).sew.anchorPos[i]);
+
+  it('an unpinned curve point follows a moved neighbour in graded sizes; a pinned one keeps every size', () => {
+    const { doc, pid, ids, p } = curveSetup();
+    const cp = p().sew.points[2].id, g = p().sew.points[1].id;
+    expect(curvePointFollows(p(), cp)).toBe(true);
+    // unpinned: moving the neighbouring grade point in the base shifts the curve point's L / XL position
+    const before = posAll(doc, pid, ids, 2);
+    movePoint(doc, pid, g, { dx: 30, dy: 0 });
+    const moved = posAll(doc, pid, ids, 2);
+    expect(Math.hypot(moved[3].x - before[3].x, moved[3].y - before[3].y)).toBeGreaterThan(1e-6);
+    doc.undo();
+    // pinned: per-size positions are materialised exactly, and nothing moves any more
+    expect(pinCurvePoints(doc, pid, [cp, g], true)).toBe(1); // the grade point is ignored
+    expect(curvePointFollows(p(), cp)).toBe(false);
+    const pinned = posAll(doc, pid, ids, 2);
+    pinned.forEach((q, k) => { expect(q.x).toBeCloseTo(before[k].x, 9); expect(q.y).toBeCloseTo(before[k].y, 9); });
+    movePoint(doc, pid, g, { dx: 30, dy: 0 });
+    movePoint(doc, pid, g, { dx: 7, dy: -4 }, { sizeId: ids[2] });
+    const after = posAll(doc, pid, ids, 2);
+    after.forEach((q, k) => { expect(q.x).toBeCloseTo(before[k].x, 9); expect(q.y).toBeCloseTo(before[k].y, 9); });
+  });
+  it('one undo step; unpin restores following; an ungraded piece pins with explicit zeros', () => {
+    const { doc, pid, ids, p } = curveSetup();
+    const cp = p().sew.points[3].id;
+    const r0 = doc.revision();
+    pinCurvePoints(doc, pid, [cp]);
+    expect(doc.revision() - r0).toBe(1);
+    expect(pinCurvePoints(doc, pid, [cp], true)).toBe(0); // already pinned
+    expect(pinCurvePoints(doc, pid, [cp], false)).toBe(1);
+    expect(curvePointFollows(p(), cp)).toBe(true);
+    // ungraded piece: the pin is an explicit all-zero record (still pinned)
+    const d2 = new Document(makeStyle('t', ['S', 'M', 'L'], 'M'));
+    const c = makeContour([gradePoint(0, 0), gradePoint(100, 0), curvePoint(120, 50), gradePoint(80, 150)]);
+    const pc = makePiece('Y', c, d2.style.activeSizeTableId);
+    d2.transact('add', s => s.pieces.push(pc));
+    pinCurvePoints(d2, pc.id, [c.points[2].id]);
+    const a = d2.piece(pc.id).sew.points[2];
+    expect(Object.keys(a.grade).length).toBe(3);
+    expect(curvePointFollows(d2.piece(pc.id), a.id)).toBe(false);
+    void ids;
+  });
+});

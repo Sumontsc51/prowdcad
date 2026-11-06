@@ -3,9 +3,9 @@
  * clones, size colours and hit-testing. Uses only the kernel foundation API.
  */
 import {
-  resolveContour, computeCutLine, absoluteOffset, absoluteToIncremental, incrementalToAbsolute,
+  resolveContour, computeCutLine, halfOpenedPiece, absoluteOffset, absoluteToIncremental, incrementalToAbsolute,
   pointInPolygon, closestPoint, bbox, boxUnion, layoutToWorld, layoutToLocal, layoutDirToWorld, layoutDirToLocal,
-  type Document, type Piece, type SizeId, type Vec, type Box, type ResolvedPiece, type PieceLayout, type Anchor, type SizeLine, type Contour,
+  type Document, type Piece, type SizeId, type Vec, type Box, type ResolvedPiece, type PieceLayout, type Anchor, type SizeLine, type Contour, type ResolvedContour,
 } from '@prowdcad/kernel';
 
 export type Layout = PieceLayout;
@@ -27,15 +27,56 @@ export function layoutSvg(L: Layout): string {
 /**
  * Resolve a piece for a size. Live pieces use the document cache; preview clones (during drags)
  * are resolved directly with the same foundation functions Document.resolvePiece uses.
+ *
+ * Index contract: the anchor arrays of the result (`anchorPos`, `anchorIndex`, `handles`,
+ * `gradeIdx`) are always in the order of the STORED contour (`piece.sew.points`,
+ * `piece.internals[i].points`), so `rc.anchorPos[i]` is the position of `contour.points[i]`.
+ * A live half piece resolves as its opened (mirrored) piece; its polyline (`pts`, `cum`) is the
+ * full opened outline, but the derived mirrored anchors have no index (they are not stored and
+ * cannot be selected) and `foldAfter` marks the stored fold edge, which is no segment.
  */
 export function resolveFor(doc: Document, piece: Piece, sizeId: SizeId): ResolvedPiece {
-  if (doc.style.pieces.includes(piece)) return doc.resolvePiece(piece.id, sizeId);
+  if (doc.style.pieces.includes(piece)) {
+    const rp = doc.resolvePiece(piece.id, sizeId);
+    return piece.half ? storedView(piece, doc.effectivePiece(piece), rp) : rp;
+  }
   const line = doc.sizeLine(piece);
-  const sew = resolveContour(piece.sew, line, sizeId);
-  const cut = piece.cutMode === 'manual' && piece.manualCut ? resolveContour(piece.manualCut, line, sizeId).pts : computeCutLine(piece, line, sizeId);
-  const internals = piece.internals.map(c => resolveContour(c, line, sizeId));
-  const ga = absoluteOffset(piece.grain.gradeA, line, sizeId), gb = absoluteOffset(piece.grain.gradeB, line, sizeId);
-  return { pieceId: piece.id, sizeId, sew, cut, internals, grain: { a: { x: piece.grain.a.x + ga.x, y: piece.grain.a.y + ga.y }, b: { x: piece.grain.b.x + gb.x, y: piece.grain.b.y + gb.y } } };
+  const shown = piece.half && piece.half.openAtOutput !== false ? halfOpenedPiece(piece, line) : piece;
+  const sew = resolveContour(shown.sew, line, sizeId);
+  const cut = shown.cutMode === 'manual' && shown.manualCut ? resolveContour(shown.manualCut, line, sizeId).pts : computeCutLine(shown, line, sizeId);
+  const internals = shown.internals.map(c => resolveContour(c, line, sizeId));
+  const ga = absoluteOffset(shown.grain.gradeA, line, sizeId), gb = absoluteOffset(shown.grain.gradeB, line, sizeId);
+  const rp = { pieceId: piece.id, sizeId, sew, cut, internals, grain: { a: { x: shown.grain.a.x + ga.x, y: shown.grain.a.y + ga.y }, b: { x: shown.grain.b.x + gb.x, y: shown.grain.b.y + gb.y } } };
+  return shown === piece ? rp : storedView(piece, shown, rp);
+}
+
+/** A resolved contour whose anchor arrays follow the stored contour (see resolveFor). */
+export type ShownContour = ResolvedContour & { foldAfter?: number };
+const viewCache = new WeakMap<ResolvedPiece, ResolvedPiece>();
+/** Re-index the opened sew contour of a half piece to the stored anchor order (internals keep their order). */
+function storedView(stored: Piece, shown: Piece, rp: ResolvedPiece): ResolvedPiece {
+  if (shown === stored) return rp;
+  const hit = viewCache.get(rp); if (hit) return hit;
+  const rc = rp.sew;
+  const at = new Map(shown.sew.points.map((a, i) => [a.id, i]));
+  const map = stored.sew.points.map(a => at.get(a.id) ?? -1);
+  if (map.some(j => j < 0)) return rp; // not an opened view of this piece
+  const v: ShownContour = {
+    ...rc,
+    anchorIndex: map.map(j => rc.anchorIndex[j]),
+    anchorPos: map.map(j => rc.anchorPos[j]),
+    handles: map.map(j => rc.handles[j]),
+    gradeIdx: stored.sew.points.map((a, i) => (a.kind === 'grade' ? i : -1)).filter(i => i >= 0),
+  };
+  const n = stored.sew.points.length;
+  for (let i = 0; i < n; i++) {
+    // the fold edge: consecutive in the stored half, not consecutive (the mirrored run between) when opened
+    const a = map[i], b = map[(i + 1) % n];
+    if (stored.sew.closed && b !== (a + 1) % shown.sew.points.length) { v.foldAfter = i; break; }
+  }
+  const out = { ...rp, sew: v };
+  viewCache.set(rp, out);
+  return out;
 }
 
 /** Size valid for this piece (falls back to the base size when the piece lacks it). */

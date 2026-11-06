@@ -104,8 +104,8 @@ export function registerSeamNotch(app: App) {
   registerCommand({ id: 'seam.revertCorner', title: 'Revert corner', menu: 'Seam', group: 1, run: async () => { const c = await sewCorner(app); ops.revertCorner(app.doc, c.pieceId, c.anchorId); } });
   registerCommand({ id: 'seam.lockGrading', title: 'Lock grading (stamp base corners)', menu: 'Seam', group: 2, enabled: hasPiece, checked: c => !!c.app.primaryPiece()?.lockGrading,
     run: () => { const v = !onePiece(app).lockGrading; tx('Lock grading', () => selPieces(app).forEach(p => ops.setLockGrading(app.doc, p.id, v))); } });
-  registerCommand({ id: 'seam.updateGrading', title: 'Update seam grading', menu: 'Seam', group: 2, enabled: hasPiece, run: () => tx('Update seam grading', () => selPieces(app).forEach(p => ops.updateSeamGrading(app.doc, p.id))) });
-  registerCommand({ id: 'seam.reseam', title: 'Reseam piece', menu: 'Seam', group: 2, hotkey: 'Ctrl+Alt+S', enabled: hasPiece, run: async () => {
+  registerCommand({ id: 'seam.updateGrading', title: 'Update seam grading', noop: 'Update seam grading: nothing to update', menu: 'Seam', group: 2, enabled: hasPiece, run: () => tx('Update seam grading', () => selPieces(app).forEach(p => ops.updateSeamGrading(app.doc, p.id))) });
+  registerCommand({ id: 'seam.reseam', title: 'Reseam piece', noop: 'Reseam piece: the seams are already up to date', menu: 'Seam', group: 2, hotkey: 'Ctrl+Alt+S', enabled: hasPiece, run: async () => {
     const p = onePiece(app);
     let discard = false;
     if (p.cutMode === 'manual') { const r = await showDialog({ title: 'Reseam', message: 'This piece has a manual cut line.', okLabel: 'Keep manual', buttons: [{ id: 'auto', label: 'Discard → auto' }] }); if (!r) return; discard = r.__button === 'auto'; }
@@ -119,7 +119,7 @@ export function registerSeamNotch(app: App) {
     const r = await showDialog({ title: 'Reseam segment', fields: [{ kind: 'checkbox', key: 'set', label: 'Also set a new value', value: false }, { kind: 'length', key: 'v', label: 'Seam', value: p.sew.points.find(a => a.id === run.from)?.seamAfter ?? p.seamDefault }] });
     if (r) ops.reseamSegment(app.doc, run.pieceId, run.from, r.set ? r.v as number : undefined);
   } });
-  registerCommand({ id: 'seam.repair', title: 'Repair seam parameters', menu: 'Seam', group: 2, run: async () => {
+  registerCommand({ id: 'seam.repair', title: 'Repair seam parameters', noop: 'Repair seam parameters: nothing to repair', menu: 'Seam', group: 2, run: async () => {
     const rep = ops.repairSeam(app.doc, app.sel.pieces.length === 1 ? app.sel.pieces[0] : undefined);
     await alertDialog('Repair seam parameters', `Curve-point seams removed: ${rep.removedCurveSeams}\nValues clamped: ${rep.clampedValues}\nCorners dropped: ${rep.droppedCorners}`);
   } });
@@ -143,7 +143,7 @@ export function registerSeamNotch(app: App) {
 
   // ───────────── Notch ─────────────
   registerCommand({ id: 'notch.tool', title: 'Notch tool', menu: 'Notch', group: 0, run: () => app.setTool('notch') });
-  registerCommand({ id: 'notch.grid', title: 'Notch grid editor', menu: 'Notch', group: 0, hotkey: 'Ctrl+Shift+N', run: async () => { const p = await pieceOrPick(app, 'Click a piece'); openNotchGrid(app, p.id); } });
+  registerCommand({ id: 'notch.grid', title: 'Notch grid editor', menu: 'Notch', group: 0, hotkey: 'Shift+Alt+N,Ctrl+Shift+N', run: async () => { const p = await pieceOrPick(app, 'Click a piece'); openNotchGrid(app, p.id); } });
   registerCommand({ id: 'notch.atPoint', title: 'Notch on selected point(s)', menu: 'Notch', group: 1, enabled: hasAnchor, run: () => tx('Notch on points', () => {
     for (const r of app.sel.anchors) { const p = app.doc.piece(r.pieceId); ops.addNotch(app.doc, p, { contourId: r.contourId, placement: { kind: 'anchor', anchorId: r.anchorId }, type: notchType }); }
   }) });

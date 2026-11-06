@@ -63,7 +63,7 @@ export function registerCutPiece(app: App) {
     selectResult(app, ops.cutParallel(app.doc, run.pieceId, { from: run.from, to: run.to }, r.d as number, o));
   } });
   registerCommand({ id: 'cut.guide', title: 'Cut by guideline…', menu: 'Cut', group: 0, run: async () => {
-    if (!settings.guides.length) throw new Error('Drag a guide out of a ruler first (or View ▸ Add guide…)');
+    if (!settings.guides.length) { toast('Cut by guideline needs a guide: drag one out of a ruler first (or View ▸ Add guide…)', 'warn', 4000); return; }
     const piece = await pieceOrPick(app, 'Click the piece to cut');
     const L = layoutOf(piece);
     const gi = settings.guides.length === 1 ? 0 : await (async () => {

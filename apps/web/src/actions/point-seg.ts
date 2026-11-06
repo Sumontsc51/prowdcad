@@ -8,7 +8,7 @@ import { ops } from '../ops-bridge';
 import { settings, saveSettings } from '../settings';
 import { showDialog, rememberedDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
-import { hasAnchor, hasPiece, onePiece, selPieces, pieceAnchors, must } from './cmd-util';
+import { hasAnchor, hasPiece, onePiece, selPieces, pieceAnchors, must, needs } from './cmd-util';
 import { runOrPick, anchorOrPick, internalOrPick, editSize, sizeNameOf } from '../selection';
 import { LENGTH_METHODS } from './measure-cmds';
 import { fmt, unitLabel } from '../units-ui';
@@ -58,6 +58,17 @@ export function registerPointSeg(app: App) {
   registerCommand({ id: 'point.joinHandle', title: 'Join handles', menu: 'Point', group: 0, enabled: hasAnchor, run: () => eachSel(app, 'Join handles', (p, a) => ops.joinHandle(app.doc, p, a)) });
   registerCommand({ id: 'point.resetHandles', title: 'Reset handles (auto)', menu: 'Point', group: 0, enabled: hasAnchor, run: () => app.doc.transact('Reset handles', () => { for (const r of app.sel.anchors) { const q = app.resolveRef(r); if (q) { const a = app.doc.findAnchor(app.doc.piece(r.pieceId), r.anchorId)!.anchor; delete a.hIn; delete a.hOut; } } }) });
   registerCommand({ id: 'point.lock', title: 'Lock / unlock point', menu: 'Point', group: 0, enabled: hasAnchor, run: () => app.doc.transact('Lock point', () => { for (const r of app.sel.anchors) { const a = app.doc.findAnchor(app.doc.piece(r.pieceId), r.anchorId)!.anchor; a.flags.locked = !a.flags.locked || undefined; } }) });
+  // curve points without own grading follow their neighbouring grade points in graded sizes; Pin keeps them
+  const curveSel = needs((c: { app: App }) => c.app.sel.anchors.some(r => { const q = c.app.resolveRef(r); return !!q && q.anchor.kind === 'curve'; }), 'a selected curve point');
+  const pinSel = (pin: boolean) => {
+    const by = new Map<Id, Id[]>();
+    for (const r of app.sel.anchors) { if (app.doc.piece(r.pieceId).locked) continue; const l = by.get(r.pieceId) ?? []; l.push(r.anchorId); by.set(r.pieceId, l); }
+    let n = 0;
+    app.doc.transact(pin ? 'Pin curve points' : 'Unpin curve points', () => { for (const [pid, ids] of by) n += ops.pinCurvePoints(app.doc, pid, ids, pin); });
+    app.status(n ? `${n} curve point${n > 1 ? 's' : ''} ${pin ? 'pinned: own grading, they keep their position when a neighbour moves' : 'unpinned: they follow their neighbouring grade points again'}` : `Nothing to ${pin ? 'pin' : 'unpin'} (select curve points${pin ? ' that follow their neighbours' : ' that are pinned'})`);
+  };
+  registerCommand({ id: 'point.pin', title: 'Pin curve point (keep position)', menu: 'Point', group: 0, enabled: curveSel, run: () => pinSel(true) });
+  registerCommand({ id: 'point.unpin', title: 'Unpin curve point (follow neighbours)', menu: 'Point', group: 0, enabled: curveSel, run: () => pinSel(false) });
   registerCommand({ id: 'point.startPoint', title: 'Set as start point (#1)', menu: 'Point', group: 0, enabled: hasAnchor, run: () => { const r = app.sel.anchors[app.sel.anchors.length - 1]; ops.setStartPoint(app.doc, r.pieceId, r.anchorId); } });
 
   registerCommand({ id: 'point.add', title: 'Add point…', menu: 'Point', group: 1, hotkey: 'Alt+A', run: async () => {

@@ -13,7 +13,7 @@ import { toast } from '../ui/toast';
 import { must } from './cmd-util';
 import { runOrPick, Cancelled } from '../selection';
 import { contourPos, liveExists, selectLive, type LiveKind, type LiveRef } from '../live';
-import { toLocal, toWorld } from '../geometry';
+import { toLocal, toWorld, resolveFor } from '../geometry';
 import { contourNear } from '../hitkit';
 import { fs, screenMarker } from '../tools/common';
 import { pick } from '../tools/pick';
@@ -285,7 +285,7 @@ export function registerLive(app: App) {
   cmd({ id: 'dart.add', title: 'Add dart at point…', menu: M, group: 0, enabled: () => app.sel.anchors.length > 0, run: async () => {
     const pa = app.primaryAnchor()!;
     if (pa.contour !== pa.piece.sew) throw new Error('Select a point on the sew line');
-    const r = app.doc.resolvePiece(pa.piece.id, app.sizeOf(pa.piece)).sew;
+    const r = resolveFor(app.doc, pa.piece, app.sizeOf(pa.piece)).sew;
     await createDartFlow(app, pa.piece.id, { anchorId: pa.anchor.id }, toWorld(pa.piece, r.anchorPos[pa.index]));
   } });
   cmd({ id: 'dart.multi', title: 'Multi darts…', menu: M, group: 0, run: () => multiDartsFlow(app) });
@@ -305,7 +305,7 @@ export function registerLive(app: App) {
     const r = await showDialog({ title: 'Reopen dart', fields: [{ kind: 'length', key: 'w', label: 'Width', value: dm.rememberedWidth ?? 20, min: 0.01 }] });
     if (r) ops.toggleDartClosed(app.doc, { pieceId: d.pieceId, dartId: d.id, width: r.w as number });
   } });
-  cmd({ id: 'dart.fix', title: 'Fix dart (equal legs)', menu: M, group: 1, run: async () => { const d = await dart('Click the dart to fix'); unlocked(app, d.pieceId); const k = ops.fixDart(app.doc, d.pieceId, d.id); app.status(`Fix dart: legs slid ${fmt(k)} ${unitLabel()}`); } });
+  cmd({ id: 'dart.fix', title: 'Fix dart (equal legs)', noop: 'Fix dart: nothing to fix (the legs are already equal)', menu: M, group: 1, run: async () => { const d = await dart('Click the dart to fix'); unlocked(app, d.pieceId); const k = ops.fixDart(app.doc, d.pieceId, d.id); app.status(`Fix dart: legs slid ${fmt(k)} ${unitLabel()}`); } });
   cmd({ id: 'dart.cutting', title: 'Cutting dart on / off', menu: M, group: 1, run: async () => {
     const d = await dart('Click the dart');
     const dm = app.doc.piece(d.pieceId).darts.find(x => x.id === d.id)!;

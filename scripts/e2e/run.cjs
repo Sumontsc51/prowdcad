@@ -128,6 +128,16 @@ async function writeFixtureFiles(h) {
   console.log('\nSummary by menu:'); for (const [k, v] of Object.entries(by)) console.log(`  ${k.padEnd(16)} pass ${v.pass}  fail ${v.fail}  skip ${v.skip}`);
   if (results.uncovered?.length) console.log('Uncovered commands:', results.uncovered.join(', '));
   const nFail = results.cases.filter(r => r.status === 'fail').length;
-  console.log(`\n${results.cases.length} cases, ${nFail} failing → ${path.relative(ROOT, path.join(OUT, 'results.json'))}`);
-  process.exit(nFail || results.fatal ? 1 : 0);
+  // pass / fail checks outside the per-command cases: special parts with a `pass` flag, hotkey mismatches, single-file smoke
+  const sp = {};
+  for (const [k, v] of Object.entries(results.special || {})) if (Array.isArray(v) && v.length && 'pass' in v[0]) sp[k] = { pass: v.filter(x => x.pass).length, total: v.length, failing: v.filter(x => !x.pass).map(x => x.name) };
+  if (results.special?.exportScope) { const e = results.special.exportScope; const ok = e.afterExportingAll_thenSelecting?.value === 'sel' && e.afterExportingAll_thenSelectingExport && !e.afterExportingAll_thenSelectingExport.hasBack; sp.exportScope = { pass: ok ? 1 : 0, total: 1, failing: ok ? [] : ['export scope after an All export'] }; }
+  if (results.hotkeys) sp.hotkeys = { pass: results.hotkeys.tested.length - results.hotkeys.mismatches.length - results.hotkeys.unreachable.length, total: results.hotkeys.tested.length, failing: [...results.hotkeys.mismatches, ...results.hotkeys.unreachable].map(m => `${m.chord} → ${m.id} (got ${m.dispatched.join(',') || 'nothing'})`) };
+  if (results.single && !results.single.skipped) { const r = results.single; sp.single = { pass: r.pass ? 1 : 0, total: 1, failing: r.pass ? [] : [r.error ?? '', ...(r.missingFromMenubar ?? []).map(id => 'missing from menubar: ' + id), ...(r.errors ?? [])].filter(Boolean) }; }
+  results.checks = sp;
+  const nCheckFail = Object.values(sp).reduce((n, v) => n + (v.total - v.pass), 0);
+  console.log('Checks:'); for (const [k, v] of Object.entries(sp)) console.log(`  ${k.padEnd(16)} ${v.pass} / ${v.total}${v.failing.length ? '  ✗ ' + v.failing.slice(0, 4).join(' ; ') : ''}`);
+  fs.writeFileSync(path.join(OUT, process.env.E2E_OUT || 'results.json'), JSON.stringify(results, null, 1));
+  console.log(`\n${results.cases.length} cases, ${nFail} failing; ${nCheckFail} failing checks → ${path.relative(ROOT, path.join(OUT, process.env.E2E_OUT || 'results.json'))}`);
+  process.exit(nFail || nCheckFail || results.fatal ? 1 : 0);
 })();

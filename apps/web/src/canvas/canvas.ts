@@ -25,6 +25,8 @@ export class Canvas {
   private ro: ResizeObserver;
   /** called on right-click when the active tool does not handle it */
   onContext: ((p: Ptr) => void) | null = null;
+  /** called when a Space-held pan starts (a Space tap then no longer toggles the tool) */
+  onSpacePan: (() => void) | null = null;
 
   constructor(public app: App, host: HTMLElement) {
     this.host = host;
@@ -115,6 +117,7 @@ export class Canvas {
       if (e.button === 1 || (e.button === 0 && this.space())) {
         e.preventDefault();
         this.pan = { sx: e.clientX, sy: e.clientY, id: e.pointerId };
+        if (this.app.space) this.onSpacePan?.();
         this.capture(e.pointerId); this.render(); return;
       }
       if (e.button === 0 && p.hit.kind === 'guide' && !this.app.tool?.busy?.(this.app)) {

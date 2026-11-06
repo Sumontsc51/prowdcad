@@ -44,6 +44,7 @@ export function openInputBox(o: IBOptions): Promise<IBResult | null> {
     let mode = o.modes.find(m => m.id === o.mode) ?? o.modes[0];
     const box = h('div.ibox', { role: 'dialog', 'aria-label': o.title });
     const err = h('div.ibox-err');
+    const note = h('div.ibox-note');
     const rows = h('div.ibox-rows');
     const tabs = h('div.ibox-modes');
     const inputs = new Map<string, HTMLInputElement>();
@@ -71,6 +72,8 @@ export function openInputBox(o: IBOptions): Promise<IBResult | null> {
           if (i === 0 && mode.fields.length > 1 && /^[^,]+,[^,]+$/.test(inp.value)) {
             const [a, b] = inp.value.split(',');
             inp.value = a.trim(); const n2 = inputs.get(mode.fields[1].key)!; n2.value = b.trim();
+            // a European decimal comma would be read as two values: say so right away
+            note.textContent = `“${a.trim()},${b.trim()}” = ${mode.fields[0].label} ${a.trim()} · ${mode.fields[1].label} ${b.trim()} (for a decimal type ${a.trim()}.${b.trim()})`;
           }
           preview();
         });
@@ -109,7 +112,7 @@ export function openInputBox(o: IBOptions): Promise<IBResult | null> {
     box.append(h('div.ibox-title', {}, o.title));
     if (o.amber) box.append(h('div.ibox-amber', {}, o.amber));
     box.append(
-      tabs, rows, err,
+      tabs, rows, note, err,
       h('div.ibox-foot', {},
         h('span.ibox-hint', {}, o.hint ?? 'Enter / right-click = OK · Esc = cancel · Tab = next field'),
         h('button.btn.sm', { type: 'button', onclick: () => finish(null) }, 'Cancel'),

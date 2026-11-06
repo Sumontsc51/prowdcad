@@ -15,6 +15,7 @@ import { store } from '../settings';
 import { ops } from '../ops-bridge';
 import { reportError } from '../commands';
 import { h } from '../ui/dom';
+import { pieceOrPick } from '../selection';
 
 const BACKUP_KEY = 'prowdcad.web.backup';
 const SESSION_KEY = 'prowdcad.web.session';
@@ -31,7 +32,7 @@ const PICKER_TYPES = [{ description: 'ProwdCAD style', accept: { 'application/js
 export const downloadSink: { capture?: (name: string, blob: Blob) => void } = {};
 
 export async function newStyle(app: App) {
-  if (app.isDirty() && !(await confirmDialog('New style', 'Discard unsaved changes?', 'Discard'))) return;
+  if (app.isDirty() && !(await confirmDialog('Discard unsaved changes?', 'The current style has unsaved changes. Discard them and start a new style?', 'Discard'))) return;
   const r = await showDialog({
     title: 'New style',
     fields: [
@@ -187,6 +188,15 @@ function sizesFor(app: App, scope: string): SizeId[] {
   return [app.activeSize];
 }
 const pieceScope = (app: App) => [{ value: 'all', label: `All pieces (${app.style.pieces.length})` }, ...(app.sel.pieces.length ? [{ value: 'sel', label: `Selected (${app.sel.pieces.length})` }] : [])];
+/**
+ * The Pieces field of every export dialog: Selected whenever a piece is selected, else All. Never
+ * remembered (an earlier "All pieces" must not override the current selection), and the label says
+ * what will be written.
+ */
+const pieceScopeField = (app: App) => ({
+  kind: 'select' as const, key: 'pieces', label: 'Pieces', remember: false, value: app.sel.pieces.length ? 'sel' : 'all', options: pieceScope(app),
+  hint: app.sel.pieces.length ? `Selected = ${app.sel.pieces.map(id => app.doc.piece(id).name).join(', ')}` : undefined,
+});
 const piecesFor = (app: App, scope: string): Id[] | undefined => scope === 'sel' && app.sel.pieces.length ? app.sel.pieces.slice() : undefined;
 
 export async function exportDXF(app: App) {
@@ -194,7 +204,7 @@ export async function exportDXF(app: App) {
     title: 'Export DXF', fields: [
       { kind: 'select', key: 'flavor', label: 'Flavor', value: 'aama', options: [{ value: 'aama', label: 'AAMA-292' }, { value: 'astm', label: 'ASTM D6673' }] },
       { kind: 'select', key: 'units', label: 'Units', value: 'mm', options: [{ value: 'mm', label: 'mm' }, { value: 'in', label: 'inch' }] },
-      { kind: 'select', key: 'pieces', label: 'Pieces', value: app.sel.pieces.length ? 'sel' : 'all', options: pieceScope(app) },
+      pieceScopeField(app),
       { kind: 'checkbox', key: 'nested', label: 'Nested graded export (one block per size, no .rul)', value: false },
       { kind: 'select', key: 'layout', label: 'Layout', value: 'none', options: [{ value: 'none', label: 'Drafting positions' }, { value: 'pack', label: 'Pack left → right' }] },
       { kind: 'checkbox', key: 'markers', label: 'Turn / curve point markers (layers 2/3)', value: true },
@@ -214,7 +224,7 @@ export async function exportDXF(app: App) {
 export async function exportSVGFile(app: App) {
   const r = await rememberedDialog('export.svg', {
     title: 'Export SVG', fields: [
-      { kind: 'select', key: 'pieces', label: 'Pieces', value: app.sel.pieces.length ? 'sel' : 'all', options: pieceScope(app) },
+      pieceScopeField(app),
       { kind: 'select', key: 'sizes', label: 'Sizes', value: app.nested ? 'all' : 'active', options: SIZE_SCOPE },
       { kind: 'select', key: 'layout', label: 'Layout', value: 'pack', options: [{ value: 'pack', label: 'Pack' }, { value: 'none', label: 'Drafting positions' }] },
       { kind: 'checkbox', key: 'labels', label: 'Labels', value: true },
@@ -251,7 +261,7 @@ export async function exportPLT(app: App) {
   const prof = await plotterProfileDialog('Export PLT (HPGL)', true); if (!prof) return;
   const r = await rememberedDialog('export.plt', {
     title: 'Export PLT', fields: [
-      { kind: 'select', key: 'pieces', label: 'Pieces', value: app.sel.pieces.length ? 'sel' : 'all', options: pieceScope(app) },
+      pieceScopeField(app),
       { kind: 'select', key: 'sizes', label: 'Sizes', value: 'active', options: SIZE_SCOPE },
       { kind: 'select', key: 'layout', label: 'Layout', value: 'pack', options: [{ value: 'pack', label: 'Pack' }, { value: 'none', label: 'Drafting positions' }] },
       { kind: 'checkbox', key: 'labels', label: 'Labels (name + size)', value: true },
@@ -270,7 +280,7 @@ export async function exportPDFFile(app: App) {
       { kind: 'select', key: 'orient', label: 'Orientation', value: 'portrait', options: [{ value: 'portrait', label: 'Portrait' }, { value: 'landscape', label: 'Landscape' }] },
       { kind: 'length', key: 'margin', label: 'Margin', value: 10, min: 0 },
       { kind: 'length', key: 'overlap', label: 'Glue overlap', value: 10, min: 0 },
-      { kind: 'select', key: 'pieces', label: 'Pieces', value: app.sel.pieces.length ? 'sel' : 'all', options: pieceScope(app) },
+      pieceScopeField(app),
       { kind: 'select', key: 'sizes', label: 'Sizes', value: app.nested ? 'all' : 'active', options: SIZE_SCOPE },
       { kind: 'checkbox', key: 'square', label: '100 × 100 mm calibration square', value: true },
       { kind: 'checkbox', key: 'sew', label: 'Draw sew line', value: true },
@@ -288,7 +298,7 @@ export async function exportPDFFile(app: App) {
 }
 
 export async function exportStandalone(app: App) {
-  const p = app.primaryPiece(); if (!p) throw new Error('Select a piece');
+  let p; try { p = await pieceOrPick(app, 'Export size as standalone style: click the piece'); } catch { return; }
   const line = app.sizeLine();
   const r = await showDialog({ title: 'Export size as standalone style', fields: [{ kind: 'select', key: 's', label: 'Size', value: app.activeSize, options: app.doc.sizesOf(p).map(id => ({ value: id, label: line.sizes.find(s => s.id === id)?.name ?? id })) }] });
   if (!r) return;

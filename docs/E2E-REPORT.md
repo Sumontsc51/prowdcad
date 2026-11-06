@@ -2,6 +2,8 @@
 
 Date: 2026-11-06 · Suite: `scripts/e2e/` (Node + Playwright, no framework) · Raw data: `scripts/e2e/out/results.json` (HEAD) and `scripts/e2e/out/results-c457a31.json` (pre-rewrite comparison).
 
+> **Fix pass (2026-11-06, uncommitted working tree):** all 11 bugs are fixed and the full suite is green. See §8.
+
 ## 0. Which code was tested
 
 The select/move rewrite landed while this suite was being written, so two revisions were tested:
@@ -247,3 +249,79 @@ Layout:
 Commands whose id does not exist at the tested revision are reported as *skip*. A command in the registry without a case is listed in `uncovered` in `results.json`.
 
 The parallel developer's `scripts/e2e-move/run.cjs` covers the Move tools in more depth. This suite overlaps it only in §3 and the drag suite.
+
+## 8. Fix pass
+
+Tested on the **uncommitted working tree** (`E2E_TREE=1 npm run e2e`; the default snapshot of HEAD would test the old code). Nothing was committed. The run took about 12 minutes.
+
+### Before / after
+
+| | Before (`e730eb3`) | After (fix pass) |
+|---|---|---|
+| Command / tool cases | 312 pass · **3 fail** · 1 skip (316) | **320 pass · 0 fail** · 1 skip¹ (321: +5 new cases) |
+| Hotkeys (every default chord) | 103 / 104 | **108 / 108**² |
+| Units + fraction input | 20 / 21 | **21 / 21** |
+| Nested view + size switching | 8 / 8 | 8 / 8 |
+| Drag interactions | 20 / 21 | **21 / 21** |
+| Selection persistence | 23 / 25 | **25 / 25** |
+| Export scope | B3 | **pass** |
+| Fix-pass regressions (`special:fixes`, new) | — | **20 / 20** |
+| Single-file build `dist/prowdcad-v2.html` | stale, 24 commands missing | **rebuilt, pass** (no missing menu commands, no errors, PDF downloads) |
+| "Nothing selected" probe | 253 probed, 78 greyed, 0 page errors | 257 probed, 80 greyed (each now explains why in its tooltip), 0 page errors |
+| Page errors during the run | B1 TypeErrors | **0** |
+| `node scripts/e2e-move/run.cjs` | 94 / 94 | **103 / 103** (+ `fixpass` test) |
+| Kernel `vitest` | 270 | **272** (+2 pin tests) · `tsc` web + kernel clean |
+
+¹ `point.propDrag` no longer exists (replaced by Move Point ▸ Smooth). ² The full run found one new conflict that the fix pass itself introduced (the browser-safe 100 % key `Ctrl+Alt+1` was already Pieces panel). It was rebound to `Ctrl+Alt+0`, the single file was rebuilt, and the hotkeys + single suites were re-run: 108 / 108, single pass (`scripts/e2e/out/hotkeys-single.json`).
+
+The runner now also fails (exit code 1) on failing **checks**: special parts with a pass flag, hotkey mismatches, export scope and the single-file smoke. Before, only command cases counted. It prints a `Checks:` summary, and `results.json` carries it as `checks`.
+
+### Bugs
+
+| # | Fix | Verified by |
+|---|---|---|
+| B1 Half piece hit-testing | `geometry.ts → resolveFor` re-indexes the opened half piece's sew contour to the stored anchor order (`anchorPos`, `anchorIndex`, `handles`, `gradeIdx`). The polyline stays the full opened outline. The fold edge is marked (`foldAfter`), so `hitkit.segmentIds` never returns it, and it bounds-checks its indices. Direct `doc.resolvePiece` calls in the UI (construct, seam, live-cmds) now go through `resolveFor`. Drag previews of half pieces also show the opened piece | `fix` B1 ×2 (hover the mirrored half, no errors; CF_NECK clickable and movable; Lines filter takes no fold edge); otherPoints halfAxis rows (all methods, no "selected programmatically" note) |
+| B2 Rounded display swallows input | `panels/widgets.ts lengthInput / numberInput` commit when the user typed and the **value** differs, not the text. Rounded values get a dotted underline and a tooltip with the exact value. Dialog length fields left untouched return the exact value (`ui/dialog.ts`), so OK never rounds 10 mm to 3/8" | units "Grading table cell 3/8" (now 9.525); `fix` B2 Inspector `10 1/4` → 260.35 exactly; `fix` B2 untouched seam dialog keeps 10 |
+| B3 Export scope remembered | Dialog fields can be `remember: false`. Every export's **Pieces** field uses it (`file.ts → pieceScopeField`): Selected whenever a piece is selected, else All, with a hint naming the selected pieces. The select shows the value actually used | `special:exportScope` (pass check); `fix` B3 PDF (Selected (1), FRONT only), SVG / DXF |
+| B4 Rotate Piece ignored the selection | `tools/move.ts → pcAdopt`: in Move / Rotate mode, typing a digit or right-clicking with pieces selected opens the input box for them (rotation about their centre). The prompt names the selected pieces | `move.pieceRotate` case (now passes); e2e-move `fixpass` |
+| B5 Move Point grabbed the internal end | `selpick.ts → rankCoincident`: points drawn within 1.5 px of each other rank selected first, then sew before internal, then nearest. The order applies to Select (Tab still reaches the others) and to the Move tools. `move.ts pointUnder` uses this ranking and keeps the SVG target only for nested-view sizes | `fix` B5 ×2; otherPoints connection/mpSingle, mpSmooth, mpInput (UA moves, CN_A follows) |
+| B6 Slash refused a start outside the piece | `construct.ts slashTool`: the start may be outside. The piece is the one the next segment crosses (`pieceCrossed`), and committing without one warns | `tool:slash` (start at x = −30, now passes) |
+| B7 Graded nest name `" NEST"` | `grade-cmds.ts → nestName` strips only a size, numeric or "copy" suffix after `_` / space / `-` → "FRONT NEST" | `grade.nest` (tightened: name must be "FRONT NEST" and the piece exists) |
+| B8 Snap-to-grid hotkey | `commands.ts → shiftedSymbolChord`: Shift + symbol is also matched by the physical key (`e.code`), and an explicit `Ctrl+Shift+'` binding wins over the plain `Ctrl+'` | hotkeys suite (no mismatch); `fix` B8 (snap toggles, grid does not; `Ctrl+'` still toggles the grid) |
+| B9 Click, then immediate press | A press on the picked-up spot turns the carry back into a drag (`again`). A click there puts it back. Commits with a zero move are refused in Move Point, Move Line and Piece, so there are no empty undo steps | drags "Move Point: click a point then drag it straight away"; `fix` B9 ×2 (one undo step, +20 mm; click-click on the same spot = 0 steps); e2e-move `fixpass` |
+| B10 Stale single file | `npm run build:single` after all changes (`dist/prowdcad-v2.html`) | single suite pass |
+| B11 Inspector X / Y ignored connections | `inspector.ts setPos` uses `ops.movePoint` (delta on one axis, `sizeId` on a non-base size), the same op as Move XY / Move Point | otherPoints connection/inspX, inspY (CN_A follows); `fix` B11 ×2 (base, and size L only) |
+| Esc on a menu cleared the selection | `ui/menu.ts closeMenus()`: an Esc that closes a menu does nothing else. Within 0.5 s of an Esc that cancelled something, a second Esc keeps the selection and says so. A click or another key resets this | selection "open a menu and close it with Esc" and "Esc at the first pick, then Esc again" (both pass now); `fix` Esc |
+| Incremental grading edit of L shifts XL | **Not a bug.** This is the incremental convention working as designed. Added: a note above the table (Incremental: "an edit also shifts every larger size (XL follows L)…"; Absolute: "editing a size changes that size only"); tooltips on both buttons; the button reads **Absolute (one size only)**; after an incremental edit the status bar names the sizes that moved | `fix` "Grading table…" (note, status "moved sizes L, XL", Absolute edit of L leaves XL) |
+
+### Usability findings (§6) and spec items
+
+| Finding | Done |
+|---|---|
+| 1 fraction input | B2 |
+| 2 curve points visibly follow | While a grade point is dragged with Move Point (Single / H / V), the old curve is drawn dashed and the following curve points are ringed (one label "follows"). The prompt says "N curve points follow (no own grading) — use Move Point ▸ Single on them to fix them, or Point ▸ Pin curve point". **Point ▸ Pin curve point (keep position) / Unpin** (also in the point context menu and the Inspector *Grading* row) uses the new kernel op `pinCurvePoints`: explicit grading = current per-size positions, zeros included. `curvePointFollows` was added too. Pinned points get a dot, and every point hit target has a tooltip |
+| 3 export scope | B3 |
+| 4 Esc on menu | fixed (above) |
+| 5 coincident points in Move tools | B5 |
+| 6 curve points of unselected pieces | A click right on one (60 % of the pick radius) takes it directly; it is not drawn |
+| 7 comma in the input box | `12,5` still means dX 12 / dY 5 (documented), and the box now shows a note: "“12,5” = dX 12 · dY 5 (for a decimal type 12.5)" |
+| 8 slash hint | B6 |
+| 9 commands that need a piece | Size as standalone style starts a piece pick. Cut by guideline without a guide shows a warning, not an error |
+| 10 greyed items never explain | Disabled menu items have a tooltip "Not available now — needs …" (`needs()` tags on `hasPiece` / `hasAnchor` / curve-point predicates, generic text otherwise) |
+| 12 browser-reserved keys | Browser-safe primary chords: Notch grid Shift+Alt+N, Import Ctrl+Alt+I, Rule library Shift+Alt+R, 100 % Ctrl+Alt+0. The old chords stay as secondary |
+| 13 New-style confirm title | Now "Discard unsaved changes?" (`file.new#dirty` fails if the title is "New style") |
+| 14 status survives reload | The status message is cleared on document load |
+| 16 silent no-ops | Info toast when Update seam grading, Reseam piece, Repair, Fix dart or Grade parallel change nothing (`Command.noop`) |
+| Spec 2.3.6 Space tap | A Space tap (under 220 ms, no pan) in any tool other than Select → Select, selection kept; a second tap → back. Space held still pans (`fix` Space tap, e2e-move `fixpass`) |
+| Spec 2.12 snaps | Intersection, midpoint and perpendicular foot (from the move start) were added after point snap, with a label at the Move Point target (`pt` / `int` / `mid` / `perp`). They use document geometry, never the drag preview (`fix` Snaps: snapPoint results plus a real drag onto a midpoint) |
+| Spec 1.5 AccuMark preset | **Edit ▸ Keyboard preset ▸ AccuMark keys / ProwdCAD (default)** and a *Preset* box in Edit ▸ Keyboard shortcuts (`edit.keysAccuMark`, `edit.keysDefault`, `edit.hotkeys#preset` cases: Alt+F12 → Move Single Point, Shift+F2 → Move Piece) |
+
+Not done: 11 (FS Access save feedback; environment-specific), 15 (DXF default flavour: needs an AccuMark check, not a code change), 17 (Absolute is still not the default view: the e2e units cases and the documented convention rely on Incremental; it is now explained in the table instead), spec 2.5 *Keep length* / 2.6 rotate presets / 2.9 long-right-press menu / 2.12 snaps to other sizes in nested view.
+
+### New / changed tests
+
+* `packages/kernel/test/points.test.ts`: "pin curve points": a following curve point moves with its neighbour in graded sizes; a pinned one keeps every size (base and per-size moves of the neighbour); one undo step; unpin; an ungraded piece pins with explicit zeros.
+* `scripts/e2e/suites/special.cjs` → `fixes` (`E2E_ONLY='special:fixes'`): 20 pass / fail checks listed above.
+* `scripts/e2e/suites/commands.cjs`: `point.pin` (plus moving UA leaves the pinned AH1 in every size), `point.unpin`, `edit.keysAccuMark`, `edit.keysDefault`, `edit.hotkeys#preset`. `grade.nest` and `file.new#dirty` are tightened.
+* `scripts/e2e/run.cjs`: checks count in the exit code (see above).
+* `scripts/e2e-move/run.cjs` → `fixpass`: Rotate Piece adopts the selection; click then press-drag = one step; Space tap; pinned curve point keeps every size.

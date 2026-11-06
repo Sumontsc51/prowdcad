@@ -23,6 +23,10 @@ npx tsc --noEmit -p apps/web
 | Right | Pieces list · Sizes (size line, active size, nested view) · Inspector |
 | Bottom | Grading table (Ctrl+G) · status bar (cursor, unit, active size, zoom, selection counts, the **step prompt** of the active tool, last message) |
 
+Panel number boxes (Inspector, grading table) compare the typed **value**, not the text: typing the shown, rounded `3/8` over an exact 10 mm writes exactly 9.525 mm. A rounded display is marked with a dotted underline; its tooltip gives the exact value. Greyed menu items say in their tooltip what they need ("needs a selected point").
+
+The grading table says above its rows what an edit does: in *Incremental* view a cell is a step, so editing L also moves XL and every larger size (the status bar names the sizes that moved); *Absolute (one size only)* edits one size.
+
 All lengths are typed in the current display unit and accept decimals **or** fractions:
 `12.5`, `1 1/8`, `1.1/8`, `1-1/8`, `9/8`. You can also add a unit suffix: `2cm`, `1"`, `30mm`.
 
@@ -30,10 +34,10 @@ All lengths are typed in the current display unit and accept decimals **or** fra
 
 | Tool | Key | Usage |
 |---|---|---|
-| Select | V | **Selection only: never moves or reshapes geometry.** Click = replace, Shift+click = add, Ctrl+click = toggle, click on empty sheet (or Esc) = clear. Drag anywhere = box: left → right = **window** (fully inside), right → left = **crossing** (touching, dashed green); Shift+drag adds, Ctrl+drag toggles. When several objects are under the cursor the status bar lists them and **Tab** cycles. Double-click a piece = all its points. Filter chips (tool-options strip, keys **0–5**): All · Pieces · Points · Lines · Internals · Marks. Hover pre-highlights what a click takes. Opt-in: Edit ▸ **Allow drag-move in Select (moves only what you grab)** |
-| Move Point | G | Modes (Tab cycles): **Single** (default: exactly the grabbed point moves, see below) · **Smooth** (AccuMark Move Smooth: two tacks on the neighbouring grade points, drag a tack onto another point of the line to change the range; the points strictly between the tacks blend, `moveProportional`; works per size) · **Horizontal / Vertical** (Single locked to X / Y) · **Along line** (slide on its own contour, `moveAlongContour`, base size only) · **Group** (every selected point by the same delta, `multiMove`). Press on a point and drag, or click it (it follows the cursor) and click the new spot. Shift = H/V/45°, Alt = no snap. Typing a digit, `-` or `.` (or right-click) opens the **input box**: dX dY · distance ∠ · absolute X Y (piece frame; fractions, `12,5` = dX 12 dY 5). Enter / right-click = OK, Esc = cancel, Enter with nothing typed repeats the last move, Backspace = undo the pick, Esc when idle = back to Select. Arrows nudge (Shift ×10) |
+| Select | V | **Selection only: never moves or reshapes geometry.** Click = replace, Shift+click = add, Ctrl+click = toggle, click on empty sheet (or Esc) = clear. Drag anywhere = box: left → right = **window** (fully inside), right → left = **crossing** (touching, dashed green); Shift+drag adds, Ctrl+drag toggles. When several objects are under the cursor the status bar lists them and **Tab** cycles; coincident points rank the selected one first, then the sew-line point before an internal one. A click right on a curve point of an unselected piece takes the point directly. Double-click a piece = all its points. Filter chips (tool-options strip, keys **0–5**): All · Pieces · Points · Lines · Internals · Marks. Hover pre-highlights what a click takes. Opt-in: Edit ▸ **Allow drag-move in Select (moves only what you grab)** |
+| Move Point | G | Modes (Tab cycles): **Single** (default: exactly the grabbed point moves, see below) · **Smooth** (AccuMark Move Smooth: two tacks on the neighbouring grade points, drag a tack onto another point of the line to change the range; the points strictly between the tacks blend, `moveProportional`; works per size) · **Horizontal / Vertical** (Single locked to X / Y) · **Along line** (slide on its own contour, `moveAlongContour`, base size only) · **Group** (every selected point by the same delta, `multiMove`). Press on a point and drag, or click it (it follows the cursor) and click the new spot; pressing again on the picked-up point starts a drag, clicking it again on the same spot puts it back (never a zero-move undo step). Coincident points: the selected one is grabbed, then the sew-line point (not an internal end lying on it). While a grade point is dragged, the old curve is drawn dashed and the curve points that follow it (no own grading) are ringed and labelled "follows"; the prompt names Move Point ▸ Single and Point ▸ Pin curve point. Shift = H/V/45°, Alt = no snap; the snap kind is labelled at the target (`pt` / `int` / `mid` / `perp`). Typing a digit, `-` or `.` (or right-click) opens the **input box**: dX dY · distance ∠ · absolute X Y (piece frame; fractions, `12,5` = dX 12 dY 5, and the box says so in a note). Enter / right-click = OK, Esc = cancel, Enter with nothing typed repeats the last move, Backspace = undo the pick, Esc when idle = back to Select. Arrows nudge (Shift ×10) |
 | Move Line / Segment | Shift+G | Click a sew segment (grade point → grade point) or an internal line, then drag (or click-click). The two end grade points and the curve points of that segment move by the same delta (an internal line moves whole); nothing else. **Parallel** mode locks the motion to the line normal. Input box: dX dY · distance ∠ · offset |
-| Move / Rotate / Flip Piece | Ctrl+Shift+G | **Move**: drag a piece (selected pieces move together); while dragging R / Shift+R = ±90°, Q W = ±1°, A S = ±10°, X / Y = flip. **Rotate**: drag about the piece centre (Ctrl = 15° steps) or type the angle. **Flip**: click = left ⇄ right, Shift+click = up ⇄ down. Changes `piece.layout` only (sheet placement; exports keep the authored geometry). Locked pieces are refused |
+| Move / Rotate / Flip Piece | Ctrl+Shift+G | **Move**: drag a piece (selected pieces move together); while dragging R / Shift+R = ±90°, Q W = ±1°, A S = ±10°, X / Y = flip. **Rotate**: drag about the piece centre (Ctrl = 15° steps) or type the angle; with a piece already selected, typing (or right-click) opens the angle box at once (noun → verb). **Flip**: click = left ⇄ right, Shift+click = up ⇄ down. Changes `piece.layout` only (sheet placement; exports keep the authored geometry). Locked pieces are refused |
 | Curve / Handle | Shift+C | Click a point to show its handles; drag a handle (Alt = break the pair, Shift = H/V/45°); click a handle then type (or right-click) for length / angle; Shift+click (or double-click) a point = corner ⇄ smooth. Base size only (handles are not graded) |
 | Pen — new piece | P | Click = corner, click-drag = smooth with handles, Ctrl+click = curve point. Click the start point (or Enter) to close. Right-click = exact next point |
 | Internal line / polygon | I | Start inside a piece; snaps to outline/points; Ctrl = curve, Shift = H/V/45°; click start = polygon; double-click / Enter ends; right-click = exact length/angle + mirror |
@@ -54,6 +58,12 @@ All lengths are typed in the current display unit and accept decimals **or** fra
 
 Every tool: **Enter** finishes, **Esc** cancels, **Backspace** removes the last draft point.
 
+**Space tap** (press and release in under 220 ms without panning): in any tool other than Select, back to Select with the selection kept; a second tap returns to that tool. Space held + drag pans.
+
+**Esc**: an Esc that closes a menubar drop-down or a context menu does only that. Within 0.5 s of an Esc that cancelled something (pick, move, draft, menu), a second Esc keeps the selection and says "press Esc again to clear it"; a click or any other key in between resets this.
+
+**Snapping** (`canvas/snap.ts`), in priority order: anchor points (all shown sizes) → intersection of two lines → midpoint of a grade segment → perpendicular foot from the move's start point (Move Point) → guides → grid. The line snaps use the document geometry, never the drag preview, and skip the moved point's own segments for midpoints.
+
 ### Selection model
 
 - Selectable objects: grade and curve points, **sew segments** (grade point → next grade point), **internal lines**, **notches**, **drills / buttons / texts**, darts / pleats / fullness, pieces. Selected objects are orange (segments and internals get a thick overlay with a direction arrow; points a filled orange square; the primary point of a multi-selection a ring).
@@ -67,7 +77,7 @@ Every tool: **Enter** finishes, **Esc** cancels, **Backspace** removes the last 
 - Base size: the grabbed anchor's stored `x / y`; its handles are stored relative to it, so they move rigidly with it. Every other anchor, curve point and handle keeps its stored data.
 - Non-base size (amber indicator): only that anchor's grading for the active size; its base position and every other size stay put.
 - **The one exception: point connections** (Piece ▸ Connections). An internal point connected to the moved sew point follows it; the prompt says so and the connected point is marked "connected" on the sheet.
-- Curve points carry no grading of their own unless edited, so in a graded size a curve point next to a moved grade point follows its neighbours' grading. That is expected.
+- Curve points carry no grading of their own unless edited, so in a graded size a curve point next to a moved grade point follows its neighbours' grading. That is expected, and the tool shows it while dragging (ghost of the old curve, "follows" rings, prompt). **Point ▸ Pin curve point (keep position)** (`ops.pinCurvePoints`) gives the selected curve points explicit grading equal to their current per-size positions, so they keep every size when a neighbour moves; **Unpin** drops it. Pinned curve points are drawn with a dot; the point tooltip and the Inspector (*Grading: Follows neighbours / Pinned*) say which.
 - Along line re-inserts the point on the existing curve: neighbouring points keep their position and grading; their Bézier handles may be re-fitted so the shape stays the same.
 
 ### Canvas picks
@@ -104,31 +114,34 @@ The **Inspector** shows *Lock grading* for a piece. For a sew grade point it add
 |---|---|
 | Ctrl+Z / Ctrl+Y, Ctrl+Shift+Z | Undo / redo (200 steps) |
 | Ctrl+S / Ctrl+Shift+S / Ctrl+O / Ctrl+Alt+N | Save / Save As / Open / New |
-| Ctrl+Shift+I · Ctrl+Shift+E · Ctrl+P | Import · Export DXF (+RUL) · Export tiled PDF |
+| Ctrl+Alt+I · Ctrl+Shift+E · Ctrl+P | Import (Ctrl+Shift+I also bound; Chrome keeps it for DevTools) · Export DXF (+RUL) · Export tiled PDF |
 | Delete, Backspace | Delete the selection: points, else notches / drills / texts / internal lines, else pieces (asks). Backspace inside a Move tool = undo the last pick |
 | V · G · Shift+G · Ctrl+Shift+G · Shift+C | Select · Move Point · Move Line · Move / Rotate / Flip Piece · Curve / Handle |
 | 0 1 2 3 4 5 (Select) · Tab | Filter All / Pieces / Points / Lines / Internals / Marks · cycle the objects under the cursor (Select) or the mode (Move tools) |
+| Space (tap) | Move / Modify tool ⇄ Select, selection kept (hold = pan) |
 | Ctrl+D · Ctrl+A · Ctrl+Shift+A | Duplicate piece · select all of the current filter (All = pieces) · select all points of a piece |
 | Arrows (Shift = ×10) | Nudge the selection **only while a Move tool is active** (Move Point: the picked point, Group: all selected points; Move Line: the line; Piece: the selected pieces). In Select the arrows do nothing |
 | Alt+C · Alt+G · Alt+I · Alt+A · Shift+Alt+A | Corner⇄smooth · grade⇄curve · insert point after · Add point… · add point at click |
 | Alt+M · Shift+Alt+H / Shift+Alt+V | Move point XY dialog · align H / V |
 | Alt+L · Alt+O · Ctrl+Alt+Shift+C / V | Segment length · rotate segment · copy / paste segment |
 | Alt+S · Alt+K · Shift+Alt+K · Ctrl+Alt+S | Seam of segment · corner gallery · manual seam angle · reseam piece |
-| Ctrl+Shift+N · Ctrl+Alt+B | Notch grid · binding generator |
+| Shift+Alt+N · Ctrl+Alt+B | Notch grid (Ctrl+Shift+N also bound; browser-reserved) · binding generator |
 | Alt+B · Alt+J · Alt+Shift+P | Build piece · join pieces · parallel internal |
 | Ctrl+G · Alt+N · Alt+T | Grading table · nested view · point tracking |
 | Ctrl+[ / Ctrl+] / Ctrl+B | Previous / next / base size |
 | Ctrl+Alt+C / V / X / Y / M | Copy grade / paste / paste X only / paste Y only / Smart paste |
-| Ctrl+R · Ctrl+Shift+R | Apply rule by number or name · rule library |
+| Ctrl+R · Shift+Alt+R | Apply rule by number or name · rule library (Ctrl+Shift+R also bound; browser-reserved) |
 | Ctrl+I · Ctrl+Shift+L | Piece info · Compare length |
 | Shift+D · Shift+L · Shift+U | Dart · Pleat · Add fullness tools |
 | Ctrl+Alt+D · Shift+Alt+T | Close / reopen dart · Pivot transfer |
 | Ctrl+L · Alt+R | Lock piece · rotate 90° |
-| Ctrl+0, F · Shift+F · Ctrl+1 · +/- | Fit · fit selection · 100 % · zoom |
-| Ctrl+' · Ctrl+Alt+R | Grid · rulers |
+| Ctrl+0, F · Shift+F · Ctrl+Alt+0 · +/- | Fit · fit selection · 100 % (Ctrl+1 also bound; browser-reserved) · zoom |
+| Ctrl+' · Ctrl+Shift+' · Ctrl+Alt+R | Grid · snap to grid (matched on the physical key, so it works although Shift+' types `"`) · rulers |
 | F1 | Shortcut list (complete) |
 
-The hotkey map is stored in browser settings as JSON. Only overrides are saved, and an empty string unbinds a command. **Edit ▸ Customize toolbar…** shows or hides palette tools; hidden tools keep their shortcuts. Dialogs remember their last values per dialog (in settings).
+**Presets**: Edit ▸ Keyboard preset ▸ *AccuMark keys* / *ProwdCAD (default)*, or the *Preset* box at the top of Edit ▸ Keyboard shortcuts…. AccuMark keys (`actions/register.ts → ACCUMARK_KEYS`, UX-RESEARCH §1.5): Alt+F12 Move Single Point, Alt+F11 Move Smooth, Alt+F2 Move Points, Alt+F3 Align, Alt+F1 Delete point, Ctrl+F2 Move Line, Ctrl+F11 Move Parallel, Ctrl+F10 Split, Alt+S Swap line (Seam of segment → Shift+Alt+S), Shift+F2 / Shift+F9 / Shift+F10 Move / Flip / Rotate Piece, Shift+W Walk, Ctrl+A Select all, Ctrl+D Clear selection (Duplicate → Ctrl+Shift+D).
+
+The hotkey map is stored in browser settings as JSON. Only overrides are saved, and an empty string unbinds a command. **Edit ▸ Customize toolbar…** shows or hides palette tools; hidden tools keep their shortcuts. Dialogs remember their last values per dialog (in settings), except context fields: the **Pieces** scope of every export dialog is never remembered; it is *Selected* whenever a piece is selected, else *All pieces*, and a hint names the selected pieces. A length field you do not touch returns its exact value (the display may be rounded to 1/16").
 
 ## Persistence and safety
 
@@ -175,6 +188,16 @@ Playwright and proves: Select never changes the document; Move Point Single chan
 anchor (base and graded); Smooth changes only the points between the tacks; Move Line only the
 segment's points; the selection survives Copy grade, a seam command, undo / redo, size and tool
 switches; typed input-box values (fractions, inch mode, absolute) land exactly.
+
+`npm run e2e` (scripts/e2e, ≈25 min) runs every registry command, tool and hotkey plus the cross-cutting checks
+(other-points matrix, units, nested view, drags, selection persistence, export scope, the fix-pass regressions
+`special:fixes`, single-file smoke). It tests a `git archive` snapshot of HEAD by default; use `E2E_TREE=1` for
+uncommitted work. The exit code counts failing cases **and** failing checks (special parts, hotkey mismatches,
+single-file). See docs/E2E-REPORT.md.
+
+### Half pieces and resolved indices
+
+`geometry.ts → resolveFor` is the one way the UI resolves a piece. For a live half piece the kernel resolves the opened (mirrored) piece; `resolveFor` re-indexes its sew contour to the **stored** anchor order (`anchorPos`, `anchorIndex`, `handles`, `gradeIdx` follow `piece.sew.points`; `pts` / `cum` stay the full opened outline) and marks the stored fold edge (`foldAfter`), which `hitkit.segmentIds` never returns as a segment. So `rc.anchorPos[i]` is always `contour.points[i]`, and hover / pick / highlight work on both halves. Do not call `doc.resolvePiece` directly from UI code.
 
 ### Kernel ops bridge
 
