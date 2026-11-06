@@ -8,9 +8,10 @@ import { type Piece, type Vec, type SizeId, type ResolvedNotch } from '@prowdcad
 import { ops } from '../ops-bridge';
 import type { App } from '../app';
 import { settings } from '../settings';
-import { resolveFor, toWorld, layoutOf, sizeColor, sizeFor } from '../geometry';
+import { resolveFor, toWorld, layoutOf, layoutSvg, sizeColor, sizeFor, dirToWorld } from '../geometry';
 import { MM_PER_UNIT } from '@prowdcad/kernel';
 import { liveShapes, hitLines, type LiveShape } from '../live';
+import { selectionOverlay, SEL_COLOR, curvePointsEverywhere } from '../selpick';
 
 const ACCENT = '#4ea1ff';
 const f = (n: number) => (Math.round(n * 1000) / 1000).toString();
@@ -41,7 +42,7 @@ export function niceStep(minWorld: number, base = 1): number {
 // resolved notches cache (notches are re-derived per revision / piece / size)
 const notchCache = new Map<string, ResolvedNotch[]>();
 let notchRev = -1;
-function notchesFor(app: App, p: Piece, sid: SizeId): ResolvedNotch[] {
+export function notchesFor(app: App, p: Piece, sid: SizeId): ResolvedNotch[] {
   if (!p.notches.length) return [];
   const live = app.doc.style.pieces.includes(p);
   if (notchRev !== app.doc.revision()) { notchCache.clear(); notchRev = app.doc.revision(); }
@@ -89,8 +90,7 @@ export function renderWorld(app: App): string {
   const selected = new Set(app.sel.pieces);
   for (const p of app.pieces()) {
     if (app.hiddenPieces.has(p.id)) continue;
-    const L = layoutOf(p);
-    const tf = `translate(${f(L.x)} ${f(L.y)})${L.angleDeg ? ` rotate(${f(L.angleDeg)})` : ''}`;
+    const tf = layoutSvg(layoutOf(p));
     const isSel = selected.has(p.id);
     const active = app.sizeOf(p);
     const g: string[] = [`<g transform="${tf}" data-piece="${p.id}">`];
@@ -246,7 +246,8 @@ export function renderOverlay(app: App): string {
       let tp: Vec = t; try { tp = ops.textPosition(app.doc, p, t, active); } catch { /* base */ }
       const sp = v.toScreen(toWorld(p, tp));
       const px = Math.max(6, t.size * v.scale);
-      const ang = -(t.angleDeg + layoutOf(p).angleDeg);
+      const td = dirToWorld(p, { x: Math.cos(t.angleDeg * Math.PI / 180), y: Math.sin(t.angleDeg * Math.PI / 180) });
+      const ang = -Math.atan2(td.y, td.x) * 180 / Math.PI;
       out.push(`<text x="${fs(sp.x)}" y="${fs(sp.y)}" font-size="${fs(px)}" fill="#2c3e50" text-anchor="middle" dominant-baseline="middle" transform="rotate(${fs(ang)} ${fs(sp.x)} ${fs(sp.y)})">${esc(t.text)}</text>`);
     }
     // cut-line corner indices (where cut-line notches / corners land)
@@ -279,7 +280,8 @@ export function renderOverlay(app: App): string {
       }
       if (isLiveSel && sh.kind === 'dart') { const a = v.toScreen(toWorld(p, sh.apex)); liveHl.push(`<circle cx="${fs(a.x)}" cy="${fs(a.y)}" r="4" fill="#ff9f1a"/>`); }
     }
-    const showAnchors = isSel || settings.showAllAnchors;
+    const allCurve = curvePointsEverywhere(app);
+    const showAnchors = isSel || settings.showAllAnchors || allCurve;
     if (!showAnchors) continue;
     const sizesToDraw: SizeId[] = app.nested && isSel
       ? [active, ...app.doc.sizesOf(p).filter(s => s !== active && !app.nestedHidden.has(s))]
@@ -293,12 +295,12 @@ export function renderOverlay(app: App): string {
         const rc = resolved[ci]; if (!rc) return;
         c.points.forEach((a, ai) => {
           if (!isActive && a.kind !== 'grade') return; // nested sizes: grade anchors only
-          if (!isSel && a.kind !== 'grade') return;     // unselected pieces: grade anchors only
+          if (!isSel && !allCurve && a.kind !== 'grade') return;     // unselected pieces: grade anchors only (Move tools: all)
           const s = v.toScreen(toWorld(p, rc.anchorPos[ai]));
           const selA = isActive && app.isAnchorSelected({ anchorId: a.id });
-          const col = !isActive ? sizeColor(line, sid) : selA ? ACCENT : isSel ? '#1d2330' : '#7b8190';
-          const fill = selA ? ACCENT : '#ffffff';
-          const sz = isSel ? 3.6 : 2.6;
+          const col = !isActive ? sizeColor(line, sid) : selA ? '#b35900' : isSel ? '#1d2330' : '#7b8190';
+          const fill = selA ? SEL_COLOR : '#ffffff';
+          const sz = selA ? 4.4 : isSel ? 3.6 : 2.6;
           if (a.kind === 'grade') anchorsOut.push(`<rect x="${fs(s.x - sz)}" y="${fs(s.y - sz)}" width="${fs(sz * 2)}" height="${fs(sz * 2)}" fill="${fill}" stroke="${col}" stroke-width="1.3"/>`);
           else anchorsOut.push(`<circle cx="${fs(s.x)}" cy="${fs(s.y)}" r="${fs(sz * 0.9)}" fill="${fill}" stroke="${col}" stroke-width="1.2"/>`);
           if (a.flags.startPoint && c === p.sew && isActive) anchorsOut.push(`<circle cx="${fs(s.x)}" cy="${fs(s.y)}" r="7" fill="none" stroke="#e67e22" stroke-width="1"/>`);
@@ -326,7 +328,7 @@ export function renderOverlay(app: App): string {
       });
     }
   }
-  out.push(liveHl.join(''), handlesOut.join(''), anchorsOut.join(''));
+  out.push(liveHl.join(''), selectionOverlay(app), handlesOut.join(''), anchorsOut.join(''));
   const tool = app.tool?.overlay?.(app);
   if (tool) out.push(tool);
   // live hit targets sit below anchor / handle targets, so points stay grabbable on top of dart legs

@@ -13,6 +13,7 @@ import { registerPointSeg } from './point-seg';
 import { registerCutPiece } from './cut-piece';
 import { registerGrade } from './grade-cmds';
 import { registerLive, deleteLive } from './live-cmds';
+import { registerMoveCmds, selectAllByFilter } from './move-cmds';
 import { ops, opStatus, type SegmentRef, type AnchorRef } from '../ops-bridge';
 import { showDialog, alertDialog, confirmDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
@@ -67,7 +68,7 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
     hint: undefined, run: () => { const l = app.doc.undoLabel(); if (app.doc.undo()) app.status(`Undo: ${l}`); } });
   registerCommand({ id: 'edit.redo', title: 'Redo', menu: 'Edit', group: 0, hotkey: 'Ctrl+Y,Ctrl+Shift+Z', enabled: c => c.app.doc.canRedo(),
     run: () => { const l = app.doc.redoLabel(); if (app.doc.redo()) app.status(`Redo: ${l}`); } });
-  registerCommand({ id: 'edit.delete', title: 'Delete', menu: 'Edit', group: 1, hotkey: 'Delete,Backspace', enabled: c => hasPiece(c) || hasAnchor(c) || !!c.app.currentLive(), run: () => deleteSelection(app) });
+  registerCommand({ id: 'edit.delete', title: 'Delete', menu: 'Edit', group: 1, hotkey: 'Delete,Backspace', enabled: c => hasPiece(c) || hasAnchor(c) || !!c.app.currentLive() || c.app.hasSubSelection(), run: () => deleteSelection(app) });
   registerCommand({ id: 'edit.duplicate', title: 'Duplicate piece', menu: 'Edit', group: 1, hotkey: 'Ctrl+D', enabled: hasPiece, run: () => {
     const ids: string[] = [];
     tx('Duplicate piece', () => {
@@ -81,12 +82,13 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
     });
     app.sel = { pieces: ids, anchors: [] };
   } });
-  registerCommand({ id: 'edit.selectAll', title: 'Select all pieces', menu: 'Edit', group: 2, hotkey: 'Ctrl+A', run: () => { app.sel = { pieces: app.style.pieces.map(p => p.id), anchors: [] }; } });
+  registerCommand({ id: 'edit.selectAll', title: 'Select all (current filter; All = pieces)', menu: 'Edit', group: 2, hotkey: 'Ctrl+A', run: () => selectAllByFilter(app) });
   registerCommand({ id: 'edit.selectAllPoints', title: 'Select all points of piece', menu: 'Edit', group: 2, hotkey: 'Ctrl+Shift+A', enabled: hasPiece, run: () => {
     const p = onePiece();
     app.sel = { pieces: [p.id], anchors: [p.sew, ...p.internals].flatMap(c => c.points.map(a => ({ pieceId: p.id, contourId: c.id, anchorId: a.id }))) };
   } });
-  registerCommand({ id: 'edit.deselect', title: 'Deselect', menu: 'Edit', group: 2, hotkey: 'Escape', run: () => { app.sel = { pieces: [], anchors: [] }; } });
+  registerCommand({ id: 'edit.deselect', title: 'Deselect all', menu: 'Edit', group: 2, hotkey: 'Escape', run: () => { app.clearSelection(); } });
+  // arrow keys nudge only while a Move tool is active (acting on the selection); Select never moves geometry
   const nudgeCmd = (id: string, title: string, key: string, dx: number, dy: number, mult: number) =>
     registerCommand({ id, title, hotkey: key, run: () => nudge(app, dx * settings.nudgeMm * mult, dy * settings.nudgeMm * mult) });
   nudgeCmd('edit.nudgeL', 'Nudge left', 'ArrowLeft', -1, 0, 1); nudgeCmd('edit.nudgeR', 'Nudge right', 'ArrowRight', 1, 0, 1);
@@ -103,6 +105,7 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
   registerSeamNotch(app);
   registerMeasure(app);
   registerPointSeg(app);
+  registerMoveCmds(app);
   registerCutPiece(app);
   registerGrade(app);
 
@@ -229,6 +232,18 @@ async function deleteSelection(app: App) {
     if (blocked) toast(`${blocked} point(s) kept (locked, live-object or minimum point count)`, 'warn');
     return;
   }
+  const s = app.sel;
+  if (s.notches.length || s.marks.length || s.internals.length) {
+    const notches = s.notches.slice(), marks = s.marks.slice(), internals = s.internals.slice();
+    app.doc.transact('Delete', () => {
+      for (const n of notches) { const pc = app.doc.style.pieces.find(p => p.id === n.pieceId); if (pc && !pc.locked) pc.notches = pc.notches.filter(x => x.id !== n.notchId); }
+      for (const m of marks) { const pc = app.doc.style.pieces.find(p => p.id === m.pieceId); if (!pc || pc.locked) continue; if (m.kind === 'drill') ops.deleteDrill(app.doc, pc, m.id); else ops.deleteText(app.doc, pc, m.id); }
+      for (const c of internals) { const pc = app.doc.style.pieces.find(p => p.id === c.pieceId); if (pc && !pc.locked) { pc.internals = pc.internals.filter(x => x.id !== c.contourId); pc.connections = pc.connections.filter(x => x.internalContourId !== c.contourId); } }
+    });
+    app.status(`Deleted ${notches.length + marks.length + internals.length} object(s)`);
+    return;
+  }
+  if (s.segments.length) { toast('A segment cannot be deleted on its own: select its points (or the piece) to delete', 'warn'); return; }
   if (!app.sel.pieces.length) return;
   if (!(await confirmDialog('Delete', `Delete ${app.sel.pieces.length} piece(s)?`, 'Delete'))) return;
   const ids = new Set(app.sel.pieces);

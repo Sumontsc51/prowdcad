@@ -22,8 +22,29 @@ export function renderInspector(app: App, host: HTMLElement) {
   const live = app.currentLive();
   if (live) { liveInspector(app, host, live); return; }
   const piece = app.primaryPiece();
-  if (piece) { pieceInspector(app, host, piece.id); return; }
+  if (piece) { selectionSummary(app, host); pieceInspector(app, host, piece.id); return; }
   host.append(h('div.empty', {}, 'Nothing selected. Click a piece or a point.'));
+}
+
+/** Segments / internal lines / notches / marks selected: what they are (and segment lengths). */
+function selectionSummary(app: App, host: HTMLElement) {
+  const s = app.sel;
+  const n = s.segments.length + s.internals.length + s.notches.length + s.marks.length;
+  if (!n) return;
+  host.append(h('div.insp-title', {}, n === 1 ? 'Selected' : `Selected · ${n} items`));
+  for (const g of s.segments.slice(-6)) {
+    const p = app.doc.style.pieces.find(x => x.id === g.pieceId); if (!p) continue;
+    const c = g.contourId === p.sew.id ? p.sew : p.internals.find(x => x.id === g.contourId); if (!c) continue;
+    const i = c.points.findIndex(a => a.id === g.from) + 1, j = c.points.findIndex(a => a.id === g.to) + 1;
+    let L = NaN; try { L = ops.measureSegment(app.doc, p.id, c.id, g.from, g.to, app.sizeOf(p)); } catch { /* */ }
+    host.append(row(`Segment ${i}→${j}`, h('span.val', {}, `${fmt(L)} ${unitLabel()} · ${p.name}`)));
+  }
+  for (const g of s.internals.slice(-6)) {
+    const p = app.doc.style.pieces.find(x => x.id === g.pieceId); const k = p ? p.internals.findIndex(x => x.id === g.contourId) : -1;
+    if (p && k >= 0) host.append(row(`Internal ${k + 1}`, h('span.val', {}, `${fmt(totalLength(resolveFor(app.doc, p, app.sizeOf(p)).internals[k]))} ${unitLabel()} · ${p.name}`)));
+  }
+  if (s.notches.length) host.append(row('Notches', h('span.val', {}, String(s.notches.length))));
+  if (s.marks.length) host.append(row('Drills / texts', h('span.val', {}, String(s.marks.length))));
 }
 
 function tx(app: App, label: string, fn: () => void) {

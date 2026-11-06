@@ -2,7 +2,7 @@
  * Piece construction & management (A5): trace, build (planar region), join, fold in/out, half pieces,
  * reference block, point connections, lock, layouts, versioning, merge from another style, grain ops.
  */
-import type { Anchor, Contour, Id, Piece, SizeId, SizeLine, Style, GradeInc } from '../model/types';
+import type { PieceLayout, Anchor, Contour, Id, Piece, SizeId, SizeLine, Style, GradeInc } from '../model/types';
 import type { Document } from '../model/doc';
 import { newId, makePiece, makeContour, now } from '../model/factory';
 import { absoluteOffset, absoluteToIncremental, halfOpenedPiece, findHalfFoldEdge, MIRROR_SUFFIX } from '../model/contour';
@@ -478,13 +478,85 @@ export function globalClearConnections(doc: Document, pieceId?: Id): number {
   });
 }
 
+// ───────────────────────── layout transform (move / rotate / flip on the sheet) ─────────────────────────
+
+const LAYOUT0: PieceLayout = { x: 0, y: 0, angleDeg: 0 };
+/** The layout of a piece (identity when it has none). */
+export function pieceLayout(p: Piece): PieceLayout { return p.layout ?? LAYOUT0; }
+
+/** Piece-local point → sheet (world) point: world = R(angle) · F · local + (x, y). */
+export function layoutToWorld(L: PieceLayout, v: Vec): Vec {
+  const fx = L.flipX ? -v.x : v.x, fy = L.flipY ? -v.y : v.y;
+  if (!L.angleDeg) return { x: fx + L.x, y: fy + L.y };
+  const r = (L.angleDeg * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
+  return { x: fx * c - fy * s + L.x, y: fx * s + fy * c + L.y };
+}
+/** Sheet (world) point → piece-local point (inverse of layoutToWorld). */
+export function layoutToLocal(L: PieceLayout, w: Vec): Vec {
+  let x = w.x - L.x, y = w.y - L.y;
+  if (L.angleDeg) { const r = (-L.angleDeg * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r); const xx = x * c - y * s; y = x * s + y * c; x = xx; }
+  return { x: L.flipX ? -x : x, y: L.flipY ? -y : y };
+}
+/** Direction vectors (no translation). */
+export function layoutDirToWorld(L: PieceLayout, v: Vec): Vec { return layoutToWorld({ ...L, x: 0, y: 0 }, v); }
+export function layoutDirToLocal(L: PieceLayout, v: Vec): Vec { return layoutToLocal({ ...L, x: 0, y: 0 }, v); }
+
+const normDeg = (d: number) => { let a = d % 360; if (a < 0) a += 360; return Math.abs(a - 360) < 1e-9 || Math.abs(a) < 1e-9 ? 0 : a; };
+
+/** Canonical form: flipX + flipY → +180°, angle in [0, 360). */
+export function normalizeLayout(L: PieceLayout): PieceLayout {
+  const out: PieceLayout = { x: L.x, y: L.y, angleDeg: L.angleDeg };
+  let fx = !!L.flipX, fy = !!L.flipY;
+  if (fx && fy) { fx = fy = false; out.angleDeg += 180; }
+  out.angleDeg = normDeg(out.angleDeg);
+  if (fx) out.flipX = true;
+  if (fy) out.flipY = true;
+  return out;
+}
+
+/** Layout after rotating the placed piece by `deg` (CCW, world) about the world point `pivot`. */
+export function rotatedLayout(L: PieceLayout, deg: number, pivot: Vec): PieceLayout {
+  const r = (deg * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
+  const dx = L.x - pivot.x, dy = L.y - pivot.y;
+  return normalizeLayout({ ...L, x: pivot.x + dx * c - dy * s, y: pivot.y + dx * s + dy * c, angleDeg: L.angleDeg + deg });
+}
+
+/**
+ * Layout after mirroring the placed piece on the sheet: 'h' = left ⇄ right (about the vertical world
+ * line through `pivot`), 'v' = up ⇄ down (about the horizontal world line). Mirror ∘ R(a) = R(−a) ∘ Mirror,
+ * so the angle is negated and the matching local flip toggles; the translation keeps `pivot` fixed.
+ */
+export function flippedLayout(L: PieceLayout, axis: 'h' | 'v', pivot: Vec): PieceLayout {
+  const n: PieceLayout = { x: 0, y: 0, angleDeg: -L.angleDeg, flipX: axis === 'h' ? !L.flipX : !!L.flipX, flipY: axis === 'v' ? !L.flipY : !!L.flipY };
+  // world image of the old transform, mirrored: for every local q, new(q) = M(old(q)); fix the translation from q = 0
+  const o0 = layoutToWorld(L, { x: 0, y: 0 });
+  const m0 = axis === 'h' ? { x: 2 * pivot.x - o0.x, y: o0.y } : { x: o0.x, y: 2 * pivot.y - o0.y };
+  n.x = m0.x; n.y = m0.y;
+  return normalizeLayout(n);
+}
+
+/** Move / rotate / flip pieces on the sheet as one undo step. Locked pieces are refused. */
+export function transformPieceLayouts(doc: Document, pieceIds: Id[], t: { dx?: number; dy?: number; rotateDeg?: number; flip?: 'h' | 'v'; pivot?: Vec }, label = 'Move piece'): void {
+  doc.transact(label, () => {
+    for (const id of pieceIds) {
+      const p = doc.piece(id);
+      if (p.locked) throw new Error(`${p.name} is locked`);
+      let L = { ...pieceLayout(p) };
+      if (t.dx || t.dy) L = { ...L, x: L.x + (t.dx ?? 0), y: L.y + (t.dy ?? 0) };
+      if (t.rotateDeg) L = rotatedLayout(L, t.rotateDeg, t.pivot ?? { x: L.x, y: L.y });
+      if (t.flip) L = flippedLayout(L, t.flip, t.pivot ?? { x: L.x, y: L.y });
+      p.layout = normalizeLayout(L);
+    }
+  });
+}
+
 // ───────────────────────── lock / layouts ─────────────────────────
 
 export function lockPiece(doc: Document, pieceId: Id, locked = true): void { doc.transact(locked ? 'Lock piece' : 'Unlock piece', () => { doc.piece(pieceId).locked = locked; }); }
 
 export function saveLayout(doc: Document, name: string): void {
   doc.transact('Save layout', style => {
-    const rec: Record<Id, { x: number; y: number; angleDeg: number }> = {};
+    const rec: Record<Id, PieceLayout> = {};
     for (const p of style.pieces) rec[p.id] = { ...(p.layout ?? { x: 0, y: 0, angleDeg: 0 }) };
     style.layouts[name] = rec;
   });

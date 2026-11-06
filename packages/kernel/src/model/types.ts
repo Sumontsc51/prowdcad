@@ -305,6 +305,14 @@ export interface PieceOrderDefaults {
   cutContourOnly: boolean;
 }
 
+/**
+ * Placement of a piece on the drafting sheet (display / marker placement only: exporters write the
+ * authored piece geometry and never apply the layout). world = R(angleDeg) · F · local + (x, y), where
+ * F mirrors the local x axis (`flipX`) and / or the local y axis (`flipY`). A flipX + flipY pair is the
+ * same as a 180° rotation; `flipPieceLayout` normalises it away.
+ */
+export interface PieceLayout { x: number; y: number; angleDeg: number; flipX?: boolean; flipY?: boolean }
+
 export interface Piece {
   id: Id;
   name: string;
@@ -343,7 +351,7 @@ export interface Piece {
   version: number;
   /** B5 engineered matching authored in design */
   matchIndex?: number;
-  layout?: { x: number; y: number; angleDeg: number };
+  layout?: PieceLayout;
   createdAt: string;
   updatedAt: string;
 }
@@ -429,7 +437,7 @@ export interface Style {
   /** archived piece versions (Replace Old / Save Active As New) */
   pieceArchive: Piece[];
   /** named layouts (Save/Restore Layout) */
-  layouts: Record<string, Record<Id, { x: number; y: number; angleDeg: number }>>;
+  layouts: Record<string, Record<Id, PieceLayout>>;
   settings: {
     autoReseam: boolean;
     pointConnectionOnSnap: 'always' | 'ask' | 'never';

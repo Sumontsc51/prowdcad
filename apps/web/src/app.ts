@@ -10,17 +10,65 @@ import { contourById, deepClone, sizeFor } from './geometry';
 import type { AnchorRef } from './ops-bridge';
 import type { LiveRef } from './live';
 
+/** A grade segment of a contour (from grade anchor → next grade anchor, contour direction). */
+export interface SegSel { pieceId: Id; contourId: Id; from: Id; to: Id }
+/** A whole internal line / shape. */
+export interface ContourSel { pieceId: Id; contourId: Id }
+export interface NotchSel { pieceId: Id; notchId: Id }
+/** Drill / button / buttonhole or text annotation. */
+export interface MarkSel { pieceId: Id; kind: 'drill' | 'text'; id: Id }
+export type SelKind = 'piece' | 'point' | 'segment' | 'internal' | 'notch' | 'mark' | 'live';
+
+/**
+ * The selection. `pieces` holds explicitly selected pieces AND the pieces of every selected
+ * sub-object (context: Inspector, piece highlight, piece commands). The typed lists hold the
+ * sub-objects; `primary` is the kind of the last clicked item. Selection survives commands, tool
+ * switches, size switches and undo / redo (pruneSelection drops only ids that no longer exist).
+ */
 export interface Selection {
   pieces: Id[];
   anchors: AnchorRef[];
+  segments: SegSel[];
+  internals: ContourSel[];
+  notches: NotchSel[];
+  marks: MarkSel[];
+  primary?: SelKind;
+}
+/** What older code assigns (`app.sel = { pieces, anchors }`); the other lists default to empty. */
+export type SelectionInit = Partial<Selection> & { pieces: Id[]; anchors: AnchorRef[] };
+export const emptySelection = (): Selection => ({ pieces: [], anchors: [], segments: [], internals: [], notches: [], marks: [] });
+
+/** One selectable object (Select tool, candidate picker, marquee). */
+export type SelItem =
+  | { k: 'piece'; pieceId: Id }
+  | { k: 'point'; ref: AnchorRef; sizeId?: SizeId }
+  | { k: 'segment'; seg: SegSel }
+  | { k: 'internal'; c: ContourSel }
+  | { k: 'notch'; n: NotchSel }
+  | { k: 'mark'; m: MarkSel }
+  | { k: 'live'; live: LiveRef };
+export function selItemPiece(it: SelItem): Id {
+  switch (it.k) {
+    case 'piece': return it.pieceId; case 'point': return it.ref.pieceId; case 'segment': return it.seg.pieceId;
+    case 'internal': return it.c.pieceId; case 'notch': return it.n.pieceId; case 'mark': return it.m.pieceId; case 'live': return it.live.pieceId;
+  }
+}
+export function selItemKey(it: SelItem): string {
+  switch (it.k) {
+    case 'piece': return 'pc:' + it.pieceId; case 'point': return 'pt:' + it.ref.anchorId;
+    case 'segment': return `sg:${it.seg.contourId}:${it.seg.from}:${it.seg.to}`; case 'internal': return 'in:' + it.c.contourId;
+    case 'notch': return 'n:' + it.n.notchId; case 'mark': return `m:${it.m.kind}:${it.m.id}`; case 'live': return `lv:${it.live.kind}:${it.live.id}`;
+  }
 }
 
-type Part = 'canvas' | 'panels' | 'status' | 'menus';
+type Part = 'canvas' | 'panels' | 'status' | 'menus' | 'options';
 
 export class App {
   doc: Document;
   view = new Viewport();
-  sel: Selection = { pieces: [], anchors: [] };
+  private _sel: Selection = emptySelection();
+  get sel(): Selection { return this._sel; }
+  set sel(v: SelectionInit) { this._sel = { ...emptySelection(), ...v }; }
   /** selected live object (dart / pleat / fullness record), shown in the Inspector */
   liveSel: LiveRef | null = null;
   activeSize: SizeId;
@@ -52,7 +100,7 @@ export class App {
     this.activeSize = this.doc.sizeTable().axis1.baseSizeId;
     this.doc.on(e => {
       if (e.type === 'load') {
-        this.sel = { pieces: [], anchors: [] };
+        this.sel = emptySelection();
         this.activeSize = this.doc.sizeTable().axis1.baseSizeId;
         this.nestedHidden.clear(); this.hiddenPieces.clear(); this.preview.clear();
         this.savedRev = this.doc.revision();
@@ -65,7 +113,8 @@ export class App {
   // ───── render scheduling ─────
   setRenderer(part: Part, fn: () => void) { this.renderers[part] = fn; }
   invalidate(...parts: Part[]) {
-    const list: Part[] = parts.length ? parts : ['canvas', 'panels', 'status', 'menus'];
+    const list: Part[] = parts.length ? parts : ['canvas', 'panels', 'status', 'menus', 'options'];
+    if (list.includes('status') && !list.includes('options')) list.push('options');
     for (const p of list) this.dirtyParts.add(p);
     if (!this.raf) this.raf = requestAnimationFrame(() => this.flush());
   }
@@ -113,11 +162,11 @@ export class App {
   }
   selectPiece(id: Id | null, additive = false) {
     if (!additive) this.liveSel = null;
-    if (!id) { if (!additive) this.sel = { pieces: [], anchors: [] }; }
+    if (!id) { if (!additive) this.sel = emptySelection(); }
     else if (additive) {
       const i = this.sel.pieces.indexOf(id);
       if (i >= 0) this.sel.pieces.splice(i, 1); else this.sel.pieces.push(id);
-    } else { this.sel.pieces = [id]; this.sel.anchors = []; }
+    } else { this.sel = { pieces: [id], anchors: [], primary: 'piece' }; }
     this.invalidate();
   }
   isAnchorSelected(r: { anchorId: Id }) { return this.sel.anchors.some(a => a.anchorId === r.anchorId); }
@@ -127,14 +176,23 @@ export class App {
     if (additive) {
       const i = this.sel.anchors.findIndex(a => a.anchorId === ref.anchorId);
       if (i >= 0) this.sel.anchors.splice(i, 1); else this.sel.anchors.push(ref);
-    } else this.sel.anchors = [ref];
+    } else this.sel = { pieces: [ref.pieceId], anchors: [ref] };
     if (!this.sel.pieces.includes(ref.pieceId)) this.sel.pieces = additive ? [...this.sel.pieces, ref.pieceId] : [ref.pieceId];
+    this.sel.primary = 'point';
     this.invalidate();
   }
   pruneSelection() {
     const ids = new Set(this.doc.style.pieces.map(p => p.id));
     this.sel.pieces = this.sel.pieces.filter(id => ids.has(id));
     this.sel.anchors = this.sel.anchors.filter(r => ids.has(r.pieceId) && !!this.resolveRef(r));
+    const pc = (id: Id) => this.doc.style.pieces.find(p => p.id === id);
+    this.sel.segments = this.sel.segments.filter(g => {
+      const p = pc(g.pieceId); const c = p && contourById(p, g.contourId);
+      return !!c && [g.from, g.to].every(id => c.points.some(a => a.id === id && a.kind === 'grade'));
+    });
+    this.sel.internals = this.sel.internals.filter(g => { const p = pc(g.pieceId); return !!p && p.internals.some(c => c.id === g.contourId); });
+    this.sel.notches = this.sel.notches.filter(g => !!pc(g.pieceId)?.notches.some(n => n.id === g.notchId));
+    this.sel.marks = this.sel.marks.filter(g => { const p = pc(g.pieceId); return !!p && (g.kind === 'drill' ? p.drills : p.texts).some(d => d.id === g.id); });
     if (this.liveSel) {
       const l = this.liveSel, p = this.doc.style.pieces.find(x => x.id === l.pieceId);
       const ok = !!p && (l.kind === 'dart' ? p.darts : l.kind === 'pleat' ? p.pleats : p.fullness ?? []).some((o: { id: Id }) => o.id === l.id);
@@ -143,6 +201,69 @@ export class App {
     const sizes = this.sizeLine().sizes.map(s => s.id);
     if (!sizes.includes(this.activeSize)) this.activeSize = this.baseSize();
   }
+
+  /** Is this object currently selected? */
+  isSelected(it: SelItem): boolean {
+    const s = this.sel;
+    switch (it.k) {
+      case 'piece': return s.pieces.includes(it.pieceId) && !this.hasSubSelection(it.pieceId);
+      case 'point': return s.anchors.some(a => a.anchorId === it.ref.anchorId);
+      case 'segment': return s.segments.some(g => g.contourId === it.seg.contourId && g.from === it.seg.from && g.to === it.seg.to);
+      case 'internal': return s.internals.some(g => g.contourId === it.c.contourId);
+      case 'notch': return s.notches.some(g => g.notchId === it.n.notchId);
+      case 'mark': return s.marks.some(g => g.id === it.m.id && g.kind === it.m.kind);
+      case 'live': return this.liveSel?.id === it.live.id;
+    }
+  }
+  /** Any sub-object (point / segment / internal / notch / mark / live) selected (optionally on one piece)? */
+  hasSubSelection(pieceId?: Id): boolean {
+    const s = this.sel; const on = (p: Id) => !pieceId || p === pieceId;
+    return s.anchors.some(a => on(a.pieceId)) || s.segments.some(a => on(a.pieceId)) || s.internals.some(a => on(a.pieceId)) ||
+      s.notches.some(a => on(a.pieceId)) || s.marks.some(a => on(a.pieceId)) || (!!this.liveSel && on(this.liveSel.pieceId));
+  }
+  selCount(): number {
+    const s = this.sel;
+    const sub = s.anchors.length + s.segments.length + s.internals.length + s.notches.length + s.marks.length + (this.currentLive() ? 1 : 0);
+    return sub || s.pieces.length;
+  }
+  clearSelection() { this.sel = emptySelection(); this.liveSel = null; this.invalidate(); }
+  /** Click semantics: replace (plain click), add (Shift), toggle (Ctrl), remove. */
+  applySel(it: SelItem, mode: 'replace' | 'add' | 'toggle' | 'remove' = 'replace') {
+    const has = this.isSelected(it);
+    if (mode === 'toggle') mode = has ? 'remove' : 'add';
+    if (mode === 'replace') { this.sel = emptySelection(); this.liveSel = null; }
+    if (mode === 'add' && has) { this.sel.primary = it.k; this.invalidate(); return; }
+    const s = this.sel, pid = selItemPiece(it);
+    if (mode === 'remove') {
+      switch (it.k) {
+        case 'piece': s.pieces = s.pieces.filter(x => x !== it.pieceId); break;
+        case 'point': s.anchors = s.anchors.filter(a => a.anchorId !== it.ref.anchorId); break;
+        case 'segment': s.segments = s.segments.filter(g => !(g.contourId === it.seg.contourId && g.from === it.seg.from && g.to === it.seg.to)); break;
+        case 'internal': s.internals = s.internals.filter(g => g.contourId !== it.c.contourId); break;
+        case 'notch': s.notches = s.notches.filter(g => g.notchId !== it.n.notchId); break;
+        case 'mark': s.marks = s.marks.filter(g => !(g.id === it.m.id && g.kind === it.m.kind)); break;
+        case 'live': this.liveSel = null; break;
+      }
+      // a piece that is only context for removed sub-objects drops out with its last sub-object
+      if (it.k !== 'piece' && !this.hasSubSelection(pid)) s.pieces = s.pieces.filter(x => x !== pid);
+      this.invalidate(); return;
+    }
+    switch (it.k) {
+      case 'piece': break;
+      case 'point': s.anchors.push(it.ref); break;
+      case 'segment': s.segments.push(it.seg); break;
+      case 'internal': s.internals.push(it.c); break;
+      case 'notch': s.notches.push(it.n); break;
+      case 'mark': s.marks.push(it.m); break;
+      case 'live': this.liveSel = it.live; break;
+    }
+    if (!s.pieces.includes(pid)) s.pieces.push(pid);
+    s.primary = it.k;
+    this.invalidate();
+  }
+  /** Snapshot / restore (Move tools: Backspace = undo the last pick). */
+  snapshotSel(): { sel: Selection; live: LiveRef | null } { return { sel: JSON.parse(JSON.stringify(this.sel)) as Selection, live: this.liveSel }; }
+  restoreSel(s: { sel: Selection; live: LiveRef | null }) { this.sel = s.sel; this.liveSel = s.live; this.pruneSelection(); this.invalidate(); }
 
   // ───── previews (drag without undo spam) ─────
   beginPreview(id: Id): Piece {

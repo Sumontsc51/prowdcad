@@ -37,6 +37,12 @@ export function segmentFrom(app: App, pieceId: Id, contourId: Id, anchorId: Id):
  * one selected grade anchor → its grade segment. Null otherwise.
  */
 export function selectedRun(app: App): Run | null {
+  const segs = app.sel.segments;
+  if (segs.length && (app.sel.primary === 'segment' || app.sel.anchors.length === 0)) {
+    const g = segs[segs.length - 1];
+    const p = app.doc.style.pieces.find(x => x.id === g.pieceId);
+    if (p) return { pieceId: g.pieceId, contourId: g.contourId, from: g.from, to: g.to, isSew: p.sew.id === g.contourId };
+  }
   const sel = app.sel.anchors;
   if (sel.length >= 2) {
     const [a, b] = sel.slice(-2);
@@ -63,6 +69,11 @@ export async function runOrPick(app: App, prompt = 'Click a segment', contour: '
 
 /** Pick an internal contour (or use the selected one). */
 export async function internalOrPick(app: App, prompt = 'Click an internal line'): Promise<{ piece: Piece; contour: Contour; w: { x: number; y: number } }> {
+  const si = app.sel.internals[app.sel.internals.length - 1];
+  if (si && (app.sel.primary === 'internal' || !app.sel.anchors.length)) {
+    const p = app.doc.style.pieces.find(x => x.id === si.pieceId); const c = p?.internals.find(x => x.id === si.contourId);
+    if (p && c) return { piece: p, contour: c, w: c.points[0] };
+  }
   const last = app.sel.anchors[app.sel.anchors.length - 1];
   if (last) {
     const p = app.doc.piece(last.pieceId); const c = p.internals.find(x => x.id === last.contourId);

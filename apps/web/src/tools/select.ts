@@ -1,264 +1,222 @@
 /**
- * Select / Edit tool (V).
- *  click anchor            select (Shift = add/toggle)          drag  move (base size) / grade (other size)
- *  Alt-click / dbl-click   toggle corner ⇄ smooth
- *  drag handle             reshape (linked/mirrored); Alt = break handle
- *  click piece             select (Shift = toggle)              drag  translate the piece (piece.layout)
- *  drag on empty sheet     marquee (anchors of visible pieces; Shift = add)
- *  Shift while dragging    constrain H / V / 45°
- * Drags edit a preview clone and commit ONE undo step on release (Esc cancels).
+ * Select tool (V): selection ONLY. It never moves or reshapes geometry (unless the opt-in
+ * preference "Allow drag-move in Select" is on: then a drag moves only what you grab).
+ *
+ *  click                    replace the selection with the object under the cursor
+ *  Shift+click              add          Ctrl+click   toggle
+ *  click empty sheet        clear (Esc clears too)
+ *  drag (anywhere)          box select: left → right = window (fully inside), right → left = crossing
+ *                           (touching). Shift+drag adds, Ctrl+drag toggles. "All" boxes points.
+ *  several objects here     Tab cycles through them (status bar lists them)
+ *  double-click a piece     select all its points
+ *  0 1 2 3 4 5              filter: All · Pieces · Points · Lines · Internals · Marks
+ *
+ * Selectable: grade / curve points, sew segments (grade point → grade point), internal lines,
+ * notches, drills / buttons / texts, darts / pleats / fullness, pieces.
  */
 import type { Vec } from '@prowdcad/kernel';
-import type { App } from '../app';
+import type { App, SelItem } from '../app';
+import { selItemKey } from '../app';
 import type { Tool, Ptr } from './tool';
 import { ICON } from './tool';
-import { constrain45, toLocal, toWorld, dirToLocal, resolveFor, contourById, layoutOf, setAbsGrade } from '../geometry';
-import { snapPoint } from '../canvas/snap';
+import { settings, saveSettings, type SelFilter } from '../settings';
+import { candidatesAt, gatherInBox, itemHighlight, FILTERS, type Cand } from '../selpick';
 import { DoubleClick } from '../ui/dom';
-import { ops, type AnchorRef } from '../ops-bridge';
-import { toast } from '../ui/toast';
-import { fmt, unitLabel } from '../units-ui';
 import { fs } from './common';
-import { settings } from '../settings';
-import { selectLive } from '../live';
+import { toast } from '../ui/toast';
+import { ops } from '../ops-bridge';
+import { previewWith, commitWith, curveTool, nudgeActive } from './move';
+import { constrain45, dirToLocal, toWorld, layoutOf } from '../geometry';
+import { snapPoint } from '../canvas/snap';
+import { fmt, unitLabel } from '../units-ui';
 
+type Mode = 'replace' | 'add' | 'toggle';
+interface Press { w: Vec; s: Vec; cands: Cand[]; mode: Mode; hit: Ptr['hit']; e: MouseEvent }
 type Drag =
-  | { type: 'anchors'; startW: Vec; grab: Vec; refs: AnchorRef[]; base: Map<string, Vec>; moved: boolean; sizeId: string; grade: boolean }
-  | { type: 'handle'; ref: AnchorRef; which: 'in' | 'out'; alt: boolean; moved: boolean }
-  | { type: 'piece'; startW: Vec; ids: string[]; base: Map<string, Vec>; moved: boolean }
-  | { type: 'marquee'; a: Vec; b: Vec; additive: boolean };
+  | { type: 'marquee'; a: Vec; b: Vec; as: Vec; bs: Vec; mode: Mode }
+  | { type: 'point'; item: Extract<SelItem, { k: 'point' }>; startW: Vec; grabW: Vec; sizeId?: string; err: string | null; dl: Vec | null }
+  | { type: 'piece'; id: string; startW: Vec; base: { x: number; y: number } }
+  | { type: 'handle' };
 
+let press: Press | null = null;
 let drag: Drag | null = null;
+let hover: Cand | null = null;
+let cycle: { s: Vec; cands: Cand[]; idx: number; mode: Mode } | null = null;
 const dbl = new DoubleClick();
 
-function toggleSmooth(app: App, ref: AnchorRef) {
-  const piece = app.doc.piece(ref.pieceId);
-  if (piece.locked) { toast('Piece is locked', 'warn'); return; }
-  app.doc.transact('Toggle corner/smooth', () => {
-    const c = contourById(piece, ref.contourId)!; const a = c.points.find(p => p.id === ref.anchorId)!;
-    if (a.smooth || a.hIn || a.hOut) { a.smooth = false; delete a.hIn; delete a.hOut; app.status('Anchor → corner'); }
-    else { a.smooth = true; app.status('Anchor → smooth'); }
-  });
+const modeOf = (e: MouseEvent | KeyboardEvent): Mode => (e.ctrlKey || e.metaKey ? 'toggle' : e.shiftKey ? 'add' : 'replace');
+const filterLabel = () => FILTERS.find(f => f.id === settings.selFilter)?.label ?? 'All';
+
+export function setSelFilter(app: App, f: SelFilter) {
+  settings.selFilter = f; saveSettings(); hover = null;
+  app.status(`Selection filter: ${filterLabel()}`); app.invalidate();
+}
+
+function describe(app: App): string {
+  const s = app.sel; const parts: string[] = [];
+  const n = (k: number, one: string, many = one + 's') => { if (k) parts.push(`${k} ${k === 1 ? one : many}`); };
+  n(s.anchors.length, 'point'); n(s.segments.length, 'segment'); n(s.internals.length, 'internal line'); n(s.notches.length, 'notch', 'notches'); n(s.marks.length, 'mark');
+  if (app.currentLive()) parts.push(app.currentLive()!.kind);
+  if (!parts.length && s.pieces.length) n(s.pieces.length, 'piece');
+  return parts.join(', ');
+}
+
+function clickSelect(app: App, pr: Press) {
+  const { cands, mode } = pr;
+  // double-click a piece interior = select all of its points
+  const top = cands[0];
+  if (top?.item.k === 'piece' && dbl.hit(pr.s.x, pr.s.y, 'pc:' + top.item.pieceId)) {
+    const p = app.doc.piece(top.item.pieceId);
+    app.sel = { pieces: [p.id], anchors: [p.sew, ...p.internals].flatMap(c => c.points.map(a => ({ pieceId: p.id, contourId: c.id, anchorId: a.id }))), primary: 'point' };
+    app.liveSel = null; app.invalidate();
+    app.status(`${app.sel.anchors.length} points of ${p.name} selected`);
+    return;
+  }
+  if (!top) {
+    cycle = null;
+    if (mode === 'replace') { app.clearSelection(); app.status(''); }
+    return;
+  }
+  app.applySel(top.item, mode);
+  cycle = cands.length > 1 ? { s: pr.s, cands, idx: 0, mode } : null;
+  app.status(cands.length > 1 ? `${cands.length} objects here: ${top.label} · Tab = next (${cands.slice(1, 4).map(c => c.label).join(' · ')}${cands.length > 4 ? ' …' : ''})` : top.label);
 }
 
 export const selectTool: Tool = {
-  id: 'select', title: 'Select / Edit', group: 'select', hotkey: 'V', icon: ICON.select, cursor: 'default',
-  deactivate(app) { if (drag) { drag = null; app.cancelPreview(); } },
+  id: 'select', title: 'Select', group: 'select', hotkey: 'V', icon: ICON.select, cursor: 'default',
+  deactivate(app) { if (drag && drag.type !== 'marquee') app.cancelPreview(); drag = null; press = null; hover = null; },
   busy: () => !!drag,
-  hint: () => (settings.proportionalDrag ? '[Proportional drag ON] ' : '') + 'Click/drag anchors & pieces · Shift add/constrain · Alt-click corner⇄smooth · Alt-drag handle = break · drag empty = marquee',
+  modes: () => FILTERS.map(f => ({ id: f.id, label: f.label, title: f.title })),
+  mode: () => settings.selFilter ?? 'all',
+  setMode(app, id) { setSelFilter(app, id as SelFilter); },
+  badge: () => settings.selectDragMove ? { text: 'Drag-move ON (moves only what you grab)', amber: true } : null,
+  hint(app) {
+    if (drag?.type === 'marquee') return drag.bs.x < drag.as.x ? 'Select · Crossing select (touching) · release to select' : 'Select · Window select (fully inside) · release to select';
+    const d = describe(app);
+    const f = filterLabel();
+    if (!d) return `Select · [${f}] · Click to select · Shift add · Ctrl toggle · drag = box (→ window, ← crossing) · 0–5 filter · G Move Point · Shift+G Move Line`;
+    return `Select · [${f}] · ${d} selected · G Move Point · Shift+G Move Line · Ctrl+Shift+G Piece · right-click = menu · Esc clear`;
+  },
 
   down(app, p) {
-    const e = p.e;
-    const h = p.hit;
-    if (h.kind === 'handle' && h.pieceId && h.anchorId) {
-      const ref = { pieceId: h.pieceId, contourId: h.contourId!, anchorId: h.anchorId };
-      if (app.doc.piece(ref.pieceId).locked) { toast('Piece is locked', 'warn'); return; }
-      drag = { type: 'handle', ref, which: h.which!, alt: e.altKey, moved: false };
-      return;
-    }
-    if (h.kind === 'anchor' && h.pieceId && h.anchorId) {
-      const ref: AnchorRef = { pieceId: h.pieceId, contourId: h.contourId!, anchorId: h.anchorId };
-      const piece = app.doc.piece(ref.pieceId);
-      const sizeId = h.sizeId ?? app.sizeOf(piece);
-      if (e.altKey) { toggleSmooth(app, ref); return; }
-      if (dbl.hit(p.s.x, p.s.y, 'a:' + ref.anchorId)) { toggleSmooth(app, ref); return; }
-      if (sizeId !== app.sizeOf(piece)) {
-        // nested-size anchor: drag grading of that size
-        app.selectAnchor(ref, false);
-      } else if (e.shiftKey) { app.selectAnchor(ref, true); if (!app.isAnchorSelected(ref)) return; }
-      else if (!app.isAnchorSelected(ref)) app.selectAnchor(ref, false);
-      const line = app.sizeLine();
-      const grade = sizeId !== line.baseSizeId;
-      const refs = grade ? [ref] : app.sel.anchors.slice();
-      const base = new Map<string, Vec>();
-      for (const r of refs) {
-        const rr = app.resolveRef(r); if (!rr) continue;
-        const res = resolveFor(app.doc, rr.piece, grade ? sizeId : line.baseSizeId);
-        const ci = rr.contour === rr.piece.sew ? -1 : rr.piece.internals.indexOf(rr.contour);
-        const pos = (ci < 0 ? res.sew : res.internals[ci]).anchorPos[rr.index];
-        base.set(r.anchorId, { ...pos });
-      }
-      const rr = app.resolveRef(ref)!;
-      const grabLocal = base.get(ref.anchorId)!;
-      drag = { type: 'anchors', startW: p.w, grab: toWorld(rr.piece, grabLocal), refs, base, moved: false, sizeId, grade };
-      app.status(grade ? `Grading ${line.sizes.find(s => s.id === sizeId)?.name}` : '');
-      return;
-    }
-    if (h.kind === 'live' && h.pieceId && h.liveKind && h.liveId) {
-      // dart / pleat / fullness: select the object (Inspector shows its section); no drag
-      selectLive(app, { kind: h.liveKind, pieceId: h.pieceId, id: h.liveId });
-      return;
-    }
-    if (h.kind === 'piece' && h.pieceId) {
-      dbl.reset();
-      if (e.shiftKey) { app.selectPiece(h.pieceId, true); if (!app.sel.pieces.includes(h.pieceId)) return; }
-      else if (!app.sel.pieces.includes(h.pieceId) || app.sel.anchors.length) { app.sel = { pieces: [h.pieceId], anchors: [] }; app.invalidate(); }
-      const ids = app.sel.pieces.filter(id => !app.doc.piece(id).locked);
-      const base = new Map(ids.map(id => { const L = layoutOf(app.doc.piece(id)); return [id, { x: L.x, y: L.y }]; }));
-      drag = { type: 'piece', startW: p.w, ids, base, moved: false };
-      return;
-    }
-    drag = { type: 'marquee', a: p.w, b: p.w, additive: e.shiftKey };
-    if (!e.shiftKey) { app.sel = { pieces: [], anchors: [] }; app.invalidate(); }
+    const e = p.e as MouseEvent;
+    hover = null;
+    // opt-in: drag a handle in Select (moves only that handle)
+    if (settings.selectDragMove && p.hit.kind === 'handle') { drag = { type: 'handle' }; curveTool.down!(app, p); return; }
+    press = { w: p.w, s: p.s, cands: candidatesAt(app, p.w), mode: modeOf(e), hit: p.hit, e };
   },
 
   move(app, p) {
-    if (!drag) return;
-    const e = p.e;
-    const thresh = 3 / app.view.scale;
-    if (drag.type === 'marquee') { drag.b = p.w; app.invalidate('canvas'); return; }
-    if (drag.type === 'piece') {
-      let d = { x: p.w.x - drag.startW.x, y: p.w.y - drag.startW.y };
-      if (!drag.moved && Math.hypot(d.x, d.y) < thresh) return;
-      drag.moved = true;
-      if (e.shiftKey) { const c = constrain45({ x: 0, y: 0 }, d); d = c; }
-      for (const id of drag.ids) {
-        const pc = app.beginPreview(id); const b = drag.base.get(id)!; const L = layoutOf(pc);
-        pc.layout = { x: b.x + d.x, y: b.y + d.y, angleDeg: L.angleDeg };
-      }
-      app.status(`Move ΔX ${fmt(d.x)} ΔY ${fmt(d.y)} ${unitLabel()}`);
-      app.invalidate('canvas'); return;
+    const e = p.e as MouseEvent;
+    if (drag?.type === 'handle') { curveTool.move!(app, p); return; }
+    if (drag?.type === 'marquee') { drag.b = p.w; drag.bs = p.s; app.invalidate('canvas', 'status'); return; }
+    if (drag?.type === 'point') {
+      let target = { x: drag.grabW.x + p.w.x - drag.startW.x, y: drag.grabW.y + p.w.y - drag.startW.y };
+      if (e.shiftKey) target = constrain45(drag.grabW, target);
+      else if (!e.altKey) target = snapPoint(app, target, { exclude: new Set([drag.item.ref.anchorId]) }).p;
+      const dW = { x: target.x - drag.grabW.x, y: target.y - drag.grabW.y };
+      const r = drag.item.ref; const sid = drag.sizeId;
+      const pc = app.doc.piece(r.pieceId); const dl = dirToLocal(pc, dW);
+      drag.dl = dl;
+      drag.err = previewWith(app, [r.pieceId], d => ops.movePoint(d, r.pieceId, r.anchorId, { dx: dl.x, dy: dl.y }, { sizeId: sid }));
+      app.status(`Move point (only this one) dX ${fmt(dl.x)} dY ${fmt(dl.y)} ${unitLabel()}${drag.err ? ' · ⚠ ' + drag.err : ''}`);
+      return;
     }
-    if (drag.type === 'anchors') {
-      let target = { x: drag.grab.x + p.w.x - drag.startW.x, y: drag.grab.y + p.w.y - drag.startW.y };
-      if (!drag.moved && Math.hypot(p.w.x - drag.startW.x, p.w.y - drag.startW.y) < thresh) return;
-      drag.moved = true;
-      if (e.shiftKey) target = constrain45(drag.grab, target);
-      else target = snapPoint(app, target, { exclude: new Set(drag.refs.map(r => r.anchorId)) }).p;
-      const dW = { x: target.x - drag.grab.x, y: target.y - drag.grab.y };
-      const line = app.sizeLine();
-      for (const r of drag.refs) {
-        const live = app.doc.piece(r.pieceId);
-        if (live.locked) continue;
-        const pc = app.beginPreview(r.pieceId);
-        const c = contourById(pc, r.contourId); const a = c?.points.find(q => q.id === r.anchorId);
-        if (!a || a.flags.locked) continue;
-        const dl = dirToLocal(pc, dW);
-        const b = drag.base.get(r.anchorId)!;
-        if (drag.grade) {
-          // live preview of grading: absolute offset for this size; committed via ops.dragGrade on release
-          setAbsGrade(a, line, drag.sizeId, { x: b.x + dl.x - a.x, y: b.y + dl.y - a.y });
-        } else { a.x = b.x + dl.x; a.y = b.y + dl.y; }
-      }
-      app.status(`${drag.grade ? 'Grade' : 'Move'} ΔX ${fmt(dW.x)} ΔY ${fmt(dW.y)} ${unitLabel()}`);
-      app.invalidate('canvas', 'panels'); return;
+    if (drag?.type === 'piece') {
+      const d = { x: p.w.x - drag.startW.x, y: p.w.y - drag.startW.y };
+      const dd = e.shiftKey ? constrain45({ x: 0, y: 0 }, d) : d;
+      const pc = app.beginPreview(drag.id); pc.layout = { ...layoutOf(pc), x: drag.base.x + dd.x, y: drag.base.y + dd.y };
+      app.status(`Move piece ΔX ${fmt(dd.x)} ΔY ${fmt(dd.y)} ${unitLabel()}`); app.invalidate('canvas'); return;
     }
-    if (drag.type === 'handle') {
-      drag.moved = true;
-      const dref = drag.ref;
-      const pc = app.beginPreview(dref.pieceId);
-      const c = contourById(pc, dref.contourId)!; const idx = c.points.findIndex(q => q.id === dref.anchorId);
-      const a = c.points[idx];
-      const res = resolveFor(app.doc, pc, app.sizeOf(pc));
-      const ci = c === pc.sew ? -1 : pc.internals.indexOf(c);
-      const rc = ci < 0 ? res.sew : res.internals[ci];
-      const anchorPos = rc.anchorPos[idx];
-      let hl = toLocal(pc, p.w);
-      if (e.shiftKey) hl = constrain45(anchorPos, hl);
-      const rel = { x: hl.x - anchorPos.x, y: hl.y - anchorPos.y };
-      const key = drag.which === 'in' ? 'hIn' : 'hOut';
-      const opp = drag.which === 'in' ? 'hOut' : 'hIn';
-      // materialise the opposite handle from its current resolved position so it doesn't jump
-      if (!a[opp]) { const hh = rc.handles[idx]; const op = drag.which === 'in' ? hh.hOut : hh.hIn; const v = { x: op.x - anchorPos.x, y: op.y - anchorPos.y }; if (Math.hypot(v.x, v.y) > 1e-6) a[opp] = v; }
-      a[key] = rel;
-      const broken = drag.alt || e.altKey;
-      if (!broken && a[opp]) {
-        const ol = Math.hypot(a[opp]!.x, a[opp]!.y) || 1, l = Math.hypot(rel.x, rel.y) || 1;
-        a[opp] = { x: -rel.x / l * ol, y: -rel.y / l * ol };
-        a.smooth = true;
+    if (press) {
+      if (Math.hypot(p.s.x - press.s.x, p.s.y - press.s.y) < 3) return;
+      const top = press.cands[0];
+      if (settings.selectDragMove && top && (top.item.k === 'point' || top.item.k === 'piece')) {
+        if (top.item.k === 'point') {
+          const r = top.item.ref; const pc = app.doc.piece(r.pieceId);
+          if (pc.locked) { toast(`${pc.name} is locked (Ctrl+L to unlock)`, 'warn'); press = null; return; }
+          const hs = press.hit.kind === 'anchor' && press.hit.anchorId === r.anchorId ? press.hit.sizeId : undefined;
+          const s = hs ?? app.sizeOf(pc); const sid = s === app.doc.baseSize(pc) ? undefined : s;
+          app.applySel(top.item, 'replace');
+          const pos = ops.pointPos(app.doc, r, sid ?? app.doc.baseSize(pc));
+          drag = { type: 'point', item: top.item, startW: press.w, grabW: toWorld(pc, pos), sizeId: sid, err: null, dl: null };
+        } else {
+          const pc = app.doc.piece(top.item.pieceId);
+          if (pc.locked) { toast(`${pc.name} is locked (Ctrl+L to unlock)`, 'warn'); press = null; return; }
+          app.applySel(top.item, 'replace');
+          const L = layoutOf(pc); drag = { type: 'piece', id: pc.id, startW: press.w, base: { x: L.x, y: L.y } };
+        }
+        press = null; selectTool.move!(app, p); return;
       }
-      a.smooth = !broken;
-      app.status(`Handle ${fmt(Math.hypot(rel.x, rel.y))} ${unitLabel()} @ ${(Math.atan2(rel.y, rel.x) * 180 / Math.PI).toFixed(1)}°${broken ? ' · broken' : ''}`);
-      app.invalidate('canvas', 'panels');
+      // Select never moves geometry: any drag is a box select
+      drag = { type: 'marquee', a: press.w, b: p.w, as: press.s, bs: p.s, mode: press.mode };
+      press = null; app.invalidate('canvas', 'status'); return;
     }
+    // hover pre-highlight of what a click would take
+    const c = candidatesAt(app, p.w)[0] ?? null;
+    const k = c ? selItemKey(c.item) : '', o = hover ? selItemKey(hover.item) : '';
+    if (k !== o) { hover = c; app.invalidate('canvas'); }
   },
 
-  up(app) {
+  up(app, p) {
     const d = drag; drag = null;
-    if (!d) return;
-    if (d.type === 'marquee') {
-      const minX = Math.min(d.a.x, d.b.x), maxX = Math.max(d.a.x, d.b.x), minY = Math.min(d.a.y, d.b.y), maxY = Math.max(d.a.y, d.b.y);
-      if ((maxX - minX) * app.view.scale < 3 && (maxY - minY) * app.view.scale < 3) { app.invalidate(); return; }
-      const refs: AnchorRef[] = d.additive ? app.sel.anchors.slice() : [];
-      const pieces = new Set(d.additive ? app.sel.pieces : []);
-      for (const pc of app.pieces()) {
-        if (app.hiddenPieces.has(pc.id)) continue;
-        const r = resolveFor(app.doc, pc, app.sizeOf(pc));
-        const cs = [pc.sew, ...pc.internals], rs = [r.sew, ...r.internals];
-        cs.forEach((c, ci) => c.points.forEach((a, ai) => {
-          const w = toWorld(pc, rs[ci].anchorPos[ai]);
-          if (w.x >= minX && w.x <= maxX && w.y >= minY && w.y <= maxY && !refs.some(x => x.anchorId === a.id)) {
-            refs.push({ pieceId: pc.id, contourId: c.id, anchorId: a.id }); pieces.add(pc.id);
-          }
-        }));
-      }
-      app.sel = { pieces: [...pieces], anchors: refs };
-      app.status(`${refs.length} point(s) selected`);
+    if (d?.type === 'handle') { curveTool.up!(app, p); return; }
+    if (d?.type === 'point') {
+      const dl = d.dl; const r = d.item.ref;
+      if (!dl || d.err) { app.cancelPreview(); return; }
+      commitWith(app, [r.pieceId], 'Move point', doc => ops.movePoint(doc, r.pieceId, r.anchorId, { dx: dl.x, dy: dl.y }, { sizeId: d.sizeId }));
+      return;
+    }
+    if (d?.type === 'piece') {
+      const pv = app.preview.get(d.id); app.preview.clear();
+      if (pv?.layout) { const L = pv.layout; const dx = L.x - d.base.x, dy = L.y - d.base.y; if (dx || dy) ops.transformPieceLayouts(app.doc, [d.id], { dx, dy }, 'Move piece'); }
       app.invalidate(); return;
     }
-    if (d.type === 'piece') { if (d.moved) app.commitPreview('Move piece'); return; }
-    if (d.type === 'handle') { if (d.moved) app.commitPreview('Edit handle'); return; }
-    if (d.type === 'anchors') {
-      if (!d.moved) { app.cancelPreview(); return; }
-      if (d.grade) {
-        // commit through the grading op (kernel) — preview is discarded first
-        const targets = d.refs.map(r => { const pc = app.preview.get(r.pieceId); const res = pc ? resolveFor(app.doc, pc, d.sizeId) : null; const c = pc ? contourById(pc, r.contourId) : null; const i = c ? c.points.findIndex(q => q.id === r.anchorId) : -1; const ci = pc && c ? (c === pc.sew ? -1 : pc.internals.indexOf(c)) : -1; return res && i >= 0 ? { r, t: (ci < 0 ? res.sew : res.internals[ci]).anchorPos[i] } : null; });
-        app.cancelPreview();
-        app.doc.transact('Drag grade', () => { for (const t of targets) if (t) ops.dragGrade(app.doc, t.r.pieceId, t.r.anchorId, d.sizeId, t.t); });
-        return;
-      }
-      if (settings.proportionalDrag && d.refs.length === 1) {
-        // Move Proportional: blend the run between the neighbouring grade points (kernel op)
-        const r0 = d.refs[0];
-        const pc = app.preview.get(r0.pieceId); const c = pc ? contourById(pc, r0.contourId) : null; const a = c?.points.find(q => q.id === r0.anchorId);
-        const b = d.base.get(r0.anchorId);
-        app.cancelPreview();
-        if (a && b) ops.moveProportional(app.doc, r0.pieceId, r0.anchorId, { x: a.x - b.x, y: a.y - b.y });
-        return;
-      }
-      app.commitPreview(d.refs.length > 1 ? 'Move points' : 'Move point');
+    if (d?.type === 'marquee') {
+      const box = { minX: Math.min(d.a.x, d.b.x), maxX: Math.max(d.a.x, d.b.x), minY: Math.min(d.a.y, d.b.y), maxY: Math.max(d.a.y, d.b.y) };
+      const crossing = d.bs.x < d.as.x;
+      const items = gatherInBox(app, box, crossing);
+      if (d.mode === 'replace') { app.sel = { pieces: [], anchors: [] }; app.liveSel = null; }
+      for (const it of items) app.applySel(it, d.mode === 'toggle' ? 'toggle' : 'add');
+      app.status(`${crossing ? 'Crossing' : 'Window'} select: ${items.length} ${filterLabel() === 'All' ? 'point(s)' : 'object(s)'} · ${describe(app) || 'nothing'} selected`);
+      app.invalidate(); return;
     }
+    const pr = press; press = null;
+    if (pr) clickSelect(app, pr);
   },
 
   key(app, e) {
-    if (e.key === 'Escape' && drag) { drag = null; app.cancelPreview(); return true; }
+    if (e.key === 'Escape' && (drag || press)) {
+      if (drag && drag.type !== 'marquee') app.cancelPreview();
+      drag = null; press = null; app.invalidate(); return true;
+    }
+    if (e.key === 'Tab' && cycle && !e.ctrlKey && !e.altKey) {
+      const c = cycle;
+      const cur = c.cands[c.idx];
+      c.idx = (c.idx + (e.shiftKey ? c.cands.length - 1 : 1)) % c.cands.length;
+      const next = c.cands[c.idx];
+      if (c.mode === 'replace') app.applySel(next.item, 'replace');
+      else { app.applySel(cur.item, 'remove'); app.applySel(next.item, 'add'); }
+      app.status(`${c.idx + 1}/${c.cands.length}: ${next.label} · Tab = next`);
+      return true;
+    }
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && /^Digit[0-5]$/.test(e.code)) {
+      const f = FILTERS.find(x => x.key === e.code.slice(5)); if (f) { setSelFilter(app, f.id); return true; }
+    }
     return false;
   },
 
   overlay(app) {
-    if (drag?.type !== 'marquee') return '';
-    const a = app.view.toScreen(drag.a), b = app.view.toScreen(drag.b);
-    return `<rect x="${fs(Math.min(a.x, b.x))}" y="${fs(Math.min(a.y, b.y))}" width="${fs(Math.abs(a.x - b.x))}" height="${fs(Math.abs(a.y - b.y))}" fill="rgba(78,161,255,0.08)" stroke="#4ea1ff" stroke-dasharray="4 3"/>`;
+    let out = '';
+    if (hover && !drag && !press && !app.isSelected(hover.item)) out += itemHighlight(app, hover.item, 0.5);
+    if (drag?.type === 'marquee') {
+      const a = app.view.toScreen(drag.a), b = app.view.toScreen(drag.b);
+      const crossing = drag.bs.x < drag.as.x;
+      out += `<rect x="${fs(Math.min(a.x, b.x))}" y="${fs(Math.min(a.y, b.y))}" width="${fs(Math.abs(a.x - b.x))}" height="${fs(Math.abs(a.y - b.y))}" fill="${crossing ? 'rgba(46,204,113,0.08)' : 'rgba(78,161,255,0.08)'}" stroke="${crossing ? '#27ae60' : '#4ea1ff'}"${crossing ? ' stroke-dasharray="5 3"' : ''}/>`;
+    }
+    return out;
   },
 };
 
-/** Nudge selected anchors (base size) or pieces by (dx,dy) mm. */
-export function nudge(app: App, dx: number, dy: number) {
-  if (app.sel.anchors.length) {
-    if (app.activeSize !== app.baseSize()) {
-      for (const r of app.sel.anchors) {
-        const q = app.resolveRef(r); if (!q) continue;
-        const rs = resolveFor(app.doc, q.piece, app.activeSize);
-        const qi = q.contour === q.piece.sew ? -1 : q.piece.internals.indexOf(q.contour);
-        const qp = (qi < 0 ? rs.sew : rs.internals[qi]).anchorPos[q.index];
-        const dl = dirToLocal(q.piece, { x: dx, y: dy });
-        ops.dragGrade(app.doc, r.pieceId, r.anchorId, app.activeSize, { x: qp.x + dl.x, y: qp.y + dl.y });
-      }
-      return;
-    }
-    app.doc.transact('Nudge points', () => {
-      for (const r of app.sel.anchors) {
-        const q = app.resolveRef(r); if (!q || q.piece.locked || q.anchor.flags.locked) continue;
-        const dl = dirToLocal(q.piece, { x: dx, y: dy });
-        q.anchor.x += dl.x; q.anchor.y += dl.y;
-      }
-    });
-  } else if (app.sel.pieces.length) {
-    app.doc.transact('Nudge piece', () => {
-      for (const id of app.sel.pieces) {
-        const pc = app.doc.piece(id); if (pc.locked) continue;
-        const L = layoutOf(pc); pc.layout = { x: L.x + dx, y: L.y + dy, angleDeg: L.angleDeg };
-      }
-    });
-  }
-}
+/** Arrow-key nudge: only Move tools move geometry (Select never does). */
+export function nudge(app: App, dx: number, dy: number) { nudgeActive(app, dx, dy); }

@@ -31,8 +31,9 @@ export function mountStatusbar(app: App, host: HTMLElement) {
   const zoom = h('button.sb-zoom', { title: 'Click: 100 % (true size) · Ctrl+0 fit' });
   zoom.onclick = () => { const v = app.view; v.zoomAt({ x: v.W / 2, y: v.H / 2 }, PX_PER_MM_100 / v.scale); app.invalidate('canvas', 'status'); };
   const msg = h('span.sb-msg');
+  const prompt = h('span.sb-prompt');
   const sel = h('span.sb-sel');
-  host.append(cursor, h('span.sb-sep'), h('label.sb-l', {}, 'Unit ', unitSel), h('label.sb-l', {}, 'Size ', sizeSel), zoom, h('span.sb-sep'), sel, msg);
+  host.append(cursor, h('span.sb-sep'), h('label.sb-l', {}, 'Unit ', unitSel), h('label.sb-l', {}, 'Size ', sizeSel), zoom, h('span.sb-sep'), sel, prompt, msg);
 
   const render = () => {
     const c = app.cursorWorld;
@@ -48,9 +49,14 @@ export function mountStatusbar(app: App, host: HTMLElement) {
     }
     sizeSel.value = app.activeSize;
     zoom.textContent = `${Math.round(app.view.scale / PX_PER_MM_100 * 100)}%`;
-    const np = app.sel.pieces.length, na = app.sel.anchors.length;
-    sel.textContent = np || na ? `${np} piece${np === 1 ? '' : 's'}${na ? ` · ${na} pt` : ''}` : '';
-    msg.textContent = app.statusMsg || app.tool?.hint?.(app) || '';
+    const S = app.sel; const np = S.pieces.length;
+    const subs = [[S.anchors.length, 'pt'], [S.segments.length, 'seg'], [S.internals.length, 'int'], [S.notches.length, 'notch'], [S.marks.length, 'mark']].filter(([n]) => n).map(([n, l]) => `${n} ${l}`);
+    sel.textContent = np || subs.length ? `${np} piece${np === 1 ? '' : 's'}${subs.length ? ' · ' + subs.join(' · ') : ''}` : '';
+    // step prompt of the active tool (always shown) + the last message
+    prompt.textContent = app.tool?.hint?.(app) || '';
+    const amber = app.tool?.badge?.(app)?.amber && app.tool.id !== 'select';
+    prompt.classList.toggle('amber', !!amber);
+    msg.textContent = app.statusMsg || '';
   };
   app.setRenderer('status', render);
   render();

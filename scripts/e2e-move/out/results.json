@@ -1,0 +1,384 @@
+{
+  "at": "2026-11-06T15:59:35.941Z",
+  "url": "http://localhost:5289/",
+  "total": 94,
+  "failed": 0,
+  "results": [
+    {
+      "id": "select.neverEdits · click grade point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · click segment",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · click piece interior",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · shift-click point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · ctrl-click point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · alt-click point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · double-click point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · double-click piece",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · drag from a point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · drag from a curve point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · drag from a piece interior",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · drag from a segment",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · drag BACK piece",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · window box",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · crossing box",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · click empty",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · arrow keys",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · digits / Tab",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · shift-drag point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · revision unchanged",
+      "ok": true
+    },
+    {
+      "id": "select.click selects the point",
+      "ok": true
+    },
+    {
+      "id": "select.click selects the segment",
+      "ok": true
+    },
+    {
+      "id": "select.window box selects points",
+      "ok": true
+    },
+    {
+      "id": "select.click empty clears",
+      "ok": true
+    },
+    {
+      "id": "select.prompt shown",
+      "ok": true
+    },
+    {
+      "id": "single.base · 5 points boxed",
+      "ok": true
+    },
+    {
+      "id": "single.base · tool = Move Point",
+      "ok": true
+    },
+    {
+      "id": "single.base · prompt",
+      "ok": true
+    },
+    {
+      "id": "single.base · exactly one anchor changed",
+      "ok": true
+    },
+    {
+      "id": "single.base · only x / y of that anchor changed",
+      "ok": true
+    },
+    {
+      "id": "single.base · selection kept (5 points)",
+      "ok": true
+    },
+    {
+      "id": "single.base · undo restores",
+      "ok": true
+    },
+    {
+      "id": "single.base · selection kept after undo",
+      "ok": true
+    },
+    {
+      "id": "single.base · click-click moves only B",
+      "ok": true
+    },
+    {
+      "id": "single.base · connection shown in prompt",
+      "ok": true
+    },
+    {
+      "id": "single.base · connected internal point follows H (only exception)",
+      "ok": true
+    },
+    {
+      "id": "single.graded · active L",
+      "ok": true
+    },
+    {
+      "id": "single.graded · amber badge",
+      "ok": true
+    },
+    {
+      "id": "single.graded · exactly one anchor changed",
+      "ok": true
+    },
+    {
+      "id": "single.graded · base x / y unchanged (grading only)",
+      "ok": true
+    },
+    {
+      "id": "single.graded · size S position unchanged",
+      "ok": true
+    },
+    {
+      "id": "single.graded · size M position unchanged",
+      "ok": true
+    },
+    {
+      "id": "single.graded · size XL position unchanged",
+      "ok": true
+    },
+    {
+      "id": "single.graded · size L moved by the drag",
+      "ok": true
+    },
+    {
+      "id": "smooth.base · prompt mentions tacks",
+      "ok": true
+    },
+    {
+      "id": "smooth.base · only C, D, E (between grade points B and F) changed",
+      "ok": true
+    },
+    {
+      "id": "smooth.graded · only points between the tacks changed",
+      "ok": true
+    },
+    {
+      "id": "smooth.graded · other sizes unchanged",
+      "ok": true
+    },
+    {
+      "id": "line.base · tool = Move Line",
+      "ok": true
+    },
+    {
+      "id": "line.base · only B..F changed",
+      "ok": true
+    },
+    {
+      "id": "line.base · same delta for every point",
+      "ok": true
+    },
+    {
+      "id": "line.base · segment stays selected",
+      "ok": true
+    },
+    {
+      "id": "line.internal · only the internal line moved",
+      "ok": true
+    },
+    {
+      "id": "persist · 2 points selected",
+      "ok": true
+    },
+    {
+      "id": "persist · after Copy grade",
+      "ok": true
+    },
+    {
+      "id": "persist · after a seam command",
+      "ok": true
+    },
+    {
+      "id": "persist · after undo",
+      "ok": true
+    },
+    {
+      "id": "persist · after redo",
+      "ok": true
+    },
+    {
+      "id": "persist · after size switch",
+      "ok": true
+    },
+    {
+      "id": "persist · after tool switches",
+      "ok": true
+    },
+    {
+      "id": "persist · segment after tool + size switch",
+      "ok": true
+    },
+    {
+      "id": "persist · Esc clears",
+      "ok": true
+    },
+    {
+      "id": "input · digit opens the input box",
+      "ok": true
+    },
+    {
+      "id": "input · dX = 1 1/8\" lands exactly (28.575 mm)",
+      "ok": true
+    },
+    {
+      "id": "input · dY = -2\" lands exactly (-50.8 mm)",
+      "ok": true
+    },
+    {
+      "id": "input · one anchor changed",
+      "ok": true
+    },
+    {
+      "id": "input · right-click opens the input box",
+      "ok": true
+    },
+    {
+      "id": "input · absolute X = 3 1/4\" (82.55 mm)",
+      "ok": true
+    },
+    {
+      "id": "input · absolute Y = 1/2\" (12.7 mm)",
+      "ok": true
+    },
+    {
+      "id": "input · box closed after OK",
+      "ok": true
+    },
+    {
+      "id": "input · \"12,5\" = dX 12, dY 5",
+      "ok": true
+    },
+    {
+      "id": "input · Enter repeats the last delta",
+      "ok": true
+    },
+    {
+      "id": "nudge · arrows in Select do nothing",
+      "ok": true
+    },
+    {
+      "id": "nudge · Move Point arrows move only B (1, 10)",
+      "ok": true
+    },
+    {
+      "id": "piece · flip H sets layout.flipX",
+      "ok": true
+    },
+    {
+      "id": "piece · flip keeps the authored geometry",
+      "ok": true
+    },
+    {
+      "id": "piece · drag moves the piece",
+      "ok": true
+    },
+    {
+      "id": "piece · one undo step",
+      "ok": true
+    },
+    {
+      "id": "modes · Esc idle → Select",
+      "ok": true
+    },
+    {
+      "id": "modes · selection kept on leaving the tool",
+      "ok": true
+    },
+    {
+      "id": "modes · prompt says Group",
+      "ok": true
+    },
+    {
+      "id": "group · only the 2 selected points moved",
+      "ok": true
+    },
+    {
+      "id": "along · only G changed position / grading",
+      "ok": true
+    },
+    {
+      "id": "horizontal · only X changed, only B",
+      "ok": true
+    },
+    {
+      "id": "curve · tool active",
+      "ok": true
+    },
+    {
+      "id": "curve · Shift+click changes only that point",
+      "ok": true
+    },
+    {
+      "id": "curve · handles shown",
+      "ok": true
+    },
+    {
+      "id": "curve · handle drag changes only that point",
+      "ok": true
+    },
+    {
+      "id": "prompt · select",
+      "ok": true
+    },
+    {
+      "id": "prompt · movePoint",
+      "ok": true
+    },
+    {
+      "id": "prompt · moveLine",
+      "ok": true
+    },
+    {
+      "id": "prompt · movePiece",
+      "ok": true
+    },
+    {
+      "id": "prompt · curve",
+      "ok": true
+    },
+    {
+      "id": "no page errors",
+      "ok": true
+    }
+  ]
+}

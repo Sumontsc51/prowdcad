@@ -54,6 +54,14 @@ export interface Tool {
   wheel?(app: App, e: WheelEvent): boolean;
   /** not shown in the palette (transient pick sessions) */
   hidden?: boolean;
+  /** arrow-key nudge (world mm); only Move tools implement it */
+  nudge?(app: App, dx: number, dy: number): void;
+  /** tool-options strip: mode buttons (segmented control) */
+  modes?(app: App): { id: string; label: string; title?: string }[];
+  mode?(app: App): string;
+  setMode?(app: App, id: string): void;
+  /** tool-mode indicator text (amber = editing a non-base size's grading) */
+  badge?(app: App): { text: string; amber?: boolean } | null;
 }
 
 export const ICON = {
@@ -78,5 +86,9 @@ export const ICON = {
   trace: '<path d="M4 18L9 6l6 4 5-4"/><circle cx="4" cy="18" r="1.4"/><circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="10" r="1.4"/>',
   pleat: '<path d="M4 4v16M10 4v16M14 4l-4 4M14 20l-4-4M14 4v16M20 4v16" />',
   fullness: '<path d="M4 20L12 4l8 16"/><path d="M12 4v16" stroke-dasharray="2 2"/><path d="M8 20h8"/>',
+  movePoint: '<rect x="3" y="15" width="6" height="6"/><path d="M6 15V6M6 6l-3 3M6 6l3 3"/><path d="M12 12h9M21 12l-3-3M21 12l-3 3"/>',
+  moveLine: '<path d="M3 18L13 8" stroke-dasharray="2 2" opacity=".55"/><path d="M9 21L19 11"/><path d="M14 4h6v6"/><path d="M20 4l-6 6"/>',
+  movePiece: '<path d="M5 6h9l3 5-3 7H5z"/><path d="M19 3a4 4 0 010 6" /><path d="M19 9l-2 0M19 9l0-2"/>',
+  curve: '<path d="M4 19C6 8 14 6 20 6"/><path d="M4 19l5-11"/><circle cx="9" cy="8" r="1.8"/><circle cx="4" cy="19" r="1.4"/>',
   pick: '<path d="M12 3v6M12 15v6M3 12h6M15 12h6"/><circle cx="12" cy="12" r="2"/>',
 };

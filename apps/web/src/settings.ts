@@ -16,6 +16,8 @@ export const store = {
   },
 };
 
+export type SelFilter = 'all' | 'points' | 'lines' | 'pieces' | 'internals' | 'marks';
+
 export interface Guide { axis: 'x' | 'y'; pos: number }
 
 export interface Settings {
@@ -44,8 +46,16 @@ export interface Settings {
   showRuleNames: boolean;
   /** reference blocks (dashed) */
   showReference: boolean;
-  /** Select tool: dragging a point blends the run to the neighbouring grade points (moveProportional) */
-  proportionalDrag: boolean;
+  /** Select tool: what a click / box can select */
+  selFilter: SelFilter;
+  /** Select tool opt-in: dragging moves ONLY the grabbed point / handle / piece (off = Select never moves geometry) */
+  selectDragMove: boolean;
+  /** pick radius around the cursor, screen px (4–20) */
+  pickRadiusPx: number;
+  /** Move Point tool mode (Single default) */
+  movePointMode: 'single' | 'smooth' | 'h' | 'v' | 'along' | 'group';
+  moveLineMode: 'translate' | 'parallel';
+  pieceToolMode: 'move' | 'rotate' | 'flip';
   /** last-used dialog values, keyed by dialog id */
   last: Record<string, Record<string, string | number | boolean>>;
 }
@@ -59,7 +69,8 @@ export const DEFAULT_SETTINGS: Settings = {
   gridMm: 10, nudgeMm: 1, polygonSides: 6, roundRadiusMm: 20,
   panels: { pieces: true, sizes: true, inspector: true, grading: false },
   guides: [],
-  showCutCorners: false, showRuleNames: false, showReference: true, proportionalDrag: false,
+  showCutCorners: false, showRuleNames: false, showReference: true,
+  selFilter: 'all', selectDragMove: false, pickRadiusPx: 8, movePointMode: 'single', moveLineMode: 'translate', pieceToolMode: 'move',
   last: {},
 };
 
@@ -69,7 +80,8 @@ function load(): Settings {
   if (!raw) return base;
   try {
     const s = JSON.parse(raw) as Partial<Settings>;
-    return { ...base, ...s, panels: { ...base.panels, ...(s.panels ?? {}) }, hotkeys: { ...(s.hotkeys ?? {}) }, last: { ...(s.last ?? {}) } };
+    // every session starts Move Point in Single (only the grabbed point moves)
+    return { ...base, ...s, movePointMode: 'single', panels: { ...base.panels, ...(s.panels ?? {}) }, hotkeys: { ...(s.hotkeys ?? {}) }, last: { ...(s.last ?? {}) } };
   } catch { return base; }
 }
 

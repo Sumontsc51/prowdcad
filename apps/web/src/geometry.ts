@@ -4,29 +4,25 @@
  */
 import {
   resolveContour, computeCutLine, absoluteOffset, absoluteToIncremental, incrementalToAbsolute,
-  pointInPolygon, closestPoint, bbox, boxUnion,
-  type Document, type Piece, type SizeId, type Vec, type Box, type ResolvedPiece, type Anchor, type SizeLine, type Contour,
+  pointInPolygon, closestPoint, bbox, boxUnion, layoutToWorld, layoutToLocal, layoutDirToWorld, layoutDirToLocal,
+  type Document, type Piece, type SizeId, type Vec, type Box, type ResolvedPiece, type PieceLayout, type Anchor, type SizeLine, type Contour,
 } from '@prowdcad/kernel';
 
-export interface Layout { x: number; y: number; angleDeg: number }
+export type Layout = PieceLayout;
 export const layoutOf = (p: Piece): Layout => p.layout ?? { x: 0, y: 0, angleDeg: 0 };
 
-export function toWorldL(L: Layout, v: Vec): Vec {
-  if (!L.angleDeg) return { x: v.x + L.x, y: v.y + L.y };
-  const r = L.angleDeg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
-  return { x: v.x * c - v.y * s + L.x, y: v.x * s + v.y * c + L.y };
+export const toWorldL = (L: Layout, v: Vec): Vec => layoutToWorld(L, v);
+export const toLocalL = (L: Layout, w: Vec): Vec => layoutToLocal(L, w);
+export const toWorld = (p: Piece, v: Vec) => layoutToWorld(layoutOf(p), v);
+export const toLocal = (p: Piece, w: Vec) => layoutToLocal(layoutOf(p), w);
+/** rotate (and mirror, for a flipped layout) a direction vector local → world (no translation) */
+export function dirToWorld(p: Piece, v: Vec): Vec { return layoutDirToWorld(layoutOf(p), v); }
+export function dirToLocal(p: Piece, v: Vec): Vec { return layoutDirToLocal(layoutOf(p), v); }
+/** SVG transform of a piece's layout (local → world, inside the world layer) */
+export function layoutSvg(L: Layout): string {
+  const f = (n: number) => (Math.round(n * 1000) / 1000).toString();
+  return `translate(${f(L.x)} ${f(L.y)})${L.angleDeg ? ` rotate(${f(L.angleDeg)})` : ''}${L.flipX || L.flipY ? ` scale(${L.flipX ? -1 : 1} ${L.flipY ? -1 : 1})` : ''}`;
 }
-export function toLocalL(L: Layout, w: Vec): Vec {
-  const x = w.x - L.x, y = w.y - L.y;
-  if (!L.angleDeg) return { x, y };
-  const r = -L.angleDeg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
-  return { x: x * c - y * s, y: x * s + y * c };
-}
-export const toWorld = (p: Piece, v: Vec) => toWorldL(layoutOf(p), v);
-export const toLocal = (p: Piece, w: Vec) => toLocalL(layoutOf(p), w);
-/** rotate a direction vector local → world (no translation) */
-export function dirToWorld(p: Piece, v: Vec): Vec { const L = layoutOf(p); return toWorldL({ x: 0, y: 0, angleDeg: L.angleDeg }, v); }
-export function dirToLocal(p: Piece, v: Vec): Vec { const L = layoutOf(p); return toLocalL({ x: 0, y: 0, angleDeg: L.angleDeg }, v); }
 
 /**
  * Resolve a piece for a size. Live pieces use the document cache; preview clones (during drags)

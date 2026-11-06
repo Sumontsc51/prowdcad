@@ -110,7 +110,6 @@ export function registerPointSeg(app: App) {
     const r = await rememberedDialog('point.moveProp', { title: 'Move proportional', message: 'Curve points between the neighbouring grade points blend with the move.', fields: [{ kind: 'length', key: 'dx', label: 'dX', value: 0 }, { kind: 'length', key: 'dy', label: 'dY', value: 0 }] });
     if (r) ops.moveProportional(app.doc, ref.pieceId, ref.anchorId, { x: r.dx as number, y: r.dy as number }, { sizeId: editSize(app, q.piece) });
   } });
-  registerCommand({ id: 'point.propDrag', title: 'Proportional drag (Select tool)', menu: 'Point', group: 2, hotkey: 'Alt+P', checked: () => settings.proportionalDrag, run: () => { settings.proportionalDrag = !settings.proportionalDrag; saveSettings(); app.status(`Proportional drag ${settings.proportionalDrag ? 'ON' : 'OFF'}`); } });
   registerCommand({ id: 'point.multiMove', title: 'Multi move…', menu: 'Point', group: 2, enabled: hasAnchor, run: async () => {
     const r = await rememberedDialog('point.multiMove', { title: `Multi move — ${app.sel.anchors.length} point(s)`, fields: [{ kind: 'length', key: 'dx', label: 'dX', value: 0 }, { kind: 'length', key: 'dy', label: 'dY', value: 0 }] });
     const pc = app.primaryPiece();
