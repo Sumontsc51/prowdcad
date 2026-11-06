@@ -93,6 +93,8 @@ async function writeFixtureFiles(h) {
       for (const c of list) {
         if (ONLY && !ONLY.test(c.id)) continue;
         const m = metaOf(c.id);
+        if (!m && !c.id.startsWith('tool:') && !(c.invoke && c.id.includes('#'))) { const r = { id: c.id, menu: '', title: c.title ?? c.id, kind, status: 'skip', msgs: [`command ${c.id.split('#')[0]} does not exist at ${results.rev}`], notes: [] }; results.cases.push(r); console.log('· ' + c.id + ' (not in registry)'); continue; }
+        if (c.tool && !(await h.ev(t => window.__e2e.app.tools.some(x => x.id === t), c.tool))) { results.cases.push({ id: c.id, menu: 'Tools', title: c.title ?? c.id, kind, status: 'skip', msgs: [`tool ${c.tool} does not exist at ${results.rev}`], notes: [] }); console.log('· ' + c.id + ' (tool missing)'); continue; }
         const r = await runCase(h, fixtures, { ...c, id: c.id.split('#')[0], caseId: c.id, invoke: c.invoke, kind }, m && { menu: m.menu, title: c.title ?? m.title });
         r.id = c.id;
         results.cases.push(r);
@@ -122,7 +124,7 @@ async function writeFixtureFiles(h) {
   const by = {};
   for (const r of results.cases) { const k = r.kind === 'tool' ? 'Tools' : (r.menu || '(hotkey only)').split('/')[0]; by[k] ??= { pass: 0, fail: 0, skip: 0 }; by[k][r.status]++; }
   results.summary = by;
-  fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify(results, null, 1));
+  fs.writeFileSync(path.join(OUT, process.env.E2E_OUT || 'results.json'), JSON.stringify(results, null, 1));
   console.log('\nSummary by menu:'); for (const [k, v] of Object.entries(by)) console.log(`  ${k.padEnd(16)} pass ${v.pass}  fail ${v.fail}  skip ${v.skip}`);
   if (results.uncovered?.length) console.log('Uncovered commands:', results.uncovered.join(', '));
   const nFail = results.cases.filter(r => r.status === 'fail').length;

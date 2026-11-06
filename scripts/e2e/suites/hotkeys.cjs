@@ -3,7 +3,7 @@
 const { toPlaywrightChord } = require('../lib/harness.cjs');
 
 // chords a browser keeps for itself (cannot be overridden by a web page in Chrome/Edge)
-const RESERVED = { 'Ctrl+Shift+N': 'new incognito window', 'Ctrl+Shift+I': 'DevTools (Chrome/Edge)', 'Ctrl+Shift+R': 'hard reload (may reach the page, browser-dependent)', 'Ctrl+1': 'switch to tab 1 (Chrome on Windows/Linux)', 'Ctrl+P': 'print (overridable)', 'Ctrl+Shift+E': '—' };
+const RESERVED = { 'Ctrl+Shift+N': 'new incognito/private window (browser-reserved, never reaches the page)', 'Ctrl+Shift+I': 'opens DevTools in Chrome/Edge', 'Ctrl+Shift+R': 'hard reload in Chrome/Edge/Firefox', 'Ctrl+1': 'switch to tab 1 (Chrome/Edge/Firefox)' };
 
 async function hotkeys(h, fixtures, registry) {
   const out = { tested: [], mismatches: [], unreachable: [], duplicates: [], reserved: [] };

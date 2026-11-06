@@ -11,7 +11,8 @@
     "typecheck": "npm -w packages/kernel run typecheck && npm -w apps/web run typecheck",
     "dev": "npm -w apps/web run dev",
     "build": "npm -w apps/web run build",
-    "build:single": "node scripts/build-single.mjs"
+    "build:single": "node scripts/build-single.mjs",
+    "e2e": "node scripts/e2e/run.cjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

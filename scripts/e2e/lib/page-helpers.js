@@ -97,8 +97,13 @@
     return pts[pts.length - 1];
   };
   E.idle = () => !document.querySelector('.dlg-overlay') && !document.querySelector('.popover') && app.tool?.id !== 'pick';
-  E.sel = () => JSON.parse(JSON.stringify({ pieces: app.sel.pieces.map(id => app.doc.style.pieces.find(p => p.id === id)?.name ?? id), anchors: app.sel.anchors.map(r => { const p = app.doc.style.pieces.find(x => x.id === r.pieceId); const a = p && [p.sew, ...p.internals].flatMap(c => c.points).find(x => x.id === r.anchorId); return (p?.name ?? '?') + '/' + (a?.name ?? r.anchorId); }), live: app.liveSel ? app.liveSel.kind : null }));
-  E.selRaw = () => JSON.parse(JSON.stringify({ pieces: app.sel.pieces, anchors: app.sel.anchors, live: app.liveSel }));
+  E.selOld = () => JSON.parse(JSON.stringify({ pieces: app.sel.pieces.map(id => app.doc.style.pieces.find(p => p.id === id)?.name ?? id), anchors: app.sel.anchors.map(r => { const p = app.doc.style.pieces.find(x => x.id === r.pieceId); const a = p && [p.sew, ...p.internals].flatMap(c => c.points).find(x => x.id === r.anchorId); return (p?.name ?? '?') + '/' + (a?.name ?? r.anchorId); }), live: app.liveSel ? app.liveSel.kind : null }));
+  E.selFull = () => { const s = app.sel; const nm = id => app.doc.style.pieces.find(p => p.id === id)?.name ?? id; const an = r => { const p = app.doc.style.pieces.find(x => x.id === r.pieceId); const a = p && [p.sew, ...p.internals].flatMap(c => c.points).find(x => x.id === r.anchorId); return (p?.name ?? '?') + '/' + (a?.name ?? r.anchorId); };
+    return { pieces: s.pieces.map(nm), anchors: s.anchors.map(an), segments: (s.segments || []).map(g => nm(g.pieceId) + ':' + an({ pieceId: g.pieceId, anchorId: g.from }).split('/')[1] + '→' + an({ pieceId: g.pieceId, anchorId: g.to }).split('/')[1]), internals: (s.internals || []).length, notches: (s.notches || []).length, marks: (s.marks || []).length, live: app.liveSel ? app.liveSel.kind : null }; };
+  /** world position of a point's resolved handle ('in' | 'out'), active size */
+  E.handleW = (pname, aname, which) => { const q = E.findA(pname, aname); const rc = E.resolved(q.p, q.c); const hh = rc.handles[q.i]; return G.toWorld(q.p, which === 'in' ? hh.hIn : hh.hOut); };
+  E.sel = () => { const f = E.selFull(); return f; };
+  E.selRaw = () => JSON.parse(JSON.stringify({ ...app.sel, live: app.liveSel }));
   E.segLen = (pname, fromName, toName, sid) => { const a = E.findA(pname, fromName), b = E.findA(pname, toName); return B.ops.measureSegment(app.doc, a.p.id, a.c.id, a.a.id, b.a.id, sid); };
   E.cutPerim = (pname, sid) => { const p = E.P(pname); const r = G.resolveFor(app.doc, p, sid ?? app.sizeOf(p)); let L = 0; const c = r.cut; for (let i = 0; i < c.length; i++) { const q = c[(i + 1) % c.length]; L += Math.hypot(q.x - c[i].x, q.y - c[i].y); } return L; };
   E.reset = (json) => {
