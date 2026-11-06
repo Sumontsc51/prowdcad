@@ -49,6 +49,8 @@ setCommandContext({ app });
 
 const canvas = new Canvas(app, document.getElementById('canvas')!);
 (app as App & { zoomFit?: () => void }).zoomFit = () => canvas.zoomFit();
+// Scripting / automation hook (training videos, e2e tests, console use)
+(window as unknown as { prowdcad: unknown }).prowdcad = { app, canvas };
 
 const renderPalette = mountPalette(app, document.getElementById('palette')!);
 renderPalette();

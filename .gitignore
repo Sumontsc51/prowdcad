@@ -8,3 +8,9 @@ Thumbs.db
 dist/
 node_modules/
 test/out/
+scripts/training/frames/
+scripts/training/*.mp4
+scripts/training/*.jpg
+scripts/training/*.png
+scripts/training/*.pdf
+scripts/training/style.json
