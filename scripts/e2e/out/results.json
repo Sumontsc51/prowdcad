@@ -1,0 +1,1733 @@
+{
+ "startedAt": "2026-11-06T15:52:48.211Z",
+ "url": "http://localhost:5199/",
+ "rev": "c457a31",
+ "cases": [
+  {
+   "id": "tool:slash",
+   "menu": "Tools",
+   "title": "slash: start OUTSIDE the piece (as the tool hint says), across, Enter",
+   "kind": "tool",
+   "status": "fail",
+   "msgs": [
+    "no document change",
+    "not slashed — hint says \"Slash: click the first point (on or outside the outline of a piece)\", first click outside → status \"Start on or inside a piece\""
+   ],
+   "notes": [],
+   "undoSteps": null,
+   "toasts": [],
+   "dialogs": [],
+   "statuses": [
+    "Start on or inside a piece"
+   ],
+   "selBefore": {
+    "pieces": [],
+    "anchors": [],
+    "live": null
+   },
+   "selAfter": {
+    "pieces": [],
+    "anchors": [],
+    "live": null
+   },
+   "ms": 624
+  },
+  {
+   "id": "tool:slash#outline",
+   "menu": "Tools",
+   "title": "slash: start ON the outline (CF), across, Enter",
+   "kind": "tool",
+   "status": "pass",
+   "msgs": [],
+   "notes": [],
+   "undoSteps": 1,
+   "toasts": [
+    {
+     "kind": "ok",
+     "text": "Slashed into FRONT_1 + FRONT_2"
+    }
+   ],
+   "dialogs": [
+    {
+     "title": "Slash FRONT",
+     "message": "",
+     "fields": [
+      {
+       "label": "New cut points",
+       "key": "grade",
+       "value": "auto"
+      },
+      {
+       "label": "Seam on new edges",
+       "key": "seam",
+       "value": "10"
+      }
+     ],
+     "buttons": [
+      "Cancel",
+      "OK"
+     ]
+    }
+   ],
+   "statuses": [],
+   "selBefore": {
+    "pieces": [],
+    "anchors": [],
+    "live": null
+   },
+   "selAfter": {
+    "pieces": [
+     "FRONT_1",
+     "FRONT_2"
+    ],
+    "anchors": [],
+    "live": null
+   },
+   "ms": 976
+  }
+ ],
+ "special": {},
+ "hotkeys": null,
+ "single": null,
+ "fixture": {
+  "uiErrors": [],
+  "pieces": [
+   "FRONT: 10 pts, 1 internals",
+   "BACK: 4 pts, 0 internals"
+  ]
+ },
+ "registry": [
+  {
+   "id": "tool.select",
+   "title": "Tool: Select / Edit",
+   "menu": "",
+   "hotkey": "V"
+  },
+  {
+   "id": "tool.pen",
+   "title": "Tool: Pen — new piece",
+   "menu": "",
+   "hotkey": "P"
+  },
+  {
+   "id": "tool.internal",
+   "title": "Tool: Internal line / polygon",
+   "menu": "",
+   "hotkey": "I"
+  },
+  {
+   "id": "tool.smooth",
+   "title": "Tool: Smooth run",
+   "menu": "",
+   "hotkey": "Shift+M"
+  },
+  {
+   "id": "tool.rect",
+   "title": "Tool: Rectangle",
+   "menu": "",
+   "hotkey": "R"
+  },
+  {
+   "id": "tool.circle",
+   "title": "Tool: Circle",
+   "menu": "",
+   "hotkey": "C"
+  },
+  {
+   "id": "tool.polygon",
+   "title": "Tool: Polygon",
+   "menu": "",
+   "hotkey": ""
+  },
+  {
+   "id": "tool.roundrect",
+   "title": "Tool: Rounded rectangle",
+   "menu": "",
+   "hotkey": ""
+  },
+  {
+   "id": "tool.seam",
+   "title": "Tool: Seam value",
+   "menu": "",
+   "hotkey": "S"
+  },
+  {
+   "id": "tool.notch",
+   "title": "Tool: Notch",
+   "menu": "",
+   "hotkey": "N"
+  },
+  {
+   "id": "tool.drill",
+   "title": "Tool: Drill / button",
+   "menu": "",
+   "hotkey": "D"
+  },
+  {
+   "id": "tool.text",
+   "title": "Tool: Text",
+   "menu": "",
+   "hotkey": "T"
+  },
+  {
+   "id": "tool.dart",
+   "title": "Tool: Dart",
+   "menu": "",
+   "hotkey": "Shift+D"
+  },
+  {
+   "id": "tool.pleat",
+   "title": "Tool: Pleat",
+   "menu": "",
+   "hotkey": "Shift+L"
+  },
+  {
+   "id": "tool.fullness",
+   "title": "Tool: Add fullness",
+   "menu": "",
+   "hotkey": "Shift+U"
+  },
+  {
+   "id": "tool.slash",
+   "title": "Tool: Slash (cut piece)",
+   "menu": "",
+   "hotkey": "K"
+  },
+  {
+   "id": "tool.trace",
+   "title": "Tool: Trace segments",
+   "menu": "",
+   "hotkey": "Shift+T"
+  },
+  {
+   "id": "tool.measure",
+   "title": "Tool: Measure",
+   "menu": "",
+   "hotkey": "M"
+  },
+  {
+   "id": "tool.walk",
+   "title": "Tool: Walk pieces",
+   "menu": "",
+   "hotkey": "W"
+  },
+  {
+   "id": "tool.hand",
+   "title": "Tool: Hand (pan)",
+   "menu": "",
+   "hotkey": "H"
+  },
+  {
+   "id": "tool.zoom",
+   "title": "Tool: Zoom",
+   "menu": "",
+   "hotkey": "Z"
+  },
+  {
+   "id": "tool.pick",
+   "title": "Tool: Pick",
+   "menu": "",
+   "hotkey": ""
+  },
+  {
+   "id": "file.new",
+   "title": "New…",
+   "menu": "File",
+   "hotkey": "Ctrl+Alt+N"
+  },
+  {
+   "id": "file.open",
+   "title": "Open…",
+   "menu": "File",
+   "hotkey": "Ctrl+O"
+  },
+  {
+   "id": "file.save",
+   "title": "Save",
+   "menu": "File",
+   "hotkey": "Ctrl+S"
+  },
+  {
+   "id": "file.saveAs",
+   "title": "Save As…",
+   "menu": "File",
+   "hotkey": "Ctrl+Shift+S"
+  },
+  {
+   "id": "file.import",
+   "title": "Import (DXF + RUL / SVG / PLT)…",
+   "menu": "File",
+   "hotkey": "Ctrl+Shift+I"
+  },
+  {
+   "id": "file.merge",
+   "title": "Merge from another style…",
+   "menu": "File",
+   "hotkey": ""
+  },
+  {
+   "id": "file.export.dxf",
+   "title": "DXF (AAMA / ASTM) + RUL…",
+   "menu": "File/Export",
+   "hotkey": "Ctrl+Shift+E"
+  },
+  {
+   "id": "file.export.svg",
+   "title": "SVG…",
+   "menu": "File/Export",
+   "hotkey": ""
+  },
+  {
+   "id": "file.export.pdf",
+   "title": "PDF (tiled 1:1)…",
+   "menu": "File/Export",
+   "hotkey": "Ctrl+P"
+  },
+  {
+   "id": "file.export.plt",
+   "title": "PLT (HPGL)…",
+   "menu": "File/Export",
+   "hotkey": ""
+  },
+  {
+   "id": "file.export.standalone",
+   "title": "Size as standalone style…",
+   "menu": "File/Export",
+   "hotkey": ""
+  },
+  {
+   "id": "file.preview",
+   "title": "Attach preview thumbnail",
+   "menu": "File",
+   "hotkey": ""
+  },
+  {
+   "id": "file.styleInfo",
+   "title": "Style properties…",
+   "menu": "File",
+   "hotkey": ""
+  },
+  {
+   "id": "edit.undo",
+   "title": "Undo",
+   "menu": "Edit",
+   "hotkey": "Ctrl+Z"
+  },
+  {
+   "id": "edit.redo",
+   "title": "Redo",
+   "menu": "Edit",
+   "hotkey": "Ctrl+Y,Ctrl+Shift+Z"
+  },
+  {
+   "id": "edit.delete",
+   "title": "Delete",
+   "menu": "Edit",
+   "hotkey": "Delete,Backspace"
+  },
+  {
+   "id": "edit.duplicate",
+   "title": "Duplicate piece",
+   "menu": "Edit",
+   "hotkey": "Ctrl+D"
+  },
+  {
+   "id": "edit.selectAll",
+   "title": "Select all pieces",
+   "menu": "Edit",
+   "hotkey": "Ctrl+A"
+  },
+  {
+   "id": "edit.selectAllPoints",
+   "title": "Select all points of piece",
+   "menu": "Edit",
+   "hotkey": "Ctrl+Shift+A"
+  },
+  {
+   "id": "edit.deselect",
+   "title": "Deselect",
+   "menu": "Edit",
+   "hotkey": "Escape"
+  },
+  {
+   "id": "edit.nudgeL",
+   "title": "Nudge left",
+   "menu": "",
+   "hotkey": "ArrowLeft"
+  },
+  {
+   "id": "edit.nudgeR",
+   "title": "Nudge right",
+   "menu": "",
+   "hotkey": "ArrowRight"
+  },
+  {
+   "id": "edit.nudgeU",
+   "title": "Nudge up",
+   "menu": "",
+   "hotkey": "ArrowUp"
+  },
+  {
+   "id": "edit.nudgeD",
+   "title": "Nudge down",
+   "menu": "",
+   "hotkey": "ArrowDown"
+  },
+  {
+   "id": "edit.nudgeL10",
+   "title": "Nudge left ×10",
+   "menu": "",
+   "hotkey": "Shift+ArrowLeft"
+  },
+  {
+   "id": "edit.nudgeR10",
+   "title": "Nudge right ×10",
+   "menu": "",
+   "hotkey": "Shift+ArrowRight"
+  },
+  {
+   "id": "edit.nudgeU10",
+   "title": "Nudge up ×10",
+   "menu": "",
+   "hotkey": "Shift+ArrowUp"
+  },
+  {
+   "id": "edit.nudgeD10",
+   "title": "Nudge down ×10",
+   "menu": "",
+   "hotkey": "Shift+ArrowDown"
+  },
+  {
+   "id": "edit.nudgeStep",
+   "title": "Nudge step…",
+   "menu": "Edit",
+   "hotkey": ""
+  },
+  {
+   "id": "edit.hotkeys",
+   "title": "Keyboard shortcuts…",
+   "menu": "Edit",
+   "hotkey": ""
+  },
+  {
+   "id": "edit.toolbar",
+   "title": "Customize toolbar…",
+   "menu": "Edit",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.tool",
+   "title": "Seam value tool",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.segment",
+   "title": "Seam of segment / run…",
+   "menu": "Seam",
+   "hotkey": "Alt+S"
+  },
+  {
+   "id": "seam.piece",
+   "title": "Whole-piece seam…",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.global",
+   "title": "Global seam (all pieces)…",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.corner",
+   "title": "Corner type…",
+   "menu": "Seam",
+   "hotkey": "Alt+K"
+  },
+  {
+   "id": "seam.trimCorner",
+   "title": "Manual seam angle (trim corner)",
+   "menu": "Seam",
+   "hotkey": "Shift+Alt+K"
+  },
+  {
+   "id": "seam.revertCorner",
+   "title": "Revert corner",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.lockGrading",
+   "title": "Lock grading (stamp base corners)",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.updateGrading",
+   "title": "Update seam grading",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.reseam",
+   "title": "Reseam piece",
+   "menu": "Seam",
+   "hotkey": "Ctrl+Alt+S"
+  },
+  {
+   "id": "seam.reseamAll",
+   "title": "Reseam all pieces",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.reseamSegment",
+   "title": "Reseam segment…",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.repair",
+   "title": "Repair seam parameters",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.toInternal",
+   "title": "Seam → internal",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.fromInternal",
+   "title": "Internal → seam…",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.cutAuto",
+   "title": "Manual cut → auto",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.deleteSegment",
+   "title": "Delete seam on segment / run",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.removePiece",
+   "title": "Remove seam (piece)",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.removeAll",
+   "title": "Remove seam (all pieces)…",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.noSeam",
+   "title": "No seam (cut = sew)",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.autoReseam",
+   "title": "Auto reseam on edit",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.showCut",
+   "title": "Show cut line",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "seam.showCorners",
+   "title": "Show cut-line corner indices",
+   "menu": "Seam",
+   "hotkey": ""
+  },
+  {
+   "id": "notch.tool",
+   "title": "Notch tool",
+   "menu": "Notch",
+   "hotkey": ""
+  },
+  {
+   "id": "notch.grid",
+   "title": "Notch grid editor",
+   "menu": "Notch",
+   "hotkey": "Ctrl+Shift+N"
+  },
+  {
+   "id": "notch.atPoint",
+   "title": "Notch on selected point(s)",
+   "menu": "Notch",
+   "hotkey": ""
+  },
+  {
+   "id": "notch.corner",
+   "title": "Corner notch…",
+   "menu": "Notch",
+   "hotkey": ""
+  },
+  {
+   "id": "notch.cross",
+   "title": "Cross notch (from internal end)…",
+   "menu": "Notch",
+   "hotkey": ""
+  },
+  {
+   "id": "notch.addPoints",
+   "title": "Add points for notches",
+   "menu": "Notch",
+   "hotkey": ""
+  },
+  {
+   "id": "notch.global",
+   "title": "Global notch grading…",
+   "menu": "Notch",
+   "hotkey": ""
+  },
+  {
+   "id": "notch.setup",
+   "title": "Notch setup (defaults)…",
+   "menu": "Notch",
+   "hotkey": ""
+  },
+  {
+   "id": "drill.tool",
+   "title": "Drill / button tool",
+   "menu": "Notch",
+   "hotkey": ""
+  },
+  {
+   "id": "drill.duplicate",
+   "title": "Duplicate drill with offset…",
+   "menu": "Notch",
+   "hotkey": ""
+  },
+  {
+   "id": "drill.multi",
+   "title": "Multi buttons (between two refs)…",
+   "menu": "Notch",
+   "hotkey": ""
+  },
+  {
+   "id": "drill.slit",
+   "title": "Slit contour segment…",
+   "menu": "Notch",
+   "hotkey": ""
+  },
+  {
+   "id": "text.tool",
+   "title": "Text tool",
+   "menu": "Notch",
+   "hotkey": ""
+  },
+  {
+   "id": "art.place",
+   "title": "Place artwork…",
+   "menu": "Notch",
+   "hotkey": ""
+  },
+  {
+   "id": "art.delete",
+   "title": "Delete artwork of piece",
+   "menu": "Notch",
+   "hotkey": ""
+  },
+  {
+   "id": "binding",
+   "title": "Binding generator…",
+   "menu": "Notch",
+   "hotkey": "Ctrl+Alt+B"
+  },
+  {
+   "id": "measure.tool",
+   "title": "Measure tool",
+   "menu": "Measure",
+   "hotkey": ""
+  },
+  {
+   "id": "measure.walk",
+   "title": "Walk tool",
+   "menu": "Measure",
+   "hotkey": ""
+  },
+  {
+   "id": "measure.piece",
+   "title": "Piece info",
+   "menu": "Measure",
+   "hotkey": "Ctrl+I"
+  },
+  {
+   "id": "measure.compare",
+   "title": "Compare length…",
+   "menu": "Measure",
+   "hotkey": "Ctrl+Shift+L"
+  },
+  {
+   "id": "measure.walkCheck",
+   "title": "Walking check…",
+   "menu": "Measure",
+   "hotkey": ""
+  },
+  {
+   "id": "measure.segLength",
+   "title": "Segment length per size…",
+   "menu": "Measure",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.scale",
+   "title": "Scale & shrink…",
+   "menu": "Piece",
+   "hotkey": ""
+  },
+  {
+   "id": "measure.notchReport",
+   "title": "Notches on segment…",
+   "menu": "Measure",
+   "hotkey": ""
+  },
+  {
+   "id": "point.toggleSmooth",
+   "title": "Corner ⇄ smooth",
+   "menu": "Point",
+   "hotkey": "Alt+C"
+  },
+  {
+   "id": "point.toggleKind",
+   "title": "Grade ⇄ curve point",
+   "menu": "Point",
+   "hotkey": "Alt+G"
+  },
+  {
+   "id": "point.breakHandle",
+   "title": "Break handles",
+   "menu": "Point",
+   "hotkey": ""
+  },
+  {
+   "id": "point.joinHandle",
+   "title": "Join handles",
+   "menu": "Point",
+   "hotkey": ""
+  },
+  {
+   "id": "point.resetHandles",
+   "title": "Reset handles (auto)",
+   "menu": "Point",
+   "hotkey": ""
+  },
+  {
+   "id": "point.lock",
+   "title": "Lock / unlock point",
+   "menu": "Point",
+   "hotkey": ""
+  },
+  {
+   "id": "point.startPoint",
+   "title": "Set as start point (#1)",
+   "menu": "Point",
+   "hotkey": ""
+  },
+  {
+   "id": "point.add",
+   "title": "Add point…",
+   "menu": "Point",
+   "hotkey": "Alt+A"
+  },
+  {
+   "id": "point.insertMid",
+   "title": "Insert point after (mid-span)",
+   "menu": "Point",
+   "hotkey": "Alt+I"
+  },
+  {
+   "id": "point.addAt",
+   "title": "Add point at click",
+   "menu": "Point",
+   "hotkey": "Shift+Alt+A"
+  },
+  {
+   "id": "point.moveXY",
+   "title": "Move point XY…",
+   "menu": "Point",
+   "hotkey": "Alt+M"
+  },
+  {
+   "id": "point.moveAlong",
+   "title": "Move along contour…",
+   "menu": "Point",
+   "hotkey": ""
+  },
+  {
+   "id": "point.moveProportional",
+   "title": "Move proportional (blend)…",
+   "menu": "Point",
+   "hotkey": ""
+  },
+  {
+   "id": "point.propDrag",
+   "title": "Proportional drag (Select tool)",
+   "menu": "Point",
+   "hotkey": "Alt+P"
+  },
+  {
+   "id": "point.multiMove",
+   "title": "Multi move…",
+   "menu": "Point",
+   "hotkey": ""
+  },
+  {
+   "id": "point.alignH",
+   "title": "Align horizontally (same Y as first)",
+   "menu": "Point",
+   "hotkey": "Shift+Alt+H"
+  },
+  {
+   "id": "point.alignV",
+   "title": "Align vertically (same X as first)",
+   "menu": "Point",
+   "hotkey": "Shift+Alt+V"
+  },
+  {
+   "id": "point.alignAngle",
+   "title": "Align at angle…",
+   "menu": "Point",
+   "hotkey": ""
+  },
+  {
+   "id": "point.setAngle",
+   "title": "Set corner angle…",
+   "menu": "Point",
+   "hotkey": ""
+  },
+  {
+   "id": "point.round",
+   "title": "Round corner…",
+   "menu": "Point",
+   "hotkey": ""
+  },
+  {
+   "id": "point.splineSupport",
+   "title": "Add spline support points…",
+   "menu": "Point",
+   "hotkey": ""
+  },
+  {
+   "id": "point.cleanup",
+   "title": "Points cleanup…",
+   "menu": "Point",
+   "hotkey": ""
+  },
+  {
+   "id": "point.delete",
+   "title": "Delete point(s)",
+   "menu": "Point",
+   "hotkey": ""
+  },
+  {
+   "id": "seg.length",
+   "title": "Segment length (set exact)…",
+   "menu": "Segment",
+   "hotkey": "Alt+L"
+  },
+  {
+   "id": "seg.copy",
+   "title": "Copy segment",
+   "menu": "Segment",
+   "hotkey": "Ctrl+Alt+Shift+C"
+  },
+  {
+   "id": "seg.paste",
+   "title": "Paste segment…",
+   "menu": "Segment",
+   "hotkey": "Ctrl+Alt+Shift+V"
+  },
+  {
+   "id": "seg.rotate",
+   "title": "Rotate segment (keep length)",
+   "menu": "Segment",
+   "hotkey": "Alt+O"
+  },
+  {
+   "id": "seg.swap",
+   "title": "Swap internal ⇄ perimeter",
+   "menu": "Segment",
+   "hotkey": ""
+  },
+  {
+   "id": "seg.divide",
+   "title": "Divide internal at point",
+   "menu": "Segment",
+   "hotkey": ""
+  },
+  {
+   "id": "seg.join",
+   "title": "Join two internals",
+   "menu": "Segment",
+   "hotkey": ""
+  },
+  {
+   "id": "seg.dashed",
+   "title": "Contour → dashed / solid",
+   "menu": "Segment",
+   "hotkey": ""
+  },
+  {
+   "id": "seg.trim",
+   "title": "Trim at intersections",
+   "menu": "Segment",
+   "hotkey": ""
+  },
+  {
+   "id": "seg.globalTrim",
+   "title": "Global check & trim internals",
+   "menu": "Segment",
+   "hotkey": ""
+  },
+  {
+   "id": "seg.globalJoin",
+   "title": "Global join internals",
+   "menu": "Segment",
+   "hotkey": ""
+  },
+  {
+   "id": "seg.extend",
+   "title": "Extend contour / internal…",
+   "menu": "Segment",
+   "hotkey": ""
+  },
+  {
+   "id": "seg.smooth",
+   "title": "Smooth tool",
+   "menu": "Segment",
+   "hotkey": ""
+  },
+  {
+   "id": "cut.slash",
+   "title": "Slash tool",
+   "menu": "Cut",
+   "hotkey": ""
+  },
+  {
+   "id": "cut.alongInternal",
+   "title": "Cut along internal…",
+   "menu": "Cut",
+   "hotkey": ""
+  },
+  {
+   "id": "cut.h",
+   "title": "Cut horizontal at point…",
+   "menu": "Cut",
+   "hotkey": ""
+  },
+  {
+   "id": "cut.v",
+   "title": "Cut vertical at point…",
+   "menu": "Cut",
+   "hotkey": ""
+  },
+  {
+   "id": "cut.parallel",
+   "title": "Cut parallel strip…",
+   "menu": "Cut",
+   "hotkey": ""
+  },
+  {
+   "id": "cut.guide",
+   "title": "Cut by guideline…",
+   "menu": "Cut",
+   "hotkey": ""
+  },
+  {
+   "id": "cut.parallelInternal",
+   "title": "Parallel internal line…",
+   "menu": "Cut",
+   "hotkey": "Alt+Shift+P"
+  },
+  {
+   "id": "cut.extendParallel",
+   "title": "Extend / shrink parallel…",
+   "menu": "Cut",
+   "hotkey": ""
+  },
+  {
+   "id": "shape.arc",
+   "title": "Arc…",
+   "menu": "Cut/Shapers",
+   "hotkey": ""
+  },
+  {
+   "id": "shape.wave",
+   "title": "Wave…",
+   "menu": "Cut/Shapers",
+   "hotkey": ""
+  },
+  {
+   "id": "shape.scallop",
+   "title": "Scallop / zigzag…",
+   "menu": "Cut/Shapers",
+   "hotkey": ""
+  },
+  {
+   "id": "shape.ruffle",
+   "title": "Ruffle strip…",
+   "menu": "Cut/Shapers",
+   "hotkey": ""
+  },
+  {
+   "id": "shape.circular",
+   "title": "Circular skirt…",
+   "menu": "Cut/Shapers",
+   "hotkey": ""
+  },
+  {
+   "id": "cut.trace",
+   "title": "Trace segments tool",
+   "menu": "Cut",
+   "hotkey": ""
+  },
+  {
+   "id": "cut.build",
+   "title": "Build piece from region",
+   "menu": "Cut",
+   "hotkey": "Alt+B"
+  },
+  {
+   "id": "cut.join",
+   "title": "Join pieces…",
+   "menu": "Cut",
+   "hotkey": "Alt+J"
+  },
+  {
+   "id": "cut.foldIn",
+   "title": "Fold in…",
+   "menu": "Cut",
+   "hotkey": ""
+  },
+  {
+   "id": "cut.foldOut",
+   "title": "Fold out (mirror internal)…",
+   "menu": "Cut",
+   "hotkey": ""
+  },
+  {
+   "id": "cut.halfSet",
+   "title": "Half piece: set mirror axis…",
+   "menu": "Cut/Half piece",
+   "hotkey": ""
+  },
+  {
+   "id": "cut.halfOpen",
+   "title": "Half piece: open",
+   "menu": "Cut/Half piece",
+   "hotkey": ""
+  },
+  {
+   "id": "cut.halfDelete",
+   "title": "Half piece: delete spec",
+   "menu": "Cut/Half piece",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.rename",
+   "title": "Rename…",
+   "menu": "Piece",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.lock",
+   "title": "Lock / unlock",
+   "menu": "Piece",
+   "hotkey": "Ctrl+L"
+  },
+  {
+   "id": "piece.rotate",
+   "title": "Rotate…",
+   "menu": "Piece",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.rotate90",
+   "title": "Rotate 90° CCW",
+   "menu": "Piece",
+   "hotkey": "Alt+R"
+  },
+  {
+   "id": "piece.resetLayout",
+   "title": "Reset position",
+   "menu": "Piece",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.saveLayout",
+   "title": "Save layout…",
+   "menu": "Piece/Layout",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.restoreLayout",
+   "title": "Restore layout…",
+   "menu": "Piece/Layout",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.grain",
+   "title": "Grain angle…",
+   "menu": "Piece/Grain",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.grainCenter",
+   "title": "Fix grain to centre (recenter)",
+   "menu": "Piece/Grain",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.grainParallel",
+   "title": "Grain parallel to segment",
+   "menu": "Piece/Grain",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.rotateToGrain",
+   "title": "Rotate piece to grain…",
+   "menu": "Piece/Grain",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.refSave",
+   "title": "Reference block: snapshot",
+   "menu": "Piece/Reference",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.refShow",
+   "title": "Show reference blocks",
+   "menu": "Piece/Reference",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.refRestore",
+   "title": "Restore from reference",
+   "menu": "Piece/Reference",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.refClear",
+   "title": "Clear reference",
+   "menu": "Piece/Reference",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.connCheck",
+   "title": "Point connections: global check",
+   "menu": "Piece/Connections",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.connClear",
+   "title": "Point connections: clear",
+   "menu": "Piece/Connections",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.saveAsNew",
+   "title": "Save active as new version",
+   "menu": "Piece/Versions",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.replaceOld",
+   "title": "Replace old with selected…",
+   "menu": "Piece/Versions",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.archive",
+   "title": "Archived versions…",
+   "menu": "Piece/Versions",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.merge",
+   "title": "Merge from another style…",
+   "menu": "Piece",
+   "hotkey": ""
+  },
+  {
+   "id": "piece.delete",
+   "title": "Delete piece",
+   "menu": "Piece",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.table",
+   "title": "Grading table",
+   "menu": "Grade",
+   "hotkey": "Ctrl+G"
+  },
+  {
+   "id": "grade.nested",
+   "title": "Nested view (all sizes)",
+   "menu": "Grade",
+   "hotkey": "Alt+N"
+  },
+  {
+   "id": "grade.absolute",
+   "title": "Show absolute values",
+   "menu": "Grade",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.tracking",
+   "title": "Point tracking (arrow keys)",
+   "menu": "Grade",
+   "hotkey": "Alt+T"
+  },
+  {
+   "id": "grade.ruleNames",
+   "title": "Show rule names",
+   "menu": "Grade",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.prevSize",
+   "title": "Previous size",
+   "menu": "Grade",
+   "hotkey": "Ctrl+["
+  },
+  {
+   "id": "grade.nextSize",
+   "title": "Next size",
+   "menu": "Grade",
+   "hotkey": "Ctrl+]"
+  },
+  {
+   "id": "grade.baseSize",
+   "title": "Go to base size",
+   "menu": "Grade",
+   "hotkey": "Ctrl+B"
+  },
+  {
+   "id": "grade.copy",
+   "title": "Copy grade",
+   "menu": "Grade/Clipboard",
+   "hotkey": "Ctrl+Alt+C"
+  },
+  {
+   "id": "grade.paste",
+   "title": "Paste grade",
+   "menu": "Grade/Clipboard",
+   "hotkey": "Ctrl+Alt+V"
+  },
+  {
+   "id": "grade.pasteX",
+   "title": "Paste X only",
+   "menu": "Grade/Clipboard",
+   "hotkey": "Ctrl+Alt+X"
+  },
+  {
+   "id": "grade.pasteY",
+   "title": "Paste Y only",
+   "menu": "Grade/Clipboard",
+   "hotkey": "Ctrl+Alt+Y"
+  },
+  {
+   "id": "grade.pasteFlipX",
+   "title": "Paste flipped X",
+   "menu": "Grade/Clipboard",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.pasteFlipY",
+   "title": "Paste flipped Y",
+   "menu": "Grade/Clipboard",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.smartPaste",
+   "title": "Smart paste (mirror-aware)",
+   "menu": "Grade/Clipboard",
+   "hotkey": "Ctrl+Alt+M"
+  },
+  {
+   "id": "grade.pasteAround",
+   "title": "Paste around (run / selection)…",
+   "menu": "Grade/Clipboard",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.flipX",
+   "title": "Flip X",
+   "menu": "Grade/Edit",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.flipY",
+   "title": "Flip Y",
+   "menu": "Grade/Edit",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.equalX",
+   "title": "Equal X",
+   "menu": "Grade/Edit",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.equalY",
+   "title": "Equal Y",
+   "menu": "Grade/Edit",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.deleteX",
+   "title": "Delete X",
+   "menu": "Grade/Edit",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.deleteY",
+   "title": "Delete Y",
+   "menu": "Grade/Edit",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.zero",
+   "title": "Delete all (zero grade)",
+   "menu": "Grade/Edit",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.stackPoint",
+   "title": "Stack nest at point",
+   "menu": "Grade/Edit",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.stackLine",
+   "title": "Stack along line…",
+   "menu": "Grade/Edit",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.angle",
+   "title": "Angle grading…",
+   "menu": "Grade/Edit",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.parallel",
+   "title": "Grade parallel…",
+   "menu": "Grade/Edit",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.proportional",
+   "title": "Grade proportionally…",
+   "menu": "Grade/Edit",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.rules",
+   "title": "Rule library…",
+   "menu": "Grade",
+   "hotkey": "Ctrl+Shift+R"
+  },
+  {
+   "id": "grade.applyRule",
+   "title": "Apply rule (number / name)…",
+   "menu": "Grade",
+   "hotkey": "Ctrl+R"
+  },
+  {
+   "id": "grade.detachRule",
+   "title": "Detach rule",
+   "menu": "Grade",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.movement",
+   "title": "Movement programs…",
+   "menu": "Grade",
+   "hotkey": ""
+  },
+  {
+   "id": "grade.nest",
+   "title": "Graded nest from pieces…",
+   "menu": "Grade",
+   "hotkey": ""
+  },
+  {
+   "id": "size.deleteUngraded",
+   "title": "Delete ungraded sizes",
+   "menu": "Grade/Sizes",
+   "hotkey": ""
+  },
+  {
+   "id": "size.deleteInvisible",
+   "title": "Delete invisible sizes",
+   "menu": "Grade/Sizes",
+   "hotkey": ""
+  },
+  {
+   "id": "size.axis2",
+   "title": "Variation table (axis 2)…",
+   "menu": "Grade/Sizes",
+   "hotkey": ""
+  },
+  {
+   "id": "dart.add",
+   "title": "Add dart at point…",
+   "menu": "Dart",
+   "hotkey": ""
+  },
+  {
+   "id": "dart.multi",
+   "title": "Multi darts…",
+   "menu": "Dart",
+   "hotkey": ""
+  },
+  {
+   "id": "dart.insert",
+   "title": "Insert dart (slash & spread)…",
+   "menu": "Dart",
+   "hotkey": ""
+  },
+  {
+   "id": "dart.toggle",
+   "title": "Close / reopen dart",
+   "menu": "Dart",
+   "hotkey": "Ctrl+Alt+D"
+  },
+  {
+   "id": "dart.reopenWidth",
+   "title": "Reopen dart at width…",
+   "menu": "Dart",
+   "hotkey": ""
+  },
+  {
+   "id": "dart.fix",
+   "title": "Fix dart (equal legs)",
+   "menu": "Dart",
+   "hotkey": ""
+  },
+  {
+   "id": "dart.cutting",
+   "title": "Cutting dart on / off",
+   "menu": "Dart",
+   "hotkey": ""
+  },
+  {
+   "id": "dart.change",
+   "title": "Change darts (flip fold, all)",
+   "menu": "Dart",
+   "hotkey": ""
+  },
+  {
+   "id": "dart.closeAll",
+   "title": "Close all darts of piece",
+   "menu": "Dart",
+   "hotkey": ""
+  },
+  {
+   "id": "dart.openAll",
+   "title": "Reopen all darts of piece",
+   "menu": "Dart",
+   "hotkey": ""
+  },
+  {
+   "id": "dart.cutAll",
+   "title": "Cut all darts",
+   "menu": "Dart",
+   "hotkey": ""
+  },
+  {
+   "id": "dart.transfer",
+   "title": "Pivot transfer…",
+   "menu": "Dart",
+   "hotkey": "Shift+Alt+T"
+  },
+  {
+   "id": "dart.rotateCenter",
+   "title": "Rotate around offset centre…",
+   "menu": "Dart",
+   "hotkey": ""
+  },
+  {
+   "id": "dart.copy",
+   "title": "Copy dart",
+   "menu": "Dart",
+   "hotkey": ""
+  },
+  {
+   "id": "dart.paste",
+   "title": "Paste dart…",
+   "menu": "Dart",
+   "hotkey": ""
+  },
+  {
+   "id": "dart.remove",
+   "title": "Remove dart…",
+   "menu": "Dart",
+   "hotkey": ""
+  },
+  {
+   "id": "pleat.axis",
+   "title": "Add pleat axis (attributes later)",
+   "menu": "Dart/Pleat",
+   "hotkey": ""
+  },
+  {
+   "id": "pleat.add",
+   "title": "Add pleat…",
+   "menu": "Dart/Pleat",
+   "hotkey": ""
+  },
+  {
+   "id": "pleat.byAngle",
+   "title": "Add pleat by angle…",
+   "menu": "Dart/Pleat",
+   "hotkey": ""
+  },
+  {
+   "id": "pleat.multi",
+   "title": "Multi pleat…",
+   "menu": "Dart/Pleat",
+   "hotkey": ""
+  },
+  {
+   "id": "pleat.open",
+   "title": "Open selected pleat",
+   "menu": "Dart/Pleat",
+   "hotkey": ""
+  },
+  {
+   "id": "pleat.close",
+   "title": "Close selected pleat",
+   "menu": "Dart/Pleat",
+   "hotkey": ""
+  },
+  {
+   "id": "pleat.openAll",
+   "title": "Open all pleats of piece",
+   "menu": "Dart/Pleat",
+   "hotkey": ""
+  },
+  {
+   "id": "pleat.closeAll",
+   "title": "Close all pleats of piece",
+   "menu": "Dart/Pleat",
+   "hotkey": ""
+  },
+  {
+   "id": "pleat.delete",
+   "title": "Delete pleat",
+   "menu": "Dart/Pleat",
+   "hotkey": ""
+  },
+  {
+   "id": "fullness.add",
+   "title": "Add fullness…",
+   "menu": "Dart/Fullness",
+   "hotkey": ""
+  },
+  {
+   "id": "fullness.multi",
+   "title": "Multi fullness…",
+   "menu": "Dart/Fullness",
+   "hotkey": ""
+  },
+  {
+   "id": "fullness.delete",
+   "title": "Delete fullness (exact restore)",
+   "menu": "Dart/Fullness",
+   "hotkey": ""
+  },
+  {
+   "id": "view.fit",
+   "title": "Zoom to fit",
+   "menu": "View",
+   "hotkey": "Ctrl+0,F"
+  },
+  {
+   "id": "view.fitSel",
+   "title": "Zoom to selection",
+   "menu": "View",
+   "hotkey": "Shift+F"
+  },
+  {
+   "id": "view.zoomIn",
+   "title": "Zoom in",
+   "menu": "View",
+   "hotkey": "Ctrl+=,Ctrl++,+,="
+  },
+  {
+   "id": "view.zoomOut",
+   "title": "Zoom out",
+   "menu": "View",
+   "hotkey": "Ctrl+-,-"
+  },
+  {
+   "id": "view.zoom100",
+   "title": "Actual size (100%)",
+   "menu": "View",
+   "hotkey": "Ctrl+1"
+  },
+  {
+   "id": "view.grid",
+   "title": "Grid",
+   "menu": "View",
+   "hotkey": "Ctrl+'"
+  },
+  {
+   "id": "view.rulers",
+   "title": "Rulers",
+   "menu": "View",
+   "hotkey": "Ctrl+Alt+R"
+  },
+  {
+   "id": "view.cut",
+   "title": "Cut line",
+   "menu": "View",
+   "hotkey": ""
+  },
+  {
+   "id": "view.anchors",
+   "title": "Points on unselected pieces",
+   "menu": "View",
+   "hotkey": ""
+  },
+  {
+   "id": "view.snapPoints",
+   "title": "Snap to points",
+   "menu": "View/Snap",
+   "hotkey": ""
+  },
+  {
+   "id": "view.snapGuides",
+   "title": "Snap to guides",
+   "menu": "View/Snap",
+   "hotkey": ""
+  },
+  {
+   "id": "view.snapGrid",
+   "title": "Snap to grid",
+   "menu": "View/Snap",
+   "hotkey": "Ctrl+Shift+'"
+  },
+  {
+   "id": "view.gridSize",
+   "title": "Grid size…",
+   "menu": "View/Snap",
+   "hotkey": ""
+  },
+  {
+   "id": "view.clearGuides",
+   "title": "Clear guides",
+   "menu": "View",
+   "hotkey": ""
+  },
+  {
+   "id": "view.addGuide",
+   "title": "Add guide…",
+   "menu": "View",
+   "hotkey": ""
+  },
+  {
+   "id": "view.panel.pieces",
+   "title": "Pieces panel",
+   "menu": "View",
+   "hotkey": "Ctrl+Alt+1"
+  },
+  {
+   "id": "view.panel.sizes",
+   "title": "Sizes panel",
+   "menu": "View",
+   "hotkey": "Ctrl+Alt+2"
+  },
+  {
+   "id": "view.panel.inspector",
+   "title": "Inspector",
+   "menu": "View",
+   "hotkey": "Ctrl+Alt+3"
+  },
+  {
+   "id": "view.unit.mm",
+   "title": "mm",
+   "menu": "View/Units",
+   "hotkey": ""
+  },
+  {
+   "id": "view.unit.cm",
+   "title": "cm",
+   "menu": "View/Units",
+   "hotkey": ""
+  },
+  {
+   "id": "view.unit.in",
+   "title": "inch (decimal)",
+   "menu": "View/Units",
+   "hotkey": ""
+  },
+  {
+   "id": "view.unit.in8",
+   "title": "inch 1/8",
+   "menu": "View/Units",
+   "hotkey": ""
+  },
+  {
+   "id": "view.unit.in16",
+   "title": "inch 1/16",
+   "menu": "View/Units",
+   "hotkey": ""
+  },
+  {
+   "id": "view.unit.in32",
+   "title": "inch 1/32",
+   "menu": "View/Units",
+   "hotkey": ""
+  },
+  {
+   "id": "help.keys",
+   "title": "Shortcuts",
+   "menu": "Help",
+   "hotkey": "F1"
+  },
+  {
+   "id": "help.ops",
+   "title": "Kernel ops status",
+   "menu": "Help",
+   "hotkey": ""
+  },
+  {
+   "id": "help.about",
+   "title": "About ProwdCAD",
+   "menu": "Help",
+   "hotkey": ""
+  }
+ ],
+ "pageErrors": [],
+ "navigations": [],
+ "secondClick": [],
+ "consoleErrors": [],
+ "finishedAt": "2026-11-06T15:52:55.162Z",
+ "summary": {
+  "Tools": {
+   "pass": 1,
+   "fail": 1,
+   "skip": 0
+  }
+ }
+}
