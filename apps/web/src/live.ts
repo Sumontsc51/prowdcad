@@ -6,7 +6,7 @@
  * from the graded axis ends + the open-state edge anchors, fullness from the slash / hinge anchors
  * of each record. Everything is piece-local; callers transform with toWorld.
  */
-import { absoluteOffset, closestPoint, type Piece, type SizeId, type Vec, type Id, type Pleat, type Fullness } from '@prowdcad/kernel';
+import { absoluteOffset, closestPoint, type Piece, type SizeId, type Vec, type Id, type Pleat, type PleatType, type Fullness } from '@prowdcad/kernel';
 import type { App } from './app';
 import { ops, type LiveContourPos } from './ops-bridge';
 import { resolveFor, toWorld, toLocal } from './geometry';
@@ -20,12 +20,14 @@ export interface DartShape {
   legA: Vec[]; legB: Vec[]; apex: Vec; mid: Vec; drill: Vec; width: number; depth: number; fold: 'A' | 'B';
 }
 export interface PleatShape {
-  kind: 'pleat'; id: Id; open: boolean; type: 'box' | 'knife';
+  kind: 'pleat'; id: Id; open: boolean; type: PleatType;
   axis: [Vec, Vec];
   /** open: fixed edge (start → end crossing), moving edge, fold lines and the inserted-fabric polygon */
   fixed?: [Vec, Vec]; moving?: [Vec, Vec]; folds: Vec[][]; shade?: Vec[];
   /** closed: short fold-direction ticks at the axis ends (length = depth) */
   ticks: Vec[][];
+  /** fold-direction arrows [from, to] (piece-local): knife = toward the fold side; box = away from the centre; inverted = toward the centre */
+  arrows: [Vec, Vec][];
 }
 export interface FullnessShape { kind: 'fullness'; id: Id; slashes: Vec[][]; wedges: Vec[][] }
 export type LiveShape = DartShape | PleatShape | FullnessShape;
@@ -58,14 +60,25 @@ export function liveShapes(app: App, piece: Piece, sid: SizeId): LiveShape[] {
   }
   for (const p of piece.pleats) {
     const A = gradedPt(p.axisStart, line, sid), B = gradedPt(p.axisEnd, line, sid);
-    const sh: PleatShape = { kind: 'pleat', id: p.id, open: p.open, type: p.type, axis: [A, B], folds: [], ticks: [] };
+    const sh: PleatShape = { kind: 'pleat', id: p.id, open: p.open, type: p.type, axis: [A, B], folds: [], ticks: [], arrows: [] };
     if (p.open && p.edges?.length === 2) {
       const f0 = at(p.edges[0].fixed), m0 = at(p.edges[0].moving), f1 = at(p.edges[1].fixed), m1 = at(p.edges[1].moving);
       if (f0 && m0 && f1 && m1) {
         sh.fixed = [f0, f1]; sh.moving = [m0, m1]; sh.shade = [f0, m0, m1, f1];
         // knife: one fold at the middle of the inserted fabric (depth out + depth back); box: folds at ¼ and ¾, centre at ½
-        const ts = p.type === 'box' ? [0.25, 0.5, 0.75] : [0.5];
+        const ts = p.type === 'knife' ? [0.5] : [0.25, 0.5, 0.75];
         for (const t of ts) sh.folds.push([lerp(f0, m0, t), lerp(f1, m1, t)]);
+        // arrows across the inserted fabric near the start crossing
+        const c0 = lerp(lerp(f0, m0, 0.5), lerp(f1, m1, 0.5), 0.12), half = mul(sub(m0, f0), 0.5);
+        const L = Math.hypot(half.x, half.y);
+        if (L > 1e-6) {
+          const v = mul(half, 1 / L), k = Math.max(4, Math.min(25, L * 0.9));
+          const side = p.fold === 'left' ? 1 : -1;
+          const fwdDir = (() => { const ax = nrm(sub(B, A)); return { x: -ax.y * side, y: ax.x * side }; })();
+          if (p.type === 'knife') sh.arrows.push([sub(c0, mul(fwdDir, k / 2)), add(c0, mul(fwdDir, k / 2))]);
+          else if (p.type === 'box') sh.arrows.push([c0, add(c0, mul(v, k))], [c0, sub(c0, mul(v, k))]);
+          else sh.arrows.push([add(c0, mul(v, k)), c0], [sub(c0, mul(v, k)), c0]);
+        }
       }
     } else {
       // fold direction ticks: perpendicular to the axis, toward the fold side, length = depth
@@ -73,6 +86,10 @@ export function liveShapes(app: App, piece: Piece, sid: SizeId): LiveShape[] {
       const side = p.fold === 'left' ? left : mul(left, -1);
       if (p.depthStart > 0) sh.ticks.push([A, add(A, mul(side, p.depthStart))]);
       if (p.depthEnd > 0) sh.ticks.push([B, add(B, mul(side, p.depthEnd))]);
+      const c0 = lerp(A, B, 0.15), k = Math.max(6, Math.min(25, Math.max(p.depthStart, p.depthEnd) * 1.2));
+      if (p.type === 'knife') sh.arrows.push([c0, add(c0, mul(side, k))]);
+      else if (p.type === 'box') sh.arrows.push([c0, add(c0, mul(left, k))], [c0, sub(c0, mul(left, k))]);
+      else sh.arrows.push([add(c0, mul(left, k)), c0], [sub(c0, mul(left, k)), c0]);
     }
     out.push(sh);
   }

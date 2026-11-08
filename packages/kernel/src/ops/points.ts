@@ -8,7 +8,8 @@
  * anchor for that size), keeping every other size's absolute position; without `sizeId` (or with the
  * base size) the base coordinates move and the grading is carried along (TUKA/Gerber "all sizes").
  */
-import type { Anchor, Contour, Id, Piece, SizeId, SizeLine, GradeInc } from '../model/types';
+import type { Anchor, Contour, Id, Piece, SizeId, SizeLine, GradeInc, NotchType } from '../model/types';
+import { makeNotch } from './notches';
 import type { Document } from '../model/doc';
 import { anchorPositions, absoluteOffset, absoluteToIncremental, incrementalToAbsolute } from '../model/contour';
 import { Vec, add, sub, mul, dist, norm, len, dot, cross, rotate, angleOf, perp, lerp } from '../geom/vec';
@@ -109,6 +110,79 @@ export function addPointOnSegment(doc: Document, pieceId: Id, segStartAnchorId: 
     if (s < sA - 1e-9 || s > sA + L + 1e-9) throw new Error('Point lies outside the segment');
     const i = splitAt(contour, line, s, { kind: o.kind ?? 'grade', grading: o.grading, piece, name: o.name });
     return contour.points[i].id;
+  });
+}
+
+// ───────────────────────── cut point (CLO Add Point / Divide Line) ─────────────────────────
+
+export interface CutPointsSpec {
+  /** distances (mm, base size) measured from the segment start ('start') or end ('end') */
+  distances?: number[];
+  from?: 'start' | 'end';
+  /** ratios 0..100 % of the segment length, measured from the start */
+  pcts?: number[];
+  /** divide the segment into N equal parts (inserts N − 1 points) */
+  divide?: number;
+}
+
+export interface CutPointsOptions extends CutPointsSpec {
+  kind?: 'grade' | 'curve';
+  /** grading of the new points: 'auto' = proportional (default) or 'zero' */
+  grading?: 'auto' | 'zero';
+  /** also add a notch on every new point (true = Notch Setup slit defaults) */
+  notch?: boolean | { type?: NotchType; depth?: number; width?: number };
+  name?: string;
+}
+
+/**
+ * Distances from the segment start (base mm) of the points a cut-point spec inserts on a segment of
+ * length L, sorted ascending; values outside [0, L] throw. Pure: the UI previews with it.
+ */
+export function cutPointDistances(L: number, o: CutPointsSpec): number[] {
+  let d: number[];
+  if (o.divide !== undefined) {
+    const n = Math.round(o.divide);
+    if (!(n >= 2)) throw new Error('Divide: at least 2 parts');
+    d = Array.from({ length: n - 1 }, (_, k) => (L * (k + 1)) / n);
+  } else if (o.pcts) d = o.pcts.map(p => (p / 100) * L);
+  else d = (o.distances ?? []).map(x => ((o.from ?? 'start') === 'start' ? x : L - x));
+  for (const x of d) if (!(x >= -1e-9 && x <= L + 1e-9)) throw new Error(`Point lies outside the segment (0 … ${Math.round(L * 1000) / 1000} mm)`);
+  return d.map(x => Math.max(0, Math.min(L, x))).sort((a, b) => a - b);
+}
+
+/**
+ * Cut Point: insert one or more points on the grade segment that LEAVES `segStartAnchorId` (sew or
+ * internal contour), at distances from either end, at ratios, or dividing it into N equal parts.
+ * The contour shape is unchanged (geometry-preserving split); new points grade proportionally
+ * ('auto', default) or not at all ('zero'). Optional notch on each point. One undo step.
+ * Returns the new anchor ids in segment order (an existing anchor at the position is reused).
+ */
+export function addPointsOnSegment(doc: Document, pieceId: Id, segStartAnchorId: Id, o: CutPointsOptions): Id[] {
+  return doc.transact('Cut point', () => {
+    const piece = piecesHas(doc, pieceId), line = doc.sizeLine(piece);
+    if (piece.locked) throw new Error('Piece is locked');
+    const { contour, index: ia } = findAnchorIn(piece, segStartAnchorId);
+    const r = resolveBase(contour, line);
+    let ib = nextGrade(contour, ia);
+    if (ib < 0) ib = contour.points.length - 1;
+    const sA = arcS(r, ia), L = spanLen(r, ia, ib);
+    const ds = cutPointDistances(L, o);
+    if (!ds.length) throw new Error('No point to add');
+    const ids: Id[] = [];
+    // geometry-preserving splits: the base arc positions stay valid after each insertion
+    for (const d of ds) {
+      const i = splitAt(contour, line, sA + d, { kind: o.kind ?? 'grade', grading: o.grading, piece, name: ds.length === 1 ? o.name : undefined });
+      const id = contour.points[i].id;
+      if (!ids.includes(id)) ids.push(id);
+    }
+    if (o.notch) {
+      const nt = typeof o.notch === 'object' ? o.notch : {};
+      for (const id of ids) {
+        if (piece.notches.some(n => n.contourId === contour.id && n.placement.kind === 'anchor' && n.placement.anchorId === id)) continue;
+        piece.notches.push(makeNotch(doc, piece, { contourId: contour.id, placement: { kind: 'anchor', anchorId: id }, type: nt.type, depth: nt.depth, width: nt.width }));
+      }
+    }
+    return ids;
   });
 }
 

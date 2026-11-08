@@ -261,6 +261,10 @@ table.fw-table td input { width: 80px; }
 .to-mode:last-child { border-radius: 0 4px 4px 0; }
 .to-mode:hover { border-color: var(--accent); position: relative; }
 .to-mode.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; position: relative; }
+.to-toggles { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; }
+.to-toggle { padding: 2px 8px; border: 1px solid var(--line2); border-radius: 4px; background: var(--panel); color: var(--text); }
+.to-toggle:hover { border-color: var(--accent); }
+.to-toggle.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .to-badge { font: 11px var(--mono); color: var(--dim); }
 .to-badge.amber { color: #1d1300; background: #e69500; padding: 2px 8px; border-radius: 3px; font-weight: 700; }
 .sb-prompt { color: var(--text); overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; min-width: 0; }

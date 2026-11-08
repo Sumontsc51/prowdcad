@@ -11,6 +11,7 @@ import { smoothTool, slashTool, traceTool } from './construct';
 import { pickTool } from './pick';
 import { dartTool, pleatTool, fullnessTool } from './live';
 import { movePointTool, moveLineTool, pieceTool, curveTool } from './move';
+import { cutPointTool } from './cutpoint';
 
 /** Palette order. Tools sharing `group` form one flyout button. */
 export const TOOLS: Tool[] = [
@@ -20,6 +21,7 @@ export const TOOLS: Tool[] = [
   rectTool, circleTool, polygonTool, roundRectTool,
   seamTool,
   notchTool, drillTool, textTool,
+  cutPointTool,
   dartTool, pleatTool, fullnessTool,
   slashTool, traceTool,
   measureTool, walkTool,
@@ -28,5 +30,5 @@ export const TOOLS: Tool[] = [
 ];
 
 export const GROUP_TITLES: Record<string, string> = {
-  select: 'Select', move: 'Move', pen: 'Pens', shape: 'Shapes', seam: 'Seam', marks: 'Notch / Drill / Text', live: 'Dart / Pleat / Fullness', cut: 'Cut / Trace', measure: 'Measure / Walk', view: 'Navigate',
+  select: 'Select', move: 'Move', pen: 'Pens', shape: 'Shapes', seam: 'Seam', marks: 'Notch / Drill / Text', cutpoint: 'Cut Point', live: 'Dart / Pleat', cut: 'Cut / Trace', measure: 'Measure / Walk', view: 'Navigate',
 };

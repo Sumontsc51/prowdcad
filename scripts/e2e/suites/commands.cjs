@@ -15,6 +15,13 @@ const PC = (p, add) => h => h.selectPiece(p, add);
 const PP = (...names) => async h => { for (let i = 0; i < names.length; i++) await h.selectPiece(names[i], i > 0); };
 const DLG = (fields = {}, more) => async h => { await h.waitDialog(); await h.fields(fields); await h.ok(); if (more) await more(h); };
 const OK = () => async h => { await h.waitDialog(); await h.ok(); };
+/** input box (Move tools, Cut Point, Dart / Pleat / Slash & spread): optional mode tab, field values by key, Enter */
+const IB = (vals = {}, mode) => async h => {
+  await h.page.waitForSelector('.ibox', { timeout: 3000 }); await h.page.waitForTimeout(40);
+  if (mode) { await h.page.locator('.ibox .ibox-mode', { hasText: mode }).first().click(); await h.page.waitForTimeout(30); }
+  for (const [k, v] of Object.entries(vals)) await h.page.locator(`.ibox input[data-key="${k}"]`).fill(String(v));
+  await h.page.locator('.ibox input').first().press('Enter'); await h.settle(60);
+};
 const seg = (p, a, b, t = 0.5) => h => h.clickSeg(p, a, b, t);
 const at = (p, n, mods) => h => h.clickA(p, n, { mods });
 const W = (x, y, mods) => h => h.clickW({ x, y }, { mods });
@@ -348,7 +355,10 @@ const cases = [
 
   // ═════════ Dart / Pleat / Fullness ═════════
   { id: 'dart.add', pre: P((app, ops, doc, E) => { const id = ops.addPointOnSegment(doc, E.P('FRONT').id, E.findA('FRONT', 'CF_HEM').a.id, { distance: 130, from: 'prev', kind: 'grade' }); doc.transact('pre', () => { E.findA('FRONT', id).a.name = 'HEM_MID'; }); }), sel: A('FRONT', 'HEM_MID'), drive: DLG({ w: '20', d: '90' }), expect: (h, c) => req(count(c.after, 'FRONT', 'darts') === 1, 'no dart') },
-  { id: 'dart.multi', sel: A('FRONT', 'CF_HEM'), drive: OK(), expect: (h, c) => req(count(c.after, 'FRONT', 'darts') === 2, 'expected 2 darts') },
+  { id: 'dart.multi', sel: A('FRONT', 'CF_HEM'), drive: IB({ n: '2' }), expect: (h, c) => req(count(c.after, 'FRONT', 'darts') === 2, 'expected 2 darts') },
+  { id: 'dart.multi#preview', title: 'Multi darts: live ghost before OK, then 3 darts', sel: A('FRONT', 'CF_HEM'), invoke: h => h.cmd('dart.multi'),
+    drive: async h => { await h.page.waitForSelector('.ibox'); await h.page.locator('.ibox input[data-key="n"]').fill('3'); await h.page.waitForTimeout(60); h._pv = await h.ev(() => { const E = window.__e2e; const pv = E.app.preview.get(E.P('FRONT').id); return pv ? pv.darts.length : 0; }); await h.page.locator('.ibox input').first().press('Enter'); await h.settle(60); },
+    expect: (h, c) => [req(h._pv === 3, 'no live ghost of 3 darts: ' + h._pv), req(count(c.after, 'FRONT', 'darts') === 3, 'expected 3 darts')] },
   { id: 'dart.insert', invoke: h => h.cmd('dart.insert'), drive: seq(h => h.clickLocal('FRONT', { x: 100, y: 0 }), h => h.key('Enter'), OK()), expect: (h, c) => req(count(c.after, 'FRONT', 'darts') === 1, 'no dart') },
   { id: 'dart.toggle', ...dartFixture, sel: selDart, expect: (h, c) => req(pc(c.after, 'FRONT').darts[0].closed === true, 'not closed') },
   { id: 'dart.toggle#pick', title: 'Close / reopen dart (no selection → pick)', ...dartFixture, invoke: h => h.cmd('dart.toggle'), drive: clickDart, expect: (h, c) => req(pc(c.after, 'FRONT').darts[0].closed === true, 'not closed') },
@@ -359,8 +369,11 @@ const cases = [
   { id: 'dart.closeAll', ...dartFixture, sel: PC('FRONT'), expect: (h, c) => req(pc(c.after, 'FRONT').darts.every(d => d.closed), 'not all closed') },
   { id: 'dart.openAll', ...dartFixture, pre: P((app, ops, doc, E) => ops.closeAllDarts(doc, E.P('FRONT').id)), sel: PC('FRONT'), expect: (h, c) => req(pc(c.after, 'FRONT').darts.every(d => !d.closed), 'not all open') },
   { id: 'dart.cutAll', ...dartFixture, sel: PC('FRONT'), drive: OK(), expect: (h, c) => req(pc(c.after, 'FRONT').darts[0].cutting === true, 'not cutting') },
-  { id: 'dart.transfer', ...dartFixture, sel: selDart, drive: seq(h => h.clickLocal('FRONT', { x: 120, y: 0 }), OK()) },
-  { id: 'dart.rotateCenter', ...dartFixture, sel: selDart, drive: seq(h => h.clickLocal('FRONT', { x: 120, y: 0 }), h => h.clickLocal('FRONT', { x: 170, y: 200 }), OK()) },
+  { id: 'dart.transfer', ...dartFixture, sel: selDart, drive: seq(h => h.clickLocal('FRONT', { x: 120, y: 0 }), IB({ pct: '100' })) },
+  { id: 'dart.transfer#half', title: 'Pivot transfer 50 % (live ghost; two darts)', ...dartFixture, sel: selDart, invoke: h => h.cmd('dart.transfer'), drive: seq(h => h.clickLocal('FRONT', { x: 120, y: 0 }), IB({ pct: '50' })), expect: (h, c) => req(count(c.after, 'FRONT', 'darts') === 2, 'expected 2 darts after 50 %') },
+  { id: 'dart.rotateCenter', ...dartFixture, sel: selDart, drive: seq(h => h.clickLocal('FRONT', { x: 120, y: 0 }), h => h.clickLocal('FRONT', { x: 170, y: 200 }), IB({ pct: '50' })) },
+  { id: 'dart.edit', ...dartFixture, sel: selDart, drive: DLG({ d: '90', drill: '10' }), expect: async (h, c) => { const d = pc(c.after, 'FRONT').darts[0]; const g = await h.ev(() => { const E = window.__e2e; const p = E.P('FRONT'); return E.ops.dartInfo(E.app.doc, p.id, p.darts[0].id); }); return [req(near(g.depth, 90, 1e-6), 'depth ' + g.depth), req(d.drillOffset === 10, 'drill ' + d.drillOffset)]; } },
+  { id: 'dart.flipFold', ...dartFixture, sel: selDart, expect: (h, c) => req(pc(c.after, 'FRONT').darts[0].fold !== pc(c.before, 'FRONT').darts[0].fold, 'fold not flipped') },
   { id: 'dart.copy', ...dartFixture, sel: selDart, change: false, expect: (h, c) => req(c.rec.toasts.some(t => /Dart copied/.test(t.text)), 'no toast') },
   { id: 'dart.paste', ...dartFixture, sel: async h => { await selDart(h); await h.cmd('dart.copy'); await h.waitIdle(); }, drive: seg('BACK', 'TL', 'BL', 0.5), expect: (h, c) => req(count(c.after, 'BACK', 'darts') === 1, 'no dart on BACK') },
   { id: 'dart.remove', ...dartFixture, sel: selDart, drive: OK(), expect: (h, c) => req(count(c.after, 'FRONT', 'darts') === 0, 'not removed') },
@@ -372,9 +385,12 @@ const cases = [
   { id: 'pleat.open', ...dartFixture, pre: P((app, ops, doc, E) => ops.closePleat(doc, E.P('BACK').id, E.P('BACK').pleats[0].id)), sel: selPleat },
   { id: 'pleat.closeAll', ...dartFixture, sel: PC('BACK') },
   { id: 'pleat.openAll', ...dartFixture, pre: P((app, ops, doc, E) => ops.closePleats(doc, E.P('BACK').id)), sel: PC('BACK') },
+  { id: 'pleat.edit', ...dartFixture, sel: selPleat, drive: DLG({ type: 'inverted', ds: '10', de: '10' }), expect: (h, c) => { const p = pc(c.after, 'BACK').pleats[0]; return [req(p.type === 'inverted', 'type ' + p.type), req(p.depthStart === 10 && p.open, 'depth / open ' + p.depthStart + ' ' + p.open)]; } },
   { id: 'pleat.delete', ...dartFixture, sel: selPleat, expect: (h, c) => req(count(c.after, 'BACK', 'pleats') === 0, 'not deleted') },
   { id: 'fullness.add', invoke: h => h.cmd('fullness.add'), drive: seq(h => h.clickLocal('BACK', { x: 470, y: 0 }), h => h.clickLocal('BACK', { x: 470, y: 600 }), OK()), expect: (h, c) => req(count(c.after, 'BACK', 'fullness') === 1, 'no fullness') },
   { id: 'fullness.multi', sel: A('BACK', 'BL'), drive: seq(h => h.clickLocal('BACK', { x: 530, y: 700 }), OK()), expect: (h, c) => req(count(c.after, 'BACK', 'fullness') === 1, 'no fullness') },
+  { id: 'fullness.edit', ...dartFixture, sel: selFull, drive: IB({ a: '45' }), expect: async h => { const o = await h.ev(() => { const E = window.__e2e; const p = E.P('BACK'); return E.ops.fullnessOpenings(E.app.doc, p.id, p.fullness[0].id); }); return req(near(o[0], 45, 1e-6), 'opening ' + o); } },
+  { id: 'point.cutTool', change: false, expect: async h => req((await h.ev(() => window.__e2e.app.tool.id)) === 'cutPoint', 'Cut Point tool not active') },
   { id: 'fullness.delete', ...dartFixture, sel: selFull, expect: (h, c) => req(count(c.after, 'BACK', 'fullness') === 0, 'not deleted') },
 
   // ═════════ View ═════════
@@ -394,4 +410,4 @@ const cases = [
   { id: 'help.about', change: false, drive: OK() },
 ];
 
-module.exports = { cases, pre, P, addInternal, YOKE, A, AA, PC, DLG, OK, W, seq, at, seg };
+module.exports = { IB, cases, pre, P, addInternal, YOKE, A, AA, PC, DLG, OK, W, seq, at, seg };

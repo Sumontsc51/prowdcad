@@ -55,7 +55,7 @@ import { lineIntersect } from '../geom/poly';
 import { newId } from '../model/factory';
 import {
   resolveBase, arcS, fwd, idx, pointAt, spanPoly, outwardSign, between, prevGrade, nextGrade, spanLen, xfRotate,
-  transformAnchor, jsonClone,
+  transformAnchor, jsonClone, gradeFromOffsets,
 } from '../geom/draft-geom';
 import {
   type LiveContourPos, liveRef, liveArcOf, liveSplit, liveUnsplit, liveAvgGrade, liveCopyAnchor, liveTransformRegion,
@@ -134,6 +134,42 @@ export function createDart(doc: Document, pieceId: Id, o: CreateDartOptions): Id
   return doc.transact('Create dart', () => { const { piece, line } = ctx(doc, pieceId); return dartCreateRaw(piece, line, o).id; });
 }
 
+export interface CreateDartByLegsOptions {
+  /** the two leg positions on the sew line (any order; the dart spans the shorter arc between them) */
+  a: LiveContourPos;
+  b: LiveContourPos;
+  /** explicit apex (base coords): Fix Dart is applied unless fix === false */
+  apex?: Vec;
+  /** apex on the inward bisector of the opening chord at this depth (when apex is absent) */
+  depth?: number;
+  fold?: 'A' | 'B';
+  drillOffset?: number;
+  fix?: boolean;
+  name?: string;
+}
+
+/** Centre arc position + arc width of the shorter arc between two sew positions. */
+export function dartLegSpan(piece: Piece, line: SizeLine, a: LiveContourPos, b: LiveContourPos): { centre: LiveContourPos; width: number } {
+  const c = piece.sew, r = resolveBase(c, line), L = r.cum[r.cum.length - 1] ?? 0;
+  const sa = liveArcOf(c, line, liveRef(a)), sb = liveArcOf(c, line, liveRef(b));
+  let s0 = sa, w = fwd(r, sa, sb);
+  if (c.closed && w > L / 2) { s0 = sb; w = L - w; }
+  if (!c.closed && w < 0) { s0 = sb; w = -w; }
+  if (!(w > 1e-6)) throw new Error('Dart: the two legs coincide');
+  let sc = s0 + w / 2; if (c.closed && L > 0) sc = ((sc % L) + L) % L;
+  const ref = liveRefAt(c, line, sc);
+  return { centre: { fromAnchorId: ref.fromAnchor, distance: ref.dist }, width: w };
+}
+
+/** CLO-style dart: click leg A, leg B on the sew line, then the apex (or a depth). One undo step. */
+export function createDartByLegs(doc: Document, pieceId: Id, o: CreateDartByLegsOptions): Id {
+  return doc.transact('Create dart', () => {
+    const { piece, line } = ctx(doc, pieceId);
+    const { centre, width } = dartLegSpan(piece, line, o.a, o.b);
+    return dartCreateRaw(piece, line, { at: centre, width, apex: o.apex, depth: o.depth, fold: o.fold, drillOffset: o.drillOffset, fix: o.fix, name: o.name }).id;
+  });
+}
+
 /** N equal darts, centres at L·k/(N+1) along the grade segment leaving `segStart`. */
 export function createMultiDarts(doc: Document, pieceId: Id, segStart: Id, o: { count: number; width: number; depth: number; fold?: 'A' | 'B'; drillOffset?: number }): Id[] {
   return doc.transact('Multi darts', () => {
@@ -182,14 +218,25 @@ export function fixDart(doc: Document, pieceId: Id, dartId: Id): number {
   return doc.transact('Fix dart', () => { const { piece, line } = ctx(doc, pieceId); return dartFixRaw(piece, line, dartOf(piece, dartId)); });
 }
 
-/** Move the apex (base, all sizes keep their grading) — forces Fix Dart. */
-export function moveDartApex(doc: Document, pieceId: Id, dartId: Id, to: Vec): void {
+/**
+ * Move the apex. Base size (default): the apex moves in every size (grading kept) and Fix Dart is
+ * forced unless `fix === false`. `sizeId` (non-base): only that size's apex grading changes (absolute
+ * position `to` in that size; the base and the other sizes keep their positions; no Fix Dart).
+ */
+export function moveDartApex(doc: Document, pieceId: Id, dartId: Id, to: Vec, o: { sizeId?: SizeId; fix?: boolean } = {}): void {
   doc.transact('Move dart apex', () => {
     const { piece, line } = ctx(doc, pieceId);
     const d = dartOf(piece, dartId);
+    if (o.sizeId && o.sizeId !== line.baseSizeId) {
+      const off: Record<SizeId, Vec> = {};
+      for (const sz of line.sizes) off[sz.id] = absoluteOffset(d.apex.grade, line, sz.id);
+      off[o.sizeId] = { x: to.x - d.apex.x, y: to.y - d.apex.y };
+      d.apex.grade = gradeFromOffsets(line, off);
+      return;
+    }
     d.apex.x = to.x; d.apex.y = to.y;
     if (d.closed && d.axisContourId) { const ax = piece.internals.find(c => c.id === d.axisContourId); if (ax) { ax.points[1].x = to.x; ax.points[1].y = to.y; } }
-    dartFixRaw(piece, line, d);
+    if (o.fix !== false) dartFixRaw(piece, line, d);
   });
 }
 

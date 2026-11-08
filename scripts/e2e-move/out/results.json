@@ -1,7 +1,7 @@
 {
-  "at": "2026-11-06T16:59:47.169Z",
+  "at": "2026-11-08T05:16:41.161Z",
   "url": "http://localhost:5289/",
-  "total": 103,
+  "total": 171,
   "failed": 0,
   "results": [
     {
@@ -410,6 +410,278 @@
     },
     {
       "id": "fixpass · pinned curve point C keeps every size when B moves",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · X selects the Cut Point tool",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · hover readout: start 60 · end 140 (Shift = round)",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · hover draws the split preview",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · click inserts one grade point at 60",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · every other anchor unchanged",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · one undo step",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · the new point is selected",
+      "ok": true
+    },
+    {
+      "id": "cutpoint.hoverClick · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "cutpoint.hoverClick · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · typed 50 from start → x = 50 exactly",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · 30 from the end → x = 170",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · 1 1/8\" from start → x = 428.575",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · ratio 25 % → x = 450",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · Notch option on",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · divide preview shows the 3 points before OK",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · divide 4 → y 75 / 150 / 225",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · a notch on every new point",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · divide = one undo step",
+      "ok": true
+    },
+    {
+      "id": "cutpoint.divide · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "cutpoint.divide · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · amber badge on a graded size",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · graded: midpoint at 100 (M), 105 (L), 110 (XL) — auto grading",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · Ctrl+click on an internal line adds a curve point",
+      "ok": true
+    },
+    {
+      "id": "dart · prompt asks for leg B",
+      "ok": true
+    },
+    {
+      "id": "dart · leg B hover shows the width (Shift = round)",
+      "ok": true
+    },
+    {
+      "id": "dart · apex step shows width / depth / legs ✓",
+      "ok": true
+    },
+    {
+      "id": "dart · live ghost before the click (document unchanged)",
+      "ok": true
+    },
+    {
+      "id": "dart · dart cap previewed on the cut line",
+      "ok": true
+    },
+    {
+      "id": "dart · created by clicks: width 40, depth 150 exact (Shift), legs equal",
+      "ok": true
+    },
+    {
+      "id": "dart · one undo step",
+      "ok": true
+    },
+    {
+      "id": "dart · selected after creation",
+      "ok": true
+    },
+    {
+      "id": "dart.clicks · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "dart.clicks · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "dart · typed width 30 / depth 120 exact",
+      "ok": true
+    },
+    {
+      "id": "dart · width 20 at 10° → depth 114.301",
+      "ok": true
+    },
+    {
+      "id": "dart · typed width 24 at the leg-B step",
+      "ok": true
+    },
+    {
+      "id": "dart · graded: created in the base (width 20 / depth 100 in M)",
+      "ok": true
+    },
+    {
+      "id": "dart · graded: legs follow the hem grading in L / XL",
+      "ok": true
+    },
+    {
+      "id": "dart · graded: apex grades with the opening (mean of the legs)",
+      "ok": true
+    },
+    {
+      "id": "dart · Inspector per-size table",
+      "ok": true
+    },
+    {
+      "id": "dart · Move Point drags the apex",
+      "ok": true
+    },
+    {
+      "id": "dart · Fix Dart keeps the legs equal after the drag",
+      "ok": true
+    },
+    {
+      "id": "dart · apex drag = one undo step",
+      "ok": true
+    },
+    {
+      "id": "dart.apexDrag · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "dart.apexDrag · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "dart · Multi darts shows a live ghost of 3 darts before OK",
+      "ok": true
+    },
+    {
+      "id": "dart · Multi darts created",
+      "ok": true
+    },
+    {
+      "id": "pleat · layout prompt: 3 knife · interval 40",
+      "ok": true
+    },
+    {
+      "id": "pleat · live ghost (3 open pleats) before the click",
+      "ok": true
+    },
+    {
+      "id": "pleat · fold-direction arrows drawn",
+      "ok": true
+    },
+    {
+      "id": "pleat · 3 pleats created and open",
+      "ok": true
+    },
+    {
+      "id": "pleat · BACK grows by 3 × 2 × 20 = 120",
+      "ok": true
+    },
+    {
+      "id": "pleat · auto notches",
+      "ok": true
+    },
+    {
+      "id": "pleat · one undo step",
+      "ok": true
+    },
+    {
+      "id": "pleat.count · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "pleat.count · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "pleat · 2 inverted box pleats, tapered 40 → 20 fabric each",
+      "ok": true
+    },
+    {
+      "id": "pleat · between lines: 3 pleats evenly from the first to the last line",
+      "ok": true
+    },
+    {
+      "id": "fullness · readout: opening 30 (Shift = round)",
+      "ok": true
+    },
+    {
+      "id": "fullness · live ghost before the click",
+      "ok": true
+    },
+    {
+      "id": "fullness · hinged spread with opening 30 exactly",
+      "ok": true
+    },
+    {
+      "id": "fullness · one undo step",
+      "ok": true
+    },
+    {
+      "id": "fullness.interactive · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "fullness.interactive · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "fullness · 3 slashes → asks for the last slash",
+      "ok": true
+    },
+    {
+      "id": "fullness · typed first → last 10 / 20 / 30",
+      "ok": true
+    },
+    {
+      "id": "fullness · edit openings in place",
+      "ok": true
+    },
+    {
+      "id": "fullness · delete restores the sew line exactly",
       "ok": true
     },
     {

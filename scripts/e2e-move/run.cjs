@@ -13,6 +13,12 @@
 //  line.*        Move Line changes only that segment's points, by the same delta
 //  persist.*     the selection survives Copy grade, a seam command, undo / redo, size and tool switches
 //  input.*       typed input-box values (fractions, inch mode, absolute) land exactly
+//  cutpoint.*    Cut Point (X): hover readout, click, exact length from start / end, ratio, divide-N with
+//                notches, graded size, internal line + curve point; one undo step each
+//  dart.*        Dart (Shift+D) by clicks (leg A, leg B, apex), typed width·depth / width·angle, graded
+//                sizes, apex drag with Move Point (Fix Dart), Multi darts with a live ghost
+//  pleat.*       Pleat (Shift+L): count by interval, inverted + taper typed, between two lines
+//  fullness.*    Slash & spread (Shift+U): interactive (Shift-rounded) and typed first → last, exact delete
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -83,7 +89,7 @@ const PAGE_HELPERS = async () => {
     B.ops.addNotch(doc, f, { contourId: f.sew.id, placement: B.ops.placementAt(doc, f, f.sew.id, 100, 'proportional'), type: 'slit' });
     B.ops.addDrill(doc, f, { x: 120, y: 150, diameter: 4, kind: 'drill', mode: 'cut' });
     app.activeSize = app.baseSize();
-    Object.assign(S.settings, { movePointMode: 'single', moveLineMode: 'translate', pieceToolMode: 'move', selFilter: 'all', selectDragMove: false, unit: 'mm', nudgeMm: 1 });
+    Object.assign(S.settings, { movePointMode: 'single', moveLineMode: 'translate', pieceToolMode: 'move', selFilter: 'all', selectDragMove: false, unit: 'mm', nudgeMm: 1, toolState: {} });
     app.clearSelection();
     app.setTool('select');
     const v = app.view; v.cx = 300; v.cy = 160; v.scale = Math.min(v.W / 760, v.H / 420);
@@ -129,6 +135,27 @@ class H {
   sel() { return this.ev(() => window.__mv.selIds()); }
   json() { return this.ev(() => window.__mv.docJSON()); }
   async fixture() { await this.ev(() => window.__mv.fixture()); await this.settle(60); }
+  async hover(w, mods = []) { const c = await this.c(w); await this.mods(mods, async () => { await this.page.mouse.move(c.x - 3, c.y - 2); await this.page.mouse.move(c.x, c.y); }); await this.settle(30); }
+  async waitIbox() { await this.page.waitForSelector('.ibox', { timeout: 3000 }); await this.page.waitForTimeout(40); }
+  /** fill the input box: optional mode tab label, then { key: text }, then Enter */
+  async ibox(mode, vals, enter = true) {
+    await this.waitIbox();
+    if (mode) { await this.page.locator('.ibox .ibox-mode', { hasText: mode }).first().click(); await this.page.waitForTimeout(30); }
+    for (const [k, v] of Object.entries(vals)) await this.page.locator(`.ibox input[data-key="${k}"]`).fill(String(v));
+    await this.page.waitForTimeout(30);
+    if (enter) { await this.page.locator('.ibox input').first().press('Enter'); await this.settle(60); }
+  }
+  rev() { return this.ev(() => window.__mv.app.doc.revision()); }
+  /** Ctrl+Z restores `j0` exactly, Ctrl+Y re-applies `j1` exactly */
+  async undoRedo(id, j0, j1) {
+    const st = j => j.replace(/"updatedAt":"[^"]*",?/g, '');
+    await this.key('Control+z');
+    const ju = st(await this.json()), a = st(j0);
+    let k = 0; while (k < a.length && a[k] === ju[k]) k++;
+    check(id + ' · one Ctrl+Z restores the document exactly', ju === a, `differs at ${k}: …${a.slice(Math.max(0, k - 80), k + 80)}… vs …${ju.slice(Math.max(0, k - 80), k + 80)}…`);
+    await this.key('Control+y');
+    check(id + ' · Ctrl+Y re-applies it exactly', st(await this.json()) === st(j1));
+  }
 }
 
 const results = [];
@@ -508,6 +535,263 @@ test('fixpass', async h => {
   await h.drag(B2, { x: B2.x - 10, y: B2.y + 8 }, { mods: ['Alt'] });
   let same = true; for (const s of ['S', 'M', 'L', 'XL']) { const p = await h.W('FRONT', 'C', s); if (!near(p.x, posC[s].x, 1e-9) || !near(p.y, posC[s].y, 1e-9)) same = false; }
   check('fixpass · pinned curve point C keeps every size when B moves', same);
+});
+
+
+// ───────────────────────── Cut Point (X) ─────────────────────────
+const sewPts = (h, pn) => h.ev(pn => window.__mv.P(pn).sew.points.map(a => ({ id: a.id, x: a.x, y: a.y, kind: a.kind })), pn);
+const newPts = (before, after) => after.filter(a => !before.some(b => b.id === a.id));
+test('cutpoint.hoverClick', async h => {
+  await h.fixture();
+  await h.key('x');
+  check('cutpoint · X selects the Cut Point tool', await h.ev(() => window.__mv.app.tool.id === 'cutPoint'));
+  const w = await h.along('FRONT', 'A', 'B', 0.3);
+  await h.hover(w, ['Shift']);
+  const pr = await h.ev(() => window.__mv.prompt());
+  check('cutpoint · hover readout: start 60 · end 140 (Shift = round)', /start 60 mm · end 140 mm · 30\.0%/.test(pr), pr);
+  check('cutpoint · hover draws the split preview', await h.ev(() => document.querySelectorAll('#canvas svg text.live-note').length >= 3));
+  const j0 = await h.json(), p0 = await sewPts(h, 'FRONT'), rev0 = await h.rev(), an0 = await h.anchors();
+  await h.click(w, { mods: ['Shift'] });
+  const p1 = await sewPts(h, 'FRONT'), np = newPts(p0, p1);
+  check('cutpoint · click inserts one grade point at 60', np.length === 1 && near(np[0].x, 60, 1e-9) && near(np[0].y, 0, 1e-9) && np[0].kind === 'grade', JSON.stringify(np));
+  check('cutpoint · every other anchor unchanged', changedKeys(an0, await h.anchors()).every(k => !an0[k]), changedKeys(an0, await h.anchors()).join(','));
+  check('cutpoint · one undo step', (await h.rev()) - rev0 === 1);
+  check('cutpoint · the new point is selected', (await h.sel()).anchors.length === 1);
+  await h.undoRedo('cutpoint.hoverClick', j0, await h.json());
+});
+test('cutpoint.exact', async h => {
+  await h.fixture();
+  await h.key('x');
+  const w = await h.along('FRONT', 'A', 'B', 0.5);
+  await h.hover(w);
+  await h.page.keyboard.press('5'); // a digit opens the input box (From start)
+  await h.ibox(null, { d: '50' });
+  let np = newPts([{ id: 'x' }], (await sewPts(h, 'FRONT')).filter(a => a.y === 0 && a.x > 0 && a.x < 200));
+  check('cutpoint · typed 50 from start → x = 50 exactly', np.length === 1 && np[0].x === 50, JSON.stringify(np));
+  // from the end, on the segment that now runs 50 → 200
+  await h.hover(await h.along('FRONT', 'A', 'B', 0.8));
+  await h.click(await h.along('FRONT', 'A', 'B', 0.8), { button: 'right' });
+  await h.ibox('From end', { d: '30' });
+  np = (await sewPts(h, 'FRONT')).filter(a => a.y === 0 && a.x > 0 && a.x < 200).map(a => a.x).sort((a, b) => a - b);
+  check('cutpoint · 30 from the end → x = 170', np.length === 2 && near(np[1], 170, 1e-9), JSON.stringify(np));
+  // fractions in inch mode: 1 1/8" from start on BACK bottom edge
+  await h.ev(() => { window.__mv.settings.unit = 'in'; window.__mv.settings.fracDen = 16; });
+  await h.hover({ x: 500, y: 0 });
+  await h.page.keyboard.press('1');
+  await h.ibox(null, { d: '1 1/8' });
+  const bx = (await sewPts(h, 'BACK')).filter(a => a.y === 0 && a.x > 400 && a.x < 600).map(a => a.x);
+  check('cutpoint · 1 1/8" from start → x = 428.575', bx.length === 1 && near(bx[0], 428.575, 1e-9), JSON.stringify(bx));
+});
+test('cutpoint.ratioDivideNotch', async h => {
+  await h.fixture();
+  await h.key('x');
+  await h.hover({ x: 520, y: 0 });
+  await h.click({ x: 520, y: 0 }, { button: 'right' });
+  await h.ibox('Ratio %', { p: '25' });
+  const bx = (await sewPts(h, 'BACK')).filter(a => a.y === 0 && a.x > 400 && a.x < 600).map(a => a.x);
+  check('cutpoint · ratio 25 % → x = 450', bx.length === 1 && near(bx[0], 450, 1e-9), JSON.stringify(bx));
+  // divide the right edge into 4 with notches (toggle in the tool-options strip)
+  await h.page.locator('#toolopts [data-toggle="notch"]').click(); await h.settle();
+  check('cutpoint · Notch option on', await h.ev(() => window.__mv.settings.toolState.cutPoint.notch === true));
+  const j0 = await h.json(), n0 = await h.ev(() => window.__mv.P('BACK').notches.length), rev0 = await h.rev();
+  await h.hover({ x: 600, y: 120 });
+  await h.click({ x: 600, y: 120 }, { button: 'right' });
+  await h.ibox('Divide', { n: '4' }, false);
+  const pv = await h.ev(() => document.querySelectorAll('#canvas svg circle[stroke="#7b61ff"]').length);
+  check('cutpoint · divide preview shows the 3 points before OK', pv === 3, String(pv));
+  await h.page.locator('.ibox input').first().press('Enter'); await h.settle(60);
+  const ys = (await sewPts(h, 'BACK')).filter(a => a.x === 600 && a.y > 0 && a.y < 300).map(a => a.y).sort((a, b) => a - b);
+  check('cutpoint · divide 4 → y 75 / 150 / 225', ys.length === 3 && near(ys[0], 75, 1e-9) && near(ys[1], 150, 1e-9) && near(ys[2], 225, 1e-9), JSON.stringify(ys));
+  check('cutpoint · a notch on every new point', (await h.ev(() => window.__mv.P('BACK').notches.length)) - n0 === 3);
+  check('cutpoint · divide = one undo step', (await h.rev()) - rev0 === 1);
+  await h.undoRedo('cutpoint.divide', j0, await h.json());
+});
+test('cutpoint.gradedInternal', async h => {
+  await h.fixture();
+  await h.ev(() => { const T = window.__mv; T.app.activeSize = T.sid('L'); T.app.invalidate(); }); await h.settle();
+  await h.key('x');
+  const w = await h.along('FRONT', 'A', 'B', 0.4);
+  await h.hover(w);
+  check('cutpoint · amber badge on a graded size', /size L/i.test(await h.ev(() => window.__mv.badge())), await h.ev(() => window.__mv.badge()));
+  await h.click(w, { button: 'right' });
+  await h.ibox('Divide', { n: '2' });
+  const id = await h.ev(() => { const T = window.__mv; const p = T.P('FRONT'); return p.sew.points.find(a => a.y === 0 && a.x > 0 && a.x < 200).id; });
+  const pos = await h.ev(id => { const T = window.__mv; const p = T.P('FRONT'); const f = s => T.ops.pointPos(T.app.doc, { pieceId: p.id, anchorId: id }, s); return { M: f(T.sid('M')), L: f(T.sid('L')), XL: f(T.sid('XL')) }; }, id);
+  check('cutpoint · graded: midpoint at 100 (M), 105 (L), 110 (XL) — auto grading', near(pos.M.x, 100, 1e-9) && near(pos.L.x, 105, 1e-6) && near(pos.XL.x, 110, 1e-6), JSON.stringify(pos));
+  // internal line, Ctrl+click = curve point
+  await h.ev(() => { const T = window.__mv; T.app.activeSize = T.app.baseSize(); T.app.invalidate(); }); await h.settle();
+  const n0 = await h.ev(() => window.__mv.P('FRONT').internals[0].points.length);
+  const wi = await h.along('FRONT', 'IM', 'IB', 0.5);
+  await h.hover(wi);
+  await h.click(wi, { mods: ['Control'] });
+  const ic = await h.ev(() => window.__mv.P('FRONT').internals[0].points.map(a => a.kind));
+  check('cutpoint · Ctrl+click on an internal line adds a curve point', ic.length === n0 + 1 && ic.filter(k => k === 'curve').length === 2, JSON.stringify(ic));
+});
+
+// ───────────────────────── Dart (Shift+D) ─────────────────────────
+const dartG = (h, pn, k = 0, s) => h.ev(([pn, k, s]) => { const T = window.__mv; const p = T.P(pn); const d = p.darts[k]; return d ? T.ops.dartInfo(T.app.doc, p.id, d.id, s ? T.sid(s) : undefined) : null; }, [pn, k, s]);
+test('dart.clicks', async h => {
+  await h.fixture();
+  await h.key('Shift+D');
+  const j0 = await h.json(), rev0 = await h.rev();
+  await h.click({ x: 480, y: 0 });
+  check('dart · prompt asks for leg B', /leg B/.test(await h.ev(() => window.__mv.prompt())));
+  await h.hover({ x: 515, y: 0 }, ['Shift']);
+  check('dart · leg B hover shows the width (Shift = round)', /width 35 mm/.test(await h.ev(() => window.__mv.prompt())), await h.ev(() => window.__mv.prompt()));
+  await h.click({ x: 520, y: 0 }, { mods: ['Shift'] });
+  await h.hover({ x: 505, y: 150 }, ['Shift']);
+  const pr = await h.ev(() => window.__mv.prompt());
+  check('dart · apex step shows width / depth / legs ✓', /width 40.*depth 150.*✓ equal/.test(pr), pr);
+  check('dart · live ghost before the click (document unchanged)', (await h.json()) === j0 && await h.ev(() => window.__mv.app.preview.size === 1));
+  check('dart · dart cap previewed on the cut line', await h.ev(() => { const T = window.__mv; const pv = T.app.preview.get(T.P('BACK').id); return !!pv && pv.darts.length === 1; }));
+  await h.click({ x: 505, y: 150 }, { mods: ['Shift'] });
+  const g = await dartG(h, 'BACK');
+  check('dart · created by clicks: width 40, depth 150 exact (Shift), legs equal', !!g && near(g.width, 40, 1e-6) && near(g.depth, 150, 1e-6) && Math.abs(g.legLengthA - g.legLengthB) < 1e-6, JSON.stringify(g));
+  check('dart · one undo step', (await h.rev()) - rev0 === 1);
+  check('dart · selected after creation', await h.ev(() => window.__mv.app.liveSel?.kind === 'dart'));
+  await h.undoRedo('dart.clicks', j0, await h.json());
+});
+test('dart.typed', async h => {
+  await h.fixture();
+  await h.key('Shift+D');
+  await h.click({ x: 470, y: 0 }); await h.click({ x: 500, y: 0 });
+  await h.hover({ x: 485, y: 100 });
+  await h.click({ x: 485, y: 100 }, { button: 'right' });
+  await h.ibox('Width · Depth', { w: '30', d: '120' });
+  let g = await dartG(h, 'BACK');
+  check('dart · typed width 30 / depth 120 exact', !!g && near(g.width, 30, 1e-6) && near(g.depth, 120, 1e-6), JSON.stringify(g));
+  await h.click({ x: 540, y: 0 }); await h.click({ x: 560, y: 0 });
+  await h.hover({ x: 550, y: 100 });
+  await h.page.keyboard.press('2');
+  await h.ibox('Width · Angle', { w: '20', a: '10' });
+  g = await dartG(h, 'BACK', 1);
+  check('dart · width 20 at 10° → depth 114.301', !!g && near(g.depth, 10 / Math.tan(5 * Math.PI / 180), 1e-6), JSON.stringify(g));
+  // typed width at the leg-B step
+  await h.click({ x: 400, y: 150 }); // left edge
+  await h.hover({ x: 400, y: 170 });
+  await h.page.keyboard.press('2');
+  await h.ibox(null, { w: '24' });
+  await h.click({ x: 450, y: 162 }, { mods: ['Shift'] });
+  g = await dartG(h, 'BACK', 2);
+  check('dart · typed width 24 at the leg-B step', !!g && near(g.width, 24, 1e-6), JSON.stringify(g));
+});
+test('dart.graded', async h => {
+  await h.fixture();
+  await h.ev(() => { const T = window.__mv; T.app.activeSize = T.sid('L'); T.app.invalidate(); }); await h.settle();
+  await h.key('Shift+D');
+  await h.click(await h.along('FRONT', 'A', 'B', 0.45)); await h.click(await h.along('FRONT', 'A', 'B', 0.55));
+  await h.click(await h.along('FRONT', 'A', 'B', 0.5), { button: 'right' });
+  await h.ibox('Width · Depth', { w: '20', d: '100' });
+  const r = await h.ev(() => { const T = window.__mv; const p = T.P('FRONT'); const d = p.darts[0]; const S = n => T.ops.dartInfo(T.app.doc, p.id, d.id, T.sid(n)); return { M: S('M'), L: S('L'), XL: S('XL'), S: S('S') }; });
+  check('dart · graded: created in the base (width 20 / depth 100 in M)', near(r.M.width, 20, 1e-6) && near(r.M.depth, 100, 1e-6), JSON.stringify(r.M));
+  const mid = g => ({ x: (g.legA[0].x + g.legB[0].x) / 2, y: (g.legA[0].y + g.legB[0].y) / 2 });
+  check('dart · graded: legs follow the hem grading in L / XL', mid(r.L).x > mid(r.M).x + 1 && mid(r.XL).x > mid(r.L).x + 1, JSON.stringify([mid(r.M), mid(r.L), mid(r.XL)]));
+  check('dart · graded: apex grades with the opening (mean of the legs)', near(r.L.apex.x - r.M.apex.x, mid(r.L).x - mid(r.M).x, 1e-6) && near(r.S.apex.x - r.M.apex.x, mid(r.S).x - mid(r.M).x, 1e-6), JSON.stringify([r.M.apex, r.L.apex]));
+  check('dart · Inspector per-size table', await h.ev(() => [...document.querySelectorAll('.insp-title')].some(e => /Per size/.test(e.textContent))));
+});
+test('dart.apexDrag', async h => {
+  await h.fixture();
+  await h.ev(() => { const T = window.__mv; const p = T.P('BACK'); T.ops.createDartByLegs(T.app.doc, p.id, { a: { fromAnchorId: p.sew.points[0].id, distance: 90 }, b: { fromAnchorId: p.sew.points[0].id, distance: 110 }, depth: 120 }); T.app.invalidate(); }); await h.settle();
+  await h.key('g');
+  const g0 = await dartG(h, 'BACK'), j0 = await h.json(), rev0 = await h.rev();
+  await h.drag({ x: g0.apex.x, y: g0.apex.y }, { x: g0.apex.x + 15, y: g0.apex.y + 10 });
+  const g1 = await dartG(h, 'BACK');
+  check('dart · Move Point drags the apex', near(g1.apex.x, g0.apex.x + 15, 0.6) && near(g1.apex.y, g0.apex.y + 10, 0.6), JSON.stringify([g0.apex, g1.apex]));
+  check('dart · Fix Dart keeps the legs equal after the drag', Math.abs(g1.legLengthA - g1.legLengthB) < 1e-6 && near(g1.width, 20, 1e-6), JSON.stringify(g1));
+  check('dart · apex drag = one undo step', (await h.rev()) - rev0 === 1);
+  await h.undoRedo('dart.apexDrag', j0, await h.json());
+});
+test('dart.multiPreview', async h => {
+  await h.fixture();
+  await h.key('v');
+  await h.click({ x: 500, y: 0 }); // BACK bottom segment
+  const j0 = await h.json();
+  await h.ev(() => { void window.__mv.C.runCommand('dart.multi'); }); await h.settle();
+  await h.ibox(null, { n: '3', w: '12', d: '60' }, false);
+  check('dart · Multi darts shows a live ghost of 3 darts before OK', await h.ev(() => { const T = window.__mv; const pv = T.app.preview.get(T.P('BACK').id); return !!pv && pv.darts.length === 3; }) && (await h.json()) === j0);
+  await h.page.locator('.ibox input').first().press('Enter'); await h.settle(60);
+  check('dart · Multi darts created', await h.ev(() => window.__mv.P('BACK').darts.length === 3));
+});
+
+// ───────────────────────── Pleat (Shift+L) ─────────────────────────
+const bw = (h, pn) => h.ev(pn => { const T = window.__mv; const r = T.G.resolveFor(T.app.doc, T.P(pn), T.app.sizeOf(T.P(pn))); const xs = r.sew.pts.map(q => q.x); return Math.max(...xs) - Math.min(...xs); }, pn);
+test('pleat.count', async h => {
+  await h.fixture();
+  await h.key('Shift+L');
+  const j0 = await h.json(), rev0 = await h.rev();
+  await h.click({ x: 450, y: 300 }); await h.click({ x: 450, y: 0 });
+  await h.hover({ x: 530, y: 150 }, ['Shift']);
+  const pr = await h.ev(() => window.__mv.prompt());
+  check('pleat · layout prompt: 3 knife · interval 40', /3 Knife · interval 40 mm/.test(pr), pr);
+  check('pleat · live ghost (3 open pleats) before the click', await h.ev(() => { const T = window.__mv; const pv = T.app.preview.get(T.P('BACK').id); return !!pv && pv.pleats.length === 3 && pv.pleats.every(p => p.open); }) && (await h.json()) === j0);
+  check('pleat · fold-direction arrows drawn', await h.ev(() => document.querySelectorAll('#canvas svg path[data-pleat-arrows]').length >= 3));
+  await h.click({ x: 530, y: 150 }, { mods: ['Shift'] });
+  const n = await h.ev(() => window.__mv.P('BACK').pleats.length);
+  check('pleat · 3 pleats created and open', n === 3 && await h.ev(() => window.__mv.P('BACK').pleats.every(p => p.open)), String(n));
+  check('pleat · BACK grows by 3 × 2 × 20 = 120', near(await bw(h, 'BACK'), 320, 1e-6), String(await bw(h, 'BACK')));
+  check('pleat · auto notches', await h.ev(() => window.__mv.P('BACK').notches.filter(x => x.source === 'pleat').length >= 6));
+  check('pleat · one undo step', (await h.rev()) - rev0 === 1);
+  await h.undoRedo('pleat.count', j0, await h.json());
+});
+test('pleat.invertedTaper', async h => {
+  await h.fixture();
+  await h.key('Shift+L');
+  await h.page.locator('#toolopts [data-mode="inverted"]').click(); await h.settle();
+  await h.click({ x: 440, y: 300 }); await h.click({ x: 440, y: 0 });
+  await h.hover({ x: 520, y: 150 });
+  await h.click({ x: 520, y: 150 }, { button: 'right' });
+  await h.ibox(null, { n: '2', ds: '10', de: '5', iv: '60' });
+  const r = await h.ev(() => { const T = window.__mv; const p = T.P('BACK'); return p.pleats.map(q => ({ type: q.type, o: T.ops.pleatOpenings(T.app.doc, p.id, q.id), mid: q.edges.every(e => !!e.mid) })); });
+  check('pleat · 2 inverted box pleats, tapered 40 → 20 fabric each', r.length === 2 && r.every(q => q.type === 'inverted' && near(q.o.start, 40, 1e-6) && near(q.o.end, 20, 1e-6) && q.mid), JSON.stringify(r));
+  // between two lines (L): 3 pleats spread up to a last line
+  await h.fixture();
+  await h.key('Shift+L');
+  await h.click({ x: 430, y: 300 }); await h.click({ x: 430, y: 0 });
+  await h.key('l');
+  await h.click({ x: 570, y: 300 }); await h.click({ x: 570, y: 0 });
+  await h.hover({ x: 500, y: 150 });
+  await h.click({ x: 500, y: 150 });
+  await h.ev(() => { const T = window.__mv; T.ops.closePleats(T.app.doc, T.P('BACK').id); });
+  const ax = await h.ev(() => window.__mv.P('BACK').pleats.map(q => Math.round(q.axisStart.x)));
+  check('pleat · between lines: 3 pleats evenly from the first to the last line', ax.length === 3 && Math.abs(ax[1] - 500) <= 1, JSON.stringify(ax));
+});
+
+// ───────────────────────── Slash & spread (Shift+U) ─────────────────────────
+const openings = (h, pn, k = 0) => h.ev(([pn, k]) => { const T = window.__mv; const p = T.P(pn); const f = (p.fullness ?? [])[k]; return f ? T.ops.fullnessOpenings(T.app.doc, p.id, f.id) : null; }, [pn, k]);
+test('fullness.interactive', async h => {
+  await h.fixture();
+  await h.key('Shift+U');
+  const j0 = await h.json(), rev0 = await h.rev();
+  await h.click({ x: 500, y: 0 }); await h.click({ x: 500, y: 300 });
+  await h.hover({ x: 531, y: 100 }, ['Shift']);
+  const pr = await h.ev(() => window.__mv.prompt());
+  check('fullness · readout: opening 30 (Shift = round)', /opening 30 mm/.test(pr), pr);
+  check('fullness · live ghost before the click', await h.ev(() => { const T = window.__mv; const pv = T.app.preview.get(T.P('BACK').id); return !!pv && (pv.fullness ?? []).length === 1; }) && (await h.json()) === j0);
+  await h.click({ x: 531, y: 100 }, { mods: ['Shift'] });
+  const o = await openings(h, 'BACK');
+  check('fullness · hinged spread with opening 30 exactly', !!o && o.length === 1 && near(o[0], 30, 1e-6), JSON.stringify(o));
+  check('fullness · one undo step', (await h.rev()) - rev0 === 1);
+  await h.undoRedo('fullness.interactive', j0, await h.json());
+});
+test('fullness.typedDelete', async h => {
+  await h.fixture();
+  const sew0 = await h.ev(() => JSON.stringify(window.__mv.P('BACK').sew));
+  await h.key('Shift+U');
+  await h.click({ x: 440, y: 0 }); await h.click({ x: 440, y: 300 });
+  await h.key('+'); await h.key('+');
+  check('fullness · 3 slashes → asks for the last slash', /LAST slash/.test(await h.ev(() => window.__mv.prompt())));
+  await h.click({ x: 560, y: 0 }); await h.click({ x: 560, y: 300 });
+  await h.hover({ x: 470, y: 100 });
+  await h.click({ x: 470, y: 100 }, { button: 'right' });
+  await h.ibox('First → last', { w0: '10', w1: '30' });
+  const o = await openings(h, 'BACK');
+  check('fullness · typed first → last 10 / 20 / 30', !!o && o.length === 3 && JSON.stringify(o.map(x => Math.round(x * 1e6) / 1e6).sort((a, b) => a - b)) === '[10,20,30]', JSON.stringify(o));
+  // Inspector edit in place, then Delete = exact restore
+  await h.key('v');
+  await h.ev(() => { const T = window.__mv; const p = T.P('BACK'); T.ops.setFullnessOpenings(T.app.doc, p.id, p.fullness[0].id, { widths: [5, 5, 5] }); });
+  check('fullness · edit openings in place', JSON.stringify((await openings(h, 'BACK')).map(x => Math.round(x * 1e6) / 1e6)) === '[5,5,5]');
+  await h.ev(() => { void window.__mv.C.runCommand('fullness.delete'); }); await h.settle(120);
+  check('fullness · delete restores the sew line exactly', (await h.ev(() => JSON.stringify(window.__mv.P('BACK').sew))) === sew0);
 });
 
 (async () => {

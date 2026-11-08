@@ -171,6 +171,11 @@ export function renderWorld(app: App): string {
 
 // ───────────── live objects (world layer, piece-local coords) ─────────────
 const ln = (a: Vec, b: Vec) => `M${f(a.x)} ${f(a.y)}L${f(b.x)} ${f(b.y)}`;
+/** arrow a → b in piece-local mm (head 30 % of the length, max 6 mm) */
+function arrowD(a: Vec, b: Vec): string {
+  const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1, ux = dx / l, uy = dy / l, hs = Math.min(6, l * 0.35);
+  return `${ln(a, b)}M${f(b.x - ux * hs - uy * hs * 0.5)} ${f(b.y - uy * hs + ux * hs * 0.5)}L${f(b.x)} ${f(b.y)}L${f(b.x - ux * hs + uy * hs * 0.5)} ${f(b.y - uy * hs - ux * hs * 0.5)}`;
+}
 function liveSvg(sh: LiveShape, col: string, active: boolean): string {
   const w = active ? 1.1 : 0.8;
   switch (sh.kind) {
@@ -192,6 +197,7 @@ function liveSvg(sh: LiveShape, col: string, active: boolean): string {
       if (sh.folds.length) o += `<path d="${sh.folds.map(q => pathD(q, false)).join('')}" class="ns" stroke="${col}" stroke-width="${w * 0.8}" stroke-dasharray="2 2" fill="none"/>`;
       if (sh.fixed && sh.moving) o += `<path d="${pathD(sh.fixed, false)}${pathD(sh.moving, false)}" class="ns" stroke="${col}" stroke-width="${w * 0.7}" fill="none"/>`;
       if (sh.ticks.length) o += `<path d="${sh.ticks.map(q => pathD(q, false)).join('')}" class="ns" stroke="${col}" stroke-width="${w * 0.7}" fill="none" opacity="0.8"/>`;
+      if (active && sh.arrows.length) o += `<path d="${sh.arrows.map(([a, b]) => arrowD(a, b)).join('')}" class="ns" stroke="#2e86c1" stroke-width="${w}" fill="none" stroke-linecap="round" data-pleat-arrows="${sh.arrows.length}"/>`;
       return o;
     }
     case 'fullness': {

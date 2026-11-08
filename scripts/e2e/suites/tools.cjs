@@ -1,7 +1,7 @@
 // One case per palette tool: activate it from the palette (incl. flyouts) or its hotkey, then use it.
 const Q = require('../lib/q.cjs');
 const { pc, an, near, count, npts, req } = Q;
-const { DLG, OK, W, seq, at, seg } = require('./commands.cjs');
+const { DLG, OK, W, seq, at, seg, IB } = require('./commands.cjs');
 
 /** activate a tool by clicking its palette button; tools in a flyout group are opened by right-click */
 const palette = id => async h => {
@@ -51,9 +51,25 @@ const cases = [
   T('drill', { invoke: palette('drill'), drive: seq(W(530, 300), OK()), expect: (h, c) => req(count(c.after, 'BACK', 'drills') === 1, 'no drill') }),
   T('drill#edit', { title: 'drill: click an existing drill → edit dialog', invoke: hotkey('d', 'drill'), drive: seq(W(130, 520), DLG({ dia: '6' })), expect: (h, c) => req(pc(c.after, 'FRONT').drills[0].diameter === 6, 'drill not edited') }),
   T('text', { invoke: palette('text'), drive: seq(W(530, 300), DLG({ text: 'BACK — CUT 1 ON FOLD' })), expect: (h, c) => req(count(c.after, 'BACK', 'texts') === 1, 'no text') }),
-  T('dart', { invoke: palette('dart'), drive: seq(seg('FRONT', 'CF_HEM', 'SS_HEM', 0.5), OK()), expect: (h, c) => req(count(c.after, 'FRONT', 'darts') === 1, 'no dart') }),
-  T('pleat', { invoke: palette('pleat'), drive: seq(h => h.clickLocal('BACK', { x: 470, y: 700 }), h => h.clickLocal('BACK', { x: 470, y: 400 }), OK()), expect: (h, c) => req(count(c.after, 'BACK', 'pleats') === 1, 'no pleat') }),
-  T('fullness', { invoke: palette('fullness'), drive: seq(h => h.clickLocal('BACK', { x: 470, y: 0 }), h => h.clickLocal('BACK', { x: 470, y: 600 }), OK()), expect: (h, c) => req(count(c.after, 'BACK', 'fullness') === 1, 'no fullness') }),
+  T('cutPoint', { title: 'Cut Point: hover the hem, click = grade point (shape unchanged)', invoke: palette('cutPoint'), drive: seg('FRONT', 'CF_HEM', 'SS_HEM', 0.4),
+    expect: (h, c) => [req(npts(c.after, 'FRONT') === npts(c.before, 'FRONT') + 1, 'no point added'), req(!Q.otherChanged(c.before, c.after, 'FRONT', []).filter(d => /xy/.test(d.what)).length, 'existing points moved')] }),
+  T('cutPoint#divide', { title: 'Cut Point: right-click → Divide 3 with notches (X hotkey)', invoke: seq(hotkey('x', 'cutPoint'), async h => { await h.page.locator('#toolopts [data-toggle="notch"]').click(); await h.settle(); }),
+    drive: async h => { const w = await h.along('FRONT', 'CF_HEM', 'SS_HEM', 0.5); await h.page.mouse.move(...Object.values(await h.toClient(w))); await h.clickW(w, { button: 'right' }); await IB({ n: '3' }, 'Divide')(h); },
+    after: async h => { await h.ev(() => { const E = window.__e2e; if (E.settings.toolState?.cutPoint) E.settings.toolState.cutPoint.notch = false; }); },
+    expect: (h, c) => [req(npts(c.after, 'FRONT') === npts(c.before, 'FRONT') + 2, 'divide 3 did not add 2 points'), req(count(c.after, 'FRONT', 'notches') === count(c.before, 'FRONT', 'notches') + 2, 'no notches on the new points')] }),
+  T('cutPoint#exact', { title: 'Cut Point: type 1 1/8 (in16) from the start → exactly 28.575 mm along the hem from CF_HEM', invoke: seq(h => h.page.locator('select.sb-unit').selectOption('in16'), hotkey('x', 'cutPoint')),
+    drive: async h => { const w = await h.along('FRONT', 'CF_HEM', 'SS_HEM', 0.5); const cl = await h.toClient(w); await h.blur(); await h.page.mouse.move(cl.x - 2, cl.y); await h.page.mouse.move(cl.x, cl.y); await h.page.keyboard.press('1'); await IB({ d: '1 1/8' })(h); },
+    expect: (h, c) => { const p = pc(c.after, 'FRONT'), p0 = pc(c.before, 'FRONT'); const nw = p.sew.points.filter(a => !p0.sew.points.some(b => b.id === a.id)); const cf = p.sew.points.find(a => a.name === 'CF_HEM'); return req(nw.length === 1 && near(Math.hypot(nw[0].x - cf.x, nw[0].y - cf.y), 28.575, 1e-6), 'new point ' + JSON.stringify(nw.map(a => [a.x, a.y]))); } }),
+  T('dart', { title: 'Dart: click leg A, leg B, then the apex (CLO)', invoke: palette('dart'), drive: seq(seg('FRONT', 'CF_HEM', 'SS_HEM', 0.45), seg('FRONT', 'CF_HEM', 'SS_HEM', 0.55), W(130, 150)), expect: (h, c) => req(count(c.after, 'FRONT', 'darts') === 1, 'no dart') }),
+  T('dart#typed', { title: 'Dart: legs by clicks, right-click → width 20 · depth 100', invoke: hotkey('Shift+D', 'dart'),
+    drive: async h => { await seg('FRONT', 'CF_HEM', 'SS_HEM', 0.45)(h); await seg('FRONT', 'CF_HEM', 'SS_HEM', 0.55)(h); await h.clickW({ x: 130, y: 120 }, { button: 'right' }); await IB({ w: '20', d: '100' }, 'Width · Depth')(h); },
+    expect: async h => { const g = await h.ev(() => { const E = window.__e2e; const p = E.P('FRONT'); return p.darts[0] ? E.ops.dartInfo(E.app.doc, p.id, p.darts[0].id) : null; }); return req(!!g && near(g.width, 20, 1e-6) && near(g.depth, 100, 1e-6), 'dart ' + JSON.stringify(g && { w: g.width, d: g.depth })); } }),
+  T('pleat', { title: 'Pleat: start, end, then the cursor sets the last pleat line (3 knife pleats)', invoke: palette('pleat'), drive: seq(h => h.clickLocal('BACK', { x: 470, y: 700 }), h => h.clickLocal('BACK', { x: 470, y: 400 }), h => h.clickLocal('BACK', { x: 530, y: 500 })), expect: (h, c) => req(count(c.after, 'BACK', 'pleats') === 3, 'expected 3 pleats, got ' + count(c.after, 'BACK', 'pleats')) }),
+  T('pleat#axis', { title: 'Pleat: Alt on the END click = pleat axis only', invoke: hotkey('Shift+L', 'pleat'), drive: seq(h => h.clickLocal('BACK', { x: 470, y: 700 }), h => h.clickLocal('BACK', { x: 470, y: 400 }, { mods: ['Alt'] })), expect: (h, c) => req(count(c.after, 'BACK', 'pleats') === 1 && !pc(c.after, 'BACK').pleats[0].open, 'expected 1 closed pleat axis') }),
+  T('fullness', { title: 'Slash & spread: slash point, pivot, then click the opening', invoke: palette('fullness'), drive: seq(h => h.clickLocal('BACK', { x: 470, y: 0 }), h => h.clickLocal('BACK', { x: 470, y: 600 }), h => h.clickLocal('BACK', { x: 500, y: 200 })), expect: (h, c) => req(count(c.after, 'BACK', 'fullness') === 1, 'no fullness') }),
+  T('fullness#typed', { title: 'Slash & spread: hem slash, waist hinge, right-click → opening 25', invoke: hotkey('Shift+U', 'fullness'),
+    drive: async h => { await h.clickLocal('BACK', { x: 500, y: 0 }); await h.clickLocal('BACK', { x: 500, y: 700 }); await h.clickW(await h.local2world('BACK', { x: 540, y: 300 }), { button: 'right' }); await IB({ w: '25' }, 'Uniform')(h); },
+    expect: async h => { const o = await h.ev(() => { const E = window.__e2e; const p = E.P('BACK'); return (p.fullness ?? [])[0] ? E.ops.fullnessOpenings(E.app.doc, p.id, p.fullness[0].id) : null; }); return req(!!o && near(o[0], 25, 1e-6), 'openings ' + JSON.stringify(o)); } }),
   T('slash', { title: 'slash: start OUTSIDE the piece (as the tool hint says), across, Enter', invoke: palette('slash'),
     drive: async h => { h._hint = await h.ev(() => window.__e2e.app.tool.hint(window.__e2e.app)); await W(-30, 300)(h); h._st = await h.ev(() => window.__e2e.app.statusMsg); await W(300, 300)(h); await h.key('Enter'); if (await h.hasDialog()) await h.ok(); },
     expect: (h, c) => req(c.after.pieces.length === 3, `not slashed — hint says "${h._hint}", first click outside → status "${h._st}"`) }),

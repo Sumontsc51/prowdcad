@@ -58,6 +58,8 @@ export interface Settings {
   pieceToolMode: 'move' | 'rotate' | 'flip';
   /** last-used dialog values, keyed by dialog id */
   last: Record<string, Record<string, string | number | boolean>>;
+  /** per-tool remembered options (Cut Point / Dart / Pleat / Slash & spread), keyed by tool id */
+  toolState: Record<string, Record<string, string | number | boolean>>;
 }
 
 const KEY = 'prowdcad.web.settings';
@@ -72,6 +74,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showCutCorners: false, showRuleNames: false, showReference: true,
   selFilter: 'all', selectDragMove: false, pickRadiusPx: 8, movePointMode: 'single', moveLineMode: 'translate', pieceToolMode: 'move',
   last: {},
+  toolState: {},
 };
 
 function load(): Settings {

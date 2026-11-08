@@ -17,7 +17,8 @@ export function mountToolOptions(app: App, host: HTMLElement) {
     const modes = t.modes?.(app) ?? [];
     const cur = t.mode?.(app) ?? '';
     const badge = t.badge?.(app) ?? null;
-    const k = [t.id, cur, modes.map(m => m.id).join(','), badge?.text ?? '', badge?.amber ? 1 : 0].join('|');
+    const toggles = t.toggles?.(app) ?? [];
+    const k = [t.id, cur, modes.map(m => m.id).join(','), toggles.map(x => x.id + (x.on ? '+' : '-')).join(','), badge?.text ?? '', badge?.amber ? 1 : 0].join('|');
     if (k === key) return;
     key = k;
     clear(host);
@@ -34,6 +35,13 @@ export function mountToolOptions(app: App, host: HTMLElement) {
         seg.append(h('button.to-mode' + (m.id === cur ? '.on' : ''), { type: 'button', role: 'radio', 'aria-checked': m.id === cur ? 'true' : 'false', 'data-mode': m.id, title: m.title ?? m.label, onclick: () => { t.setMode?.(app, m.id); key = ''; render(); (document.activeElement as HTMLElement | null)?.blur?.(); } }, m.label));
       }
       host.append(seg);
+    }
+    if (toggles.length) {
+      const tg = h('div.to-toggles', { role: 'group', 'aria-label': 'Options' });
+      for (const x of toggles) {
+        tg.append(h('button.to-toggle' + (x.on ? '.on' : ''), { type: 'button', role: 'checkbox', 'aria-checked': x.on ? 'true' : 'false', 'data-toggle': x.id, title: x.title ?? x.label, onclick: () => { t.toggle?.(app, x.id); key = ''; render(); (document.activeElement as HTMLElement | null)?.blur?.(); } }, (x.on ? '☑ ' : '☐ ') + x.label));
+      }
+      host.append(tg);
     }
     host.append(h('span.spacer'));
     if (badge) host.append(h('span.to-badge' + (badge.amber ? '.amber' : ''), { 'data-badge': '1' }, badge.text));

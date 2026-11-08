@@ -18,8 +18,16 @@ import { contourNear } from '../hitkit';
 import { fs, screenMarker } from '../tools/common';
 import { pick } from '../tools/pick';
 import { fmt, unitLabel } from '../units-ui';
+import { openInputBox } from '../ui/inputbox';
+import { settings, saveSettings } from '../settings';
+import { previewWith } from '../tools/move';
+import { lastClient } from '../tools/livekit';
 
 let dartClip: DartClip | null = null;
+
+/** last values typed in an input box (settings.last, like the remembered dialogs) */
+function lastOf(id: string, key: string, def: number | string): number | string { const v = settings.last?.[id]?.[key]; return typeof v === typeof def ? (v as number | string) : def; }
+function rememberLast(id: string, vals: Record<string, number | string>) { settings.last[id] = { ...(settings.last[id] ?? {}), ...vals }; saveSettings(); }
 export const hasDartClip = () => !!dartClip;
 
 function unlocked(app: App, pieceId: Id): Piece {
@@ -70,21 +78,30 @@ export async function createDartFlow(app: App, pieceId: Id, at: LiveContourPos |
   return id;
 }
 
-/** Pivot transfer: pick dart → click the target on the contour → pct (default 100) + optional pivot click. */
+/** Pivot transfer: pick dart → click the target on the contour → input box: % (default 100, live ghost of the result) · or % + a clicked pivot. */
 export async function transferFlow(app: App) {
   const d = await liveOrPick(app, 'dart', 'Pivot transfer: click the dart to move');
   unlocked(app, d.pieceId);
   const t = await pickSewPos(app, 'Pivot transfer: click the TARGET position on the sew line', d.pieceId);
-  const r = await rememberedDialog('dart.transfer', { title: 'Pivot transfer', fields: [
-    { kind: 'number', key: 'pct', label: 'Amount transferred', value: 100, min: 0.0001, max: 100, suffix: '%' },
-    { kind: 'checkbox', key: 'pivot', label: 'Click a pivot point (default: the apex)', value: false },
-  ] });
-  if (!r) return;
+  const run = (doc: typeof app.doc, pct: number, pivot?: Vec) => ops.rotateDart(doc, { pieceId: d.pieceId, dartId: d.id, target: t.pos, pct, pivot });
+  let err: string | null = null;
+  const res = await openInputBox({
+    title: 'Pivot transfer', at: lastClient,
+    modes: [
+      { id: 'apex', label: 'About the apex', title: 'Rotate about the dart apex', fields: [{ key: 'pct', label: 'Amount transferred', kind: 'number', value: Number(lastOf('dart.transfer', 'pct', 100)), suffix: '%' }] },
+      { id: 'pivot', label: 'About a clicked pivot', title: 'After OK, click the pivot point', fields: [{ key: 'pct', label: 'Amount transferred', kind: 'number', value: Number(lastOf('dart.transfer', 'pct', 100)), suffix: '%' }] },
+    ],
+    hint: 'Live ghost of the result · Enter / right-click = OK · Esc = cancel',
+    onPreview: (_m, v) => { if (!v) { app.cancelPreview(); return; } err = previewWith(app, [d.pieceId], doc => { run(doc, v.pct); }); app.status(err ? `⚠ ${err}` : `Pivot transfer ${v.pct}% · OK to apply`); },
+  });
+  app.cancelPreview();
+  if (!res) throw new Cancelled();
+  rememberLast('dart.transfer', { pct: res.v.pct });
   let pivot: Vec | undefined;
-  if (r.pivot) pivot = toLocal(t.piece, (await must(app, { kind: 'point', prompt: 'Pivot transfer: click the pivot', overlay: a => marker(a, t.w) }, 'point')).w);
-  const id = ops.rotateDart(app.doc, { pieceId: d.pieceId, dartId: d.id, target: t.pos, pct: r.pct as number, pivot });
+  if (res.mode === 'pivot') pivot = toLocal(t.piece, (await must(app, { kind: 'point', prompt: 'Pivot transfer: click the pivot', overlay: a => marker(a, t.w) }, 'point')).w);
+  const id = run(app.doc, res.v.pct, pivot);
   selectLive(app, { kind: 'dart', pieceId: d.pieceId, id });
-  app.status(`Dart transferred ${r.pct}%`);
+  app.status(`Dart transferred ${res.v.pct}%`);
 }
 
 /**
@@ -97,11 +114,18 @@ async function rotateCenterFlow(app: App) {
   unlocked(app, d.pieceId);
   const t = await pickSewPos(app, 'Rotate around centre: click the target position on the sew line', d.pieceId);
   const c = await must(app, { kind: 'point', prompt: 'Rotate around centre: click the offset centre', overlay: a => marker(a, t.w) }, 'point');
-  const r = await rememberedDialog('dart.rotateCenter', { title: 'Rotate around offset centre', fields: [
-    { kind: 'number', key: 'pct', label: 'Amount moved to the target', value: 50, min: 0.0001, max: 100, suffix: '%' },
-  ] });
-  if (!r) return;
-  const id = ops.rotateDart(app.doc, { pieceId: d.pieceId, dartId: d.id, target: t.pos, center: toLocal(t.piece, c.w), pct: r.pct as number });
+  const center = toLocal(t.piece, c.w);
+  const run = (doc: typeof app.doc, pct: number) => ops.rotateDart(doc, { pieceId: d.pieceId, dartId: d.id, target: t.pos, center, pct });
+  const res = await openInputBox({
+    title: 'Rotate around offset centre', at: lastClient,
+    modes: [{ id: 'pct', label: 'Amount', fields: [{ key: 'pct', label: 'Amount moved to the target', kind: 'number', value: Number(lastOf('dart.rotateCenter', 'pct', 50)), suffix: '%' }] }],
+    hint: 'Live ghost of the two darts · Enter / right-click = OK · Esc = cancel',
+    onPreview: (_m, v) => { if (!v) { app.cancelPreview(); return; } const e = previewWith(app, [d.pieceId], doc => { run(doc, v.pct); }); app.status(e ? `⚠ ${e}` : `${v.pct}% to the new dart · OK to apply`); },
+  });
+  app.cancelPreview();
+  if (!res) throw new Cancelled();
+  rememberLast('dart.rotateCenter', { pct: res.v.pct });
+  const id = run(app.doc, res.v.pct);
   selectLive(app, { kind: 'dart', pieceId: d.pieceId, id });
 }
 
@@ -150,22 +174,58 @@ async function insertDartFlow(app: App) {
 async function multiDartsFlow(app: App) {
   const run = await runOrPick(app, 'Multi darts: click the sew segment', 'sew');
   unlocked(app, run.pieceId);
-  const r = await rememberedDialog('dart.multi', { title: 'Multi darts', fields: [
-    { kind: 'number', key: 'n', label: 'Number of darts', value: 2, min: 1, max: 50 },
-    { kind: 'length', key: 'w', label: 'Width (each)', value: 15, min: 0.01 },
-    { kind: 'length', key: 'd', label: 'Depth', value: 80, min: 0.01 },
-    { kind: 'radio', key: 'fold', label: 'Fold toward', value: 'A', options: [{ value: 'A', label: 'Leg A' }, { value: 'B', label: 'Leg B' }] },
+  const L = (k: string, d: number) => Number(lastOf('dart.multi', k, d));
+  const mk = (v: Record<string, number>) => ({ count: Math.round(v.n), width: v.w, depth: v.d, fold: (lastOf('dart.multi', 'fold', 'A') === 'B' ? 'B' : 'A') as 'A' | 'B' });
+  const res = await openInputBox({
+    title: 'Multi darts', at: lastClient,
+    modes: [{ id: 'm', label: 'Darts', fields: [
+      { key: 'n', label: 'Number of darts', kind: 'number', value: L('n', 2) },
+      { key: 'w', label: 'Width (each)', kind: 'length', value: L('w', 15) },
+      { key: 'd', label: 'Depth', kind: 'length', value: L('d', 80) },
+    ] }],
+    hint: 'Evenly spaced on the segment · live ghost · Enter / right-click = OK · Esc = cancel',
+    onPreview: (_m, v) => {
+      if (!v) { app.cancelPreview(); return; }
+      if (!(v.n >= 1 && v.n <= 50)) { app.status('⚠ Number of darts: 1 … 50'); app.cancelPreview(); return; }
+      const e = previewWith(app, [run.pieceId], doc => { ops.createMultiDarts(doc, run.pieceId, run.from, mk(v)); });
+      app.status(e ? `⚠ ${e}` : `${Math.round(v.n)} darts · width ${fmt(v.w)} · depth ${fmt(v.d)} ${unitLabel()} · OK to create`);
+    },
+  });
+  app.cancelPreview();
+  if (!res) throw new Cancelled();
+  if (!(res.v.n >= 1 && res.v.n <= 50)) throw new Error('Number of darts: 1 … 50');
+  rememberLast('dart.multi', { n: res.v.n, w: res.v.w, d: res.v.d });
+  const ids = ops.createMultiDarts(app.doc, run.pieceId, run.from, mk(res.v));
+  toast(`${ids.length} darts created`, 'ok');
+}
+
+/** Edit dart values (right-click a dart ▸ Edit dart…): width, depth, fold, drill — one undo step. */
+async function editDartFlow(app: App, ref: LiveRef) {
+  const piece = unlocked(app, ref.pieceId);
+  const d = piece.darts.find(x => x.id === ref.id)!;
+  const g = ops.dartInfo(app.doc, piece.id, d.id);
+  const r = await showDialog({ title: `Edit dart · ${piece.name}`, fields: [
+    { kind: 'length', key: 'w', label: 'Width (opening)', value: d.closed ? d.rememberedWidth ?? g.width : g.width, min: 0.01 },
+    { kind: 'length', key: 'd', label: 'Depth', value: g.depth, min: 0.01 },
+    { kind: 'radio', key: 'fold', label: 'Fold toward', value: d.fold, options: [{ value: 'A', label: 'Leg A' }, { value: 'B', label: 'Leg B' }] },
+    { kind: 'length', key: 'drill', label: 'Drill offset from apex', value: d.drillOffset, min: 0 },
   ] });
   if (!r) return;
-  const ids = ops.createMultiDarts(app.doc, run.pieceId, run.from, { count: Math.round(r.n as number), width: r.w as number, depth: r.d as number, fold: r.fold as 'A' });
-  toast(`${ids.length} darts created`, 'ok');
+  app.doc.transact('Edit dart', () => {
+    const w = r.w as number;
+    if (!d.closed && Math.abs(w - g.width) > 1e-9) { ops.closeDart(app.doc, piece.id, d.id); ops.openDart(app.doc, piece.id, d.id, w); }
+    if (Math.abs((r.d as number) - g.depth) > 1e-9 && !d.closed) ops.setDartDepth(app.doc, piece.id, d.id, r.d as number);
+    if (r.fold !== d.fold) ops.setDartFold(app.doc, piece.id, d.id, r.fold as 'A' | 'B');
+    if (Math.abs((r.drill as number) - d.drillOffset) > 1e-9) ops.setDartDrillOffset(app.doc, piece.id, d.id, r.drill as number);
+  });
+  selectLive(app, ref);
 }
 
 // ───────────────────────── pleats ─────────────────────────
 
 export function pleatFields(a: PleatAttributes & { open?: boolean } = {}) {
   return [
-    { kind: 'radio' as const, key: 'type', label: 'Type', value: a.type ?? 'knife', options: [{ value: 'knife', label: 'Knife (2 × depth)' }, { value: 'box', label: 'Box (4 × depth)' }] },
+    { kind: 'radio' as const, key: 'type', label: 'Type', value: a.type ?? 'knife', options: [{ value: 'knife', label: 'Knife (2 × depth)' }, { value: 'box', label: 'Box (4 × depth)' }, { value: 'inverted', label: 'Inverted box (4 × depth)' }] },
     { kind: 'length' as const, key: 'ds', label: 'Depth at start', value: a.depthStart ?? 20, min: 0 },
     { kind: 'length' as const, key: 'de', label: 'Depth at end', value: a.depthEnd ?? a.depthStart ?? 20, min: 0 },
     { kind: 'radio' as const, key: 'fold', label: 'Fold', value: a.fold ?? 'right', options: [{ value: 'right', label: 'Right' }, { value: 'left', label: 'Left' }] },
@@ -174,7 +234,7 @@ export function pleatFields(a: PleatAttributes & { open?: boolean } = {}) {
   ];
 }
 export function pleatAttrsOf(r: Record<string, unknown>): PleatAttributes {
-  return { type: r.type as 'box' | 'knife', depthStart: r.ds as number, depthEnd: r.de as number, fold: r.fold as 'left' | 'right', autoNotches: !!r.notches };
+  return { type: r.type as 'box' | 'knife' | 'inverted', depthStart: r.ds as number, depthEnd: r.de as number, fold: r.fold as 'left' | 'right', autoNotches: !!r.notches };
 }
 
 /** Axis from two clicks (world) → dialog → addPleat. */
@@ -264,6 +324,48 @@ async function multiFullnessFlow(app: App) {
   selectLive(app, { kind: 'fullness', pieceId: a.pieceId, id });
 }
 
+/** Edit the openings of a slash & spread in place (exact; later spreads are re-applied). */
+async function editFullnessFlow(app: App, ref: LiveRef) {
+  const piece = unlocked(app, ref.pieceId);
+  const f = (piece.fullness ?? []).find(x => x.id === ref.id)!;
+  if (!f.op) throw new Error('This fullness record has no stored parameters');
+  const cur = ops.fullnessOpenings(app.doc, piece.id, f.id);
+  const multi = f.op.kind === 'multi';
+  const widths = multi ? (f.op as { widths: number[] }).widths : [(f.op as { openA: number }).openA];
+  const modes = multi
+    ? [{ id: 'u', label: 'Uniform', fields: [{ key: 'w', label: 'Opening (every slash)', kind: 'length' as const, value: widths[0] }] },
+      { id: 'v', label: 'First → last', fields: [{ key: 'w0', label: 'First opening', kind: 'length' as const, value: widths[0] }, { key: 'w1', label: 'Last opening', kind: 'length' as const, value: widths[widths.length - 1] }] }]
+    : [{ id: 's', label: 'Opening', fields: [{ key: 'a', label: 'At the slash', kind: 'length' as const, value: widths[0] }, ...('anchorId' in f.pivot && f.op.kind === 'single' && f.op.mode !== 'parallel' ? [{ key: 'b', label: 'At the hinge', kind: 'length' as const, value: (f.op as { openB: number }).openB }] : [])] }];
+  const toArg = (m: string, v: Record<string, number>) => {
+    if (!multi) return { openA: v.a, openB: v.b };
+    const n = widths.length;
+    return { widths: m === 'u' ? widths.map(() => v.w) : widths.map((_, i) => (n === 1 ? v.w0 : v.w0 + ((v.w1 - v.w0) * i) / (n - 1))) };
+  };
+  const res = await openInputBox({
+    title: `Edit slash & spread · ${cur.length} slash${cur.length > 1 ? 'es' : ''}`, modes, at: lastClient, hint: 'Live ghost · Enter / right-click = OK · Esc = cancel',
+    onPreview: (m, v) => { if (!v) { app.cancelPreview(); return; } const e = previewWith(app, [piece.id], doc => ops.setFullnessOpenings(doc, piece.id, f.id, toArg(m, v))); app.status(e ? `⚠ ${e}` : 'OK to apply'); },
+  });
+  app.cancelPreview();
+  if (!res) return;
+  ops.setFullnessOpenings(app.doc, piece.id, f.id, toArg(res.mode, res.v));
+  selectLive(app, ref);
+}
+
+/** Edit a pleat's attributes (dialog; an open pleat is re-opened with the new values). */
+async function editPleatFlow(app: App, ref: LiveRef) {
+  const piece = unlocked(app, ref.pieceId);
+  const p = piece.pleats.find(x => x.id === ref.id)!;
+  const r = await showDialog({ title: `Edit pleat · ${piece.name}`, fields: pleatFields({ type: p.type, depthStart: p.depthStart, depthEnd: p.depthEnd, fold: p.fold, autoNotches: p.autoNotches, open: p.open }) });
+  if (!r) return;
+  app.doc.transact('Edit pleat', () => {
+    ops.setPleatAttributes(app.doc, piece.id, p.id, pleatAttrsOf(r));
+    const now = app.doc.piece(piece.id).pleats.find(x => x.id === p.id)!;
+    if (r.open && !now.open && (now.depthStart > 0 || now.depthEnd > 0)) ops.openPleat(app.doc, piece.id, p.id);
+    if (!r.open && now.open) ops.closePleat(app.doc, piece.id, p.id);
+  });
+  selectLive(app, ref);
+}
+
 /** Delete key on a selected live object. */
 export async function deleteLive(app: App, ref: LiveRef) {
   unlocked(app, ref.pieceId);
@@ -330,6 +432,8 @@ export function registerLive(app: App) {
   cmd({ id: 'dart.copy', title: 'Copy dart', menu: M, group: 3, run: async () => copyDartOf(app, await dart('Click the dart to copy')) });
   cmd({ id: 'dart.paste', title: 'Paste dart…', menu: M, group: 3, enabled: hasDartClip, run: () => pasteDartFlow(app) });
   cmd({ id: 'dart.remove', title: 'Remove dart…', menu: M, group: 3, run: async () => removeDartFlow(app, await dart('Click the dart to remove')) });
+  cmd({ id: 'dart.edit', title: 'Edit dart (width, depth, fold, drill)…', menu: M, group: 1, run: async () => editDartFlow(app, await dart('Click the dart to edit')) });
+  cmd({ id: 'dart.flipFold', title: 'Flip fold of this dart', menu: M, group: 1, run: async () => { const d = await dart('Click the dart'); unlocked(app, d.pieceId); const dm = app.doc.piece(d.pieceId).darts.find(x => x.id === d.id)!; ops.setDartFold(app.doc, d.pieceId, d.id, dm.fold === 'A' ? 'B' : 'A'); app.status(`Dart folds toward leg ${dm.fold === 'A' ? 'B' : 'A'}`); } });
 
   // pleats
   cmd({ id: 'pleat.axis', title: 'Add pleat axis (attributes later)', menu: MP, group: 0, run: () => pleatAxisFlow(app, false) });
@@ -340,11 +444,13 @@ export function registerLive(app: App) {
   cmd({ id: 'pleat.close', title: 'Close selected pleat', menu: MP, group: 1, run: async () => { const p = await liveOrPick(app, 'pleat', 'Click the pleat to close'); unlocked(app, p.pieceId); ops.closePleat(app.doc, p.pieceId, p.id); } });
   cmd({ id: 'pleat.openAll', title: 'Open all pleats of piece', menu: MP, group: 1, enabled: () => !!app.primaryPiece()?.pleats.length, run: () => ops.openPleats(app.doc, unlocked(app, app.primaryPiece()!.id).id) });
   cmd({ id: 'pleat.closeAll', title: 'Close all pleats of piece', menu: MP, group: 1, enabled: () => !!app.primaryPiece()?.pleats.length, run: () => ops.closePleats(app.doc, unlocked(app, app.primaryPiece()!.id).id) });
+  cmd({ id: 'pleat.edit', title: 'Edit pleat (type, depths, fold)…', menu: MP, group: 1, run: async () => editPleatFlow(app, await liveOrPick(app, 'pleat', 'Click the pleat to edit')) });
   cmd({ id: 'pleat.delete', title: 'Delete pleat', menu: MP, group: 2, run: async () => { const p = await liveOrPick(app, 'pleat', 'Click the pleat to delete'); await deleteLive(app, p); } });
 
   // fullness
   cmd({ id: 'fullness.add', title: 'Add fullness…', menu: MF, group: 0, run: () => addFullnessFlow(app) });
   cmd({ id: 'fullness.multi', title: 'Multi fullness…', menu: MF, group: 0, run: () => multiFullnessFlow(app) });
+  cmd({ id: 'fullness.edit', title: 'Edit openings…', menu: MF, group: 1, run: async () => editFullnessFlow(app, await liveOrPick(app, 'fullness', 'Click a slash line of the fullness to edit')) });
   cmd({ id: 'fullness.delete', title: 'Delete fullness (exact restore)', menu: MF, group: 1, run: async () => { const f = await liveOrPick(app, 'fullness', 'Click a slash line of the fullness to delete'); await deleteLive(app, f); } });
 
   void selKind;

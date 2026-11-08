@@ -92,6 +92,7 @@ export function registerPointSeg(app: App) {
     const [id] = ops.addSplineSupportPoints(app.doc, pa.piece.id, pa.anchor.id, next.id, 1);
     if (id) app.selectAnchor({ pieceId: pa.piece.id, contourId: pa.contour.id, anchorId: id });
   } });
+  registerCommand({ id: 'point.cutTool', title: 'Cut Point tool (add point / divide line)', menu: 'Point', group: 1, run: () => { app.setTool('cutPoint'); app.status('Cut Point: hover a line · click = add point · right-click = exact length / ratio / divide'); } });
   registerCommand({ id: 'point.addAt', title: 'Add point at click', menu: 'Point', group: 1, hotkey: 'Shift+Alt+A', run: async () => {
     const r = await must(app, { kind: 'contour', prompt: 'Click on a line to insert a point (Ctrl = curve point)' }, 'contour');
     const id = ops.addPointAt(app.doc, r.hit.piece.id, r.hit.contour.id, toLocal(r.hit.piece, r.w), r.e.ctrlKey ? 'curve' : 'grade');

@@ -36,6 +36,7 @@ import { toast } from '../ui/toast';
 import { reportError } from '../commands';
 import { fs, screenMarker } from './common';
 import { DoubleClick } from '../ui/dom';
+import { apexDown, apexMove, apexUp, apexCancel, apexBusy, apexHint, apexOverlay } from './apexdrag';
 
 const AMBER = '#e69500';
 const THRESH_PX = 3;
@@ -386,7 +387,7 @@ export const movePointTool: Tool = {
   id: 'movePoint', title: 'Move Point', group: 'move', hotkey: 'G', icon: ICON.movePoint, cursor: 'crosshair',
   activate(app) { MP.op = null; MP.frozen = false; MP.tackDrag = null; mpAdopt(app); },
   deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); mpCancelOp(app); MP.tackDrag = null; MP.hover = null; },
-  busy: () => !!MP.op || !!MP.tackDrag,
+  busy: () => !!MP.op || !!MP.tackDrag || apexBusy(),
   modes: () => MP_MODES,
   mode: () => mpMode(),
   setMode(app, id) { settings.movePointMode = id as MPMode; saveSettings(); mpCancelOp(app); if (MP.pick) MP.tacks = defaultTacks(app, MP.pick.ref); app.invalidate(); },
@@ -394,6 +395,7 @@ export const movePointTool: Tool = {
 
   hint(app) {
     const m = mpMode(); const head = `Move Point · ${MP_NAME[m]}`;
+    const ah = apexHint(); if (ah) return ah;
     if (MP.tackDrag) return `${head} · Release on a point of the same line to put the tack there · Esc cancel`;
     if (!mpValid(app)) return `${head} · Select point to move · Tab = mode · Esc = back to Select`;
     const piece = mpPiece(app)!;
@@ -431,7 +433,8 @@ export const movePointTool: Tool = {
       }
     }
     const hit = pointUnder(app, p);
-    if (!hit) { app.status('Nothing to pick here: click a point'); return; }
+    if (!hit && apexDown(app, p)) return;
+    if (!hit) { app.status('Nothing to pick here: click a point (or press on a dart apex and drag)'); return; }
     const piece = app.doc.piece(hit.ref.pieceId);
     if (piece.locked) { toast(lockedMsg(piece), 'warn'); return; }
     mpSetPick(app, hit.ref, hit.sizeId, true);
@@ -449,6 +452,7 @@ export const movePointTool: Tool = {
       MP.tackDrag.hover = c && c.item.k === 'point' ? c.item.ref.anchorId : null;
       app.invalidate('canvas', 'status'); return;
     }
+    if (!MP.op && apexMove(app, p)) return;
     const op = MP.op;
     if (!op) {
       const c = candidatesAt(app, p.w, 'points', { kinds: ['point'] })[0];
@@ -464,6 +468,7 @@ export const movePointTool: Tool = {
     app.invalidate('status');
   },
   up(app, p) {
+    if (apexUp(app, p)) return;
     if (MP.tackDrag) {
       const td = MP.tackDrag; MP.tackDrag = null;
       if (td.hover && MP.tacks) {
@@ -495,6 +500,7 @@ export const movePointTool: Tool = {
   key(app, e) {
     if (inputBoxOpen()) return false;
     if (e.key === 'Escape') {
+      if (apexCancel(app)) return true;
       if (MP.tackDrag) { MP.tackDrag = null; app.invalidate(); return true; }
       if (MP.op) { mpCancelOp(app); app.status('Move cancelled'); return true; }
       app.setTool('select'); return true;
@@ -529,7 +535,7 @@ export const movePointTool: Tool = {
     mpCommit(app, { kind: 'delta', d: dirToLocal(piece, dW) }, mode === 'group' ? 'Nudge points' : 'Nudge point');
   },
   overlay(app) {
-    const out: string[] = [];
+    const out: string[] = [apexOverlay(app)];
     if (MP.hover && !MP.op) out.push(itemHighlight(app, { k: 'point', ref: MP.hover }, 0.5));
     if (!mpValid(app)) return out.join('');
     const r = MP.pick!.ref; const sid = MP.pick!.sizeId;

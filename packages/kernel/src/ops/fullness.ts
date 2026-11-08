@@ -27,7 +27,7 @@ import type { Document } from '../model/doc';
 import { Vec, dist } from '../geom/vec';
 import { newId } from '../model/factory';
 import {
-  resolveBase, arcS, idx, nextGrade, spanLen, pointAt, closestSNear, closestArc,
+  resolveBase, arcS, idx, nextGrade, spanLen, pointAt, closestSNear, closestArc, fwd,
 } from '../geom/draft-geom';
 import {
   type LiveContourPos, liveRef, liveArcOf, liveRefAt, liveSplit, liveSpreadOnce, liveCapture, liveSnapshotDiff,
@@ -242,6 +242,70 @@ export function addMultiFullness(doc: Document, pieceId: Id, o: MultiFullnessOpt
   });
 }
 
+export interface FullnessBetweenOptions {
+  /** first slash line: slash point (spread edge) and hinge point, both on the sew line */
+  firstSlash: LiveContourPos; firstHinge: LiveContourPos;
+  /** last slash line (count > 1): the slashes are spread evenly from the first to the last line */
+  lastSlash?: LiveContourPos; lastHinge?: LiveContourPos;
+  count: number;
+  /** opening at the first / last slash (interpolated linearly in between); lastWidth defaults to firstWidth */
+  firstWidth: number; lastWidth?: number;
+  mode?: 'rotate' | 'parallel';
+  side?: 'forward' | 'backward';
+}
+
+/** Arc positions of N points spread evenly over the shorter arc s0 → s1 (inclusive), in s0 → s1 order. */
+function evenArcs(L: number, closed: boolean, s0: number, s1: number, n: number): number[] {
+  let d = s1 - s0;
+  if (closed && L > 0) { d = ((d % L) + L) % L; if (d > L / 2) d -= L; }
+  return Array.from({ length: n }, (_, k) => { let s = s0 + (n === 1 ? 0 : (d * k) / (n - 1)); if (closed && L > 0) s = ((s % L) + L) % L; return s; });
+}
+
+/** Slash and hinge positions (base arc) of a fullness-between spec, before sorting. Pure. */
+export function fullnessBetweenArcs(piece: Piece, line: SizeLine, o: FullnessBetweenOptions): { slashes: number[]; hinges: number[]; widths: number[] } {
+  const c = piece.sew, r = resolveBase(c, line), L = r.cum[r.cum.length - 1] ?? 0;
+  const N = Math.round(o.count);
+  if (!(N >= 1)) throw new Error('Slash & spread: count ≥ 1');
+  const a = (p: LiveContourPos) => liveArcOf(c, line, liveRef(p));
+  const s0 = a(o.firstSlash), h0 = a(o.firstHinge);
+  if (N > 1 && (!o.lastSlash || !o.lastHinge)) throw new Error('Slash & spread: click the last slash line too');
+  const s1 = N > 1 ? a(o.lastSlash!) : s0, h1 = N > 1 ? a(o.lastHinge!) : h0;
+  const w1 = o.lastWidth ?? o.firstWidth;
+  return {
+    slashes: evenArcs(L, c.closed, s0, s1, N), hinges: evenArcs(L, c.closed, h0, h1, N),
+    widths: Array.from({ length: N }, (_, i) => (N === 1 ? o.firstWidth : o.firstWidth + ((w1 - o.firstWidth) * i) / (N - 1))),
+  };
+}
+
+/**
+ * Slash & Spread between two slash lines (CLO Slash and Spread / Fullness): N slash lines evenly from
+ * the first (slash point → hinge) to the last line, openings interpolated first → last; rotate
+ * (hinged on the sew line) or parallel. One live fullness record (exact delete). Returns its id.
+ */
+export function addFullnessBetween(doc: Document, pieceId: Id, o: FullnessBetweenOptions): Id {
+  return doc.transact('Slash & spread', () => {
+    const { piece, line } = ctx(doc, pieceId);
+    if (piece.locked) throw new Error('Piece is locked');
+    const c = piece.sew, r = resolveBase(c, line);
+    const g = fullnessBetweenArcs(piece, line, o);
+    // order the pairs ascending in contour order (as Multi Fullness expects): the slashes run over the
+    // shorter arc first → last, forward or backward
+    const N = g.slashes.length, L = r.cum[r.cum.length - 1] ?? 0;
+    const forwardRun = N < 2 || fwd(r, g.slashes[0], g.slashes[N - 1]) <= L / 2;
+    const ord = Array.from({ length: N }, (_, i) => (forwardRun ? i : N - 1 - i));
+    const ex = fullnessInsertedIds(piece);
+    const ref = (s: number) => liveRefAt(c, line, s, ex);
+    const op: FullnessOp = {
+      kind: 'multi', slashes: ord.map(i => ref(g.slashes[i])), hinges: ord.map(i => ref(g.hinges[i])), widths: ord.map(i => g.widths[i]),
+      mode: o.mode ?? 'rotate', side: o.side ?? 'forward',
+    };
+    const rec: Fullness = { id: newId('fu'), slashAnchorIds: [], pivot: { anchorId: '' }, amounts: { openA: op.widths[0], openB: 0 }, op, seq: fullnessNextSeq(piece) };
+    fullnessApplyRaw(piece, line, rec);
+    (piece.fullness ??= []).push(rec);
+    return rec.id;
+  });
+}
+
 /** Raw delete (pinch closed, exact restore) with LIFO unwind / re-apply of later spreads. */
 export function fullnessDeleteRaw(piece: Piece, line: SizeLine, id: Id): void {
   const rec = fullnessRecord(piece, id);
@@ -256,6 +320,32 @@ export function fullnessDeleteRaw(piece: Piece, line: SizeLine, id: Id): void {
     }
   }
   fullnessRewind(piece, line, later);
+}
+
+/**
+ * Edit the openings of a live slash & spread in place (one undo step): later spreads are unwound,
+ * the record is pinched closed (exact), its stored parameters changed and re-applied with the same
+ * anchor ids, then the later spreads are re-applied. `widths` = one opening per slash (multi);
+ * `openA` / `openB` = slash / hinge opening (single).
+ */
+export function setFullnessOpenings(doc: Document, pieceId: Id, id: Id, o: { widths?: number[]; openA?: number; openB?: number }): void {
+  doc.transact('Edit fullness', () => {
+    const { piece, line } = ctx(doc, pieceId);
+    const rec = fullnessRecord(piece, id);
+    const op = rec.op;
+    if (!op) throw new Error('This fullness record cannot be edited');
+    const later = fullnessUnwindAbove(piece, rec.seq ?? 0);
+    fullnessUnapplyRaw(piece, rec);
+    if (op.kind === 'multi') {
+      if (o.widths) { if (o.widths.length !== op.widths.length) throw new Error(`Give ${op.widths.length} openings`); op.widths = o.widths.slice(); }
+    } else {
+      if (o.openA !== undefined) op.openA = o.openA;
+      if (o.openB !== undefined) op.openB = o.openB;
+      if (o.widths?.length) op.openA = o.widths[0];
+    }
+    fullnessApplyRaw(piece, line, rec);
+    fullnessRewind(piece, line, later);
+  });
 }
 
 export function deleteFullness(doc: Document, pieceId: Id, id: Id): void {

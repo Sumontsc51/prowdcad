@@ -20,7 +20,7 @@
  * axis and the depths are kept. Open pleats share the per-piece LIFO spread stack with fullness
  * records (see ops/fullness.ts), so closing a pleat below later spreads unwinds and re-applies them.
  */
-import type { Anchor, Contour, Id, Notch, Pleat, Piece, SizeLine } from '../model/types';
+import type { Anchor, Contour, Id, Notch, Pleat, PleatType, Piece, SizeLine } from '../model/types';
 import type { Document } from '../model/doc';
 import { Vec, add, sub, mul, dist, norm, cross, rotate, rad, lerp, dot } from '../geom/vec';
 import { newId } from '../model/factory';
@@ -32,7 +32,7 @@ import {
 import { fullnessNextSeq, fullnessUnwindAbove, fullnessRewind } from './fullness';
 
 export interface PleatAttributes {
-  type?: 'box' | 'knife';
+  type?: PleatType;
   depthStart?: number;
   depthEnd?: number;
   fold?: 'left' | 'right';
@@ -51,7 +51,7 @@ export function pleatOf(piece: Piece, id: Id): Pleat {
 }
 
 /** Fabric inserted at depth d. */
-export const pleatFabric = (type: 'box' | 'knife', d: number) => (type === 'box' ? 4 : 2) * d;
+export const pleatFabric = (type: PleatType, d: number) => (type === 'knife' ? 2 : 4) * d;
 
 function axisContour(a: Vec, b: Vec): Contour {
   return {
@@ -117,6 +117,64 @@ export function addMultiPleat(doc: Document, pieceId: Id, segStart: Id, count: n
     void sA;
     const ids = axes.map(([a, b]) => pleatAddAxisRaw(piece, a, b, attrs).id);
     if ((attrs.open ?? true) && ((attrs.depthStart ?? 0) > 0 || (attrs.depthEnd ?? 0) > 0)) for (const id of ids) pleatOpenRaw(piece, line, pleatOf(piece, id), fullnessNextSeq(piece));
+    return ids;
+  });
+}
+
+export interface PleatSetOptions extends PleatAttributes {
+  /** number of pleats (≥ 1) */
+  count: number;
+  /** interval layout: spacing between neighbouring pleat lines, perpendicular to the first line (mm) */
+  interval?: number;
+  /** interval layout: side of the first line (start → end) the further pleats go. Default 'right'. */
+  side?: 'left' | 'right';
+  /** between-lines layout: the LAST pleat line; the pleats are spread evenly from the first line to it (ends interpolated) */
+  last?: [Vec, Vec];
+  /** open the pleats now (when depth > 0). Default true. */
+  open?: boolean;
+}
+
+/**
+ * Pleat lines of a pleat set (pure; the UI previews with it). Interval layout: the first line plus
+ * copies shifted k × interval toward `side`. Between-lines layout: count lines with ends
+ * interpolated linearly from the first to the last line (count = 1 → the first line).
+ */
+export function pleatSetAxes(first: [Vec, Vec], o: Pick<PleatSetOptions, 'count' | 'interval' | 'side' | 'last'>): [Vec, Vec][] {
+  const n = Math.round(o.count);
+  if (!(n >= 1)) throw new Error('Pleats: count must be ≥ 1');
+  if (dist(first[0], first[1]) < 1e-6) throw new Error('Pleat line: zero length');
+  if (o.last) {
+    if (n === 1) return [[{ ...first[0] }, { ...first[1] }]];
+    return Array.from({ length: n }, (_, k) => [lerp(first[0], o.last![0], k / (n - 1)), lerp(first[1], o.last![1], k / (n - 1))] as [Vec, Vec]);
+  }
+  const u = norm(sub(first[1], first[0]));
+  const right: Vec = { x: u.y, y: -u.x };
+  const nrm = (o.side ?? 'right') === 'right' ? right : mul(right, -1);
+  const iv = o.interval ?? 0;
+  if (n > 1 && !(iv > 0)) throw new Error('Pleats: interval must be > 0');
+  return Array.from({ length: n }, (_, k) => [add(first[0], mul(nrm, k * iv)), add(first[1], mul(nrm, k * iv))] as [Vec, Vec]);
+}
+
+/**
+ * Pleats tool (CLO Pleats): N pleats from a first pleat line, by interval or spread evenly up to a
+ * last line. Each pleat is a live pleat object (axis + attributes, auto notches); the far side moves
+ * (moveSide = the side the set grows toward, so the openings stack). Opened when depth > 0 unless
+ * open === false. One undo step. Returns the pleat ids in line order.
+ */
+export function addPleatSet(doc: Document, pieceId: Id, first: [Vec, Vec], o: PleatSetOptions): Id[] {
+  return doc.transact('Pleats', () => {
+    const { piece, line } = ctx(doc, pieceId);
+    if (piece.locked) throw new Error('Piece is locked');
+    const axes = pleatSetAxes(first, o);
+    // the side the set grows toward (between-lines: the side of the last line)
+    let side = o.side ?? 'right';
+    if (o.last && !o.side) {
+      const m = lerp(o.last[0], o.last[1], 0.5);
+      side = cross(sub(first[1], first[0]), sub(m, first[0])) < 0 ? 'right' : 'left';
+    }
+    const attrs: PleatAttributes = { ...o, moveSide: o.moveSide ?? side };
+    const ids = axes.map(([a, b]) => pleatAddAxisRaw(piece, a, b, attrs).id);
+    if ((o.open ?? true) && ((o.depthStart ?? 0) > 0 || (o.depthEnd ?? o.depthStart ?? 0) > 0)) for (const id of ids) pleatOpenRaw(piece, line, pleatOf(piece, id), fullnessNextSeq(piece));
     return ids;
   });
 }
@@ -201,7 +259,7 @@ export function pleatOpenRaw(piece: Piece, line: SizeLine, p: Pleat, seq: number
     skip: { contourIds: new Set(p.axisContourId ? [p.axisContourId] : []), pleatIds: new Set([p.id]) },
   });
   const edges = [{ fixed: sId, moving: res.smId } as { fixed: Id; moving: Id; mid?: Id }, { fixed: hId, moving: res.hmId } as { fixed: Id; moving: Id; mid?: Id }];
-  if (p.type === 'box') {
+  if (p.type !== 'knife') {
     edges.forEach((e, k) => {
       const i = idx(c, e.fixed), j = idx(c, e.moving);
       const fa = c.points[i], ma = c.points[j];

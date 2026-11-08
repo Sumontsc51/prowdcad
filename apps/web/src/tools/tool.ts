@@ -60,6 +60,9 @@ export interface Tool {
   modes?(app: App): { id: string; label: string; title?: string }[];
   mode?(app: App): string;
   setMode?(app: App, id: string): void;
+  /** tool-options strip: on/off option buttons shown after the modes (e.g. Cut Point: Curve point · Notch · Zero grade) */
+  toggles?(app: App): { id: string; label: string; title?: string; on: boolean }[];
+  toggle?(app: App, id: string): void;
   /** tool-mode indicator text (amber = editing a non-base size's grading) */
   badge?(app: App): { text: string; amber?: boolean } | null;
 }
@@ -77,15 +80,16 @@ export const ICON = {
   measure: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>',
   notch: '<path d="M3 8h18M12 8v8"/><path d="M9 16h6"/>',
   drill: '<circle cx="12" cy="12" r="5"/><path d="M12 4v16M4 12h16"/>',
-  dart: '<path d="M3 6h7l2 12 2-12h7"/>',
+  dart: '<path d="M3 5h6.5l2.5 13 2.5-13H21"/><path d="M12 18v-6" stroke-dasharray="1.5 1.5"/><circle cx="12" cy="18" r="1.3"/>',
+  cutPoint: '<path d="M3 17c4-8 9-10 18-9"/><circle cx="11.5" cy="10.6" r="2.3" fill="currentColor" stroke="none"/><path d="M11.5 3v3.5M11.5 14.5V21" stroke-dasharray="1.6 1.6"/>',
   seam: '<path d="M4 18V6h16v12z"/><path d="M7 15V9h10v6z" stroke-dasharray="2 2"/>',
   text: '<path d="M5 6h14M12 6v13M9 19h6"/>',
   walk: '<path d="M3 17h9"/><path d="M12 17l7-9" stroke-dasharray="3 2"/><circle cx="12" cy="17" r="1.6"/><path d="M5 8l3-3 3 3"/>',
   smooth: '<path d="M3 16l3-5 2 3 3-6 2 4 3-3" opacity=".45"/><path d="M3 17c4-9 10-9 18-2"/>',
   slash: '<path d="M4 20L20 4"/><path d="M14 4h6v6"/><rect x="3" y="6" width="9" height="12" opacity=".5"/>',
   trace: '<path d="M4 18L9 6l6 4 5-4"/><circle cx="4" cy="18" r="1.4"/><circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="10" r="1.4"/>',
-  pleat: '<path d="M4 4v16M10 4v16M14 4l-4 4M14 20l-4-4M14 4v16M20 4v16" />',
-  fullness: '<path d="M4 20L12 4l8 16"/><path d="M12 4v16" stroke-dasharray="2 2"/><path d="M8 20h8"/>',
+  pleat: '<path d="M3 4h18M3 20h18"/><path d="M6 4v16M11 4v16M16 4v16" stroke-dasharray="3 1.5"/><path d="M6 12h3.5M8 10.5l1.5 1.5-1.5 1.5M11 12h3.5M13 10.5l1.5 1.5-1.5 1.5"/>',
+  fullness: '<path d="M3 20h7l2-16 2 16h7"/><path d="M12 4L8.5 20M12 4l3.5 16" stroke-dasharray="1.6 1.6" opacity=".7"/><path d="M5 17l-2 3 3 .5M19 17l2 3-3 .5"/>',
   movePoint: '<rect x="3" y="15" width="6" height="6"/><path d="M6 15V6M6 6l-3 3M6 6l3 3"/><path d="M12 12h9M21 12l-3-3M21 12l-3 3"/>',
   moveLine: '<path d="M3 18L13 8" stroke-dasharray="2 2" opacity=".55"/><path d="M9 21L19 11"/><path d="M14 4h6v6"/><path d="M20 4l-6 6"/>',
   movePiece: '<path d="M5 6h9l3 5-3 7H5z"/><path d="M19 3a4 4 0 010 6" /><path d="M19 9l-2 0M19 9l0-2"/>',

@@ -112,9 +112,13 @@ export interface Dart {
   cutSeam?: number;
 }
 
+/** Pleat kind. */
+export type PleatType = 'knife' | 'box' | 'inverted';
+
 export interface Pleat {
   id: Id;
-  type: 'box' | 'knife';
+  /** knife = one fold (2 × depth); box = two folds facing away from the centre; inverted = inverted box, folds meeting at the centre (box / inverted: 4 × depth) */
+  type: PleatType;
   /** two anchor ids on the SEW contour bounding the pleat on the first edge; axis defined by start/end points */
   axisStart: { x: number; y: number; grade: Record<SizeId, GradeInc>; grade2?: Record<SizeId, GradeInc> };
   axisEnd: { x: number; y: number; grade: Record<SizeId, GradeInc>; grade2?: Record<SizeId, GradeInc> };

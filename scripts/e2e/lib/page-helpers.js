@@ -96,7 +96,7 @@
     for (let i = 1; i < pts.length; i++) { if (goal <= seg[i - 1]) { const k = seg[i - 1] ? goal / seg[i - 1] : 0; return { x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * k, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * k }; } goal -= seg[i - 1]; }
     return pts[pts.length - 1];
   };
-  E.idle = () => !document.querySelector('.dlg-overlay') && !document.querySelector('.popover') && app.tool?.id !== 'pick';
+  E.idle = () => !document.querySelector('.dlg-overlay') && !document.querySelector('.popover') && !document.querySelector('.ibox') && app.tool?.id !== 'pick';
   E.selOld = () => JSON.parse(JSON.stringify({ pieces: app.sel.pieces.map(id => app.doc.style.pieces.find(p => p.id === id)?.name ?? id), anchors: app.sel.anchors.map(r => { const p = app.doc.style.pieces.find(x => x.id === r.pieceId); const a = p && [p.sew, ...p.internals].flatMap(c => c.points).find(x => x.id === r.anchorId); return (p?.name ?? '?') + '/' + (a?.name ?? r.anchorId); }), live: app.liveSel ? app.liveSel.kind : null }));
   E.selFull = () => { const s = app.sel; const nm = id => app.doc.style.pieces.find(p => p.id === id)?.name ?? id; const an = r => { const p = app.doc.style.pieces.find(x => x.id === r.pieceId); const a = p && [p.sew, ...p.internals].flatMap(c => c.points).find(x => x.id === r.anchorId); return (p?.name ?? '?') + '/' + (a?.name ?? r.anchorId); };
     return { pieces: s.pieces.map(nm), anchors: s.anchors.map(an), segments: (s.segments || []).map(g => nm(g.pieceId) + ':' + an({ pieceId: g.pieceId, anchorId: g.from }).split('/')[1] + '→' + an({ pieceId: g.pieceId, anchorId: g.to }).split('/')[1]), internals: (s.internals || []).length, notches: (s.notches || []).length, marks: (s.marks || []).length, live: app.liveSel ? app.liveSel.kind : null }; };

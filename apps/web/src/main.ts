@@ -86,16 +86,16 @@ canvas.onContext = p => {
   } else if (h.kind === 'live' && h.pieceId && h.liveKind && h.liveId) {
     selectLive(app, { kind: h.liveKind, pieceId: h.pieceId, id: h.liveId });
     const ids = h.liveKind === 'dart'
-      ? ['dart.toggle', 'dart.reopenWidth', 'dart.fix', 'dart.cutting', '-', 'dart.transfer', 'dart.rotateCenter', '-', 'dart.copy', 'dart.paste', 'dart.remove', '-', 'dart.change']
-      : h.liveKind === 'pleat' ? ['pleat.open', 'pleat.close', 'pleat.openAll', 'pleat.closeAll', '-', 'pleat.delete'] : ['fullness.delete'];
+      ? ['dart.edit', 'dart.flipFold', 'dart.toggle', 'dart.reopenWidth', 'dart.fix', 'dart.cutting', '-', 'dart.transfer', 'dart.rotateCenter', 'dart.multi', '-', 'dart.copy', 'dart.paste', 'dart.remove', '-', 'dart.change']
+      : h.liveKind === 'pleat' ? ['pleat.edit', 'pleat.open', 'pleat.close', 'pleat.openAll', 'pleat.closeAll', '-', 'pleat.delete'] : ['fullness.edit', 'fullness.delete'];
     openContextMenu(e.clientX, e.clientY, ids);
   } else if ((sub = candidatesAt(app, p.w, 'all', { kinds: ['segment', 'internal', 'notch', 'mark'] })[0]) && h.kind !== 'handle') {
     // segment / internal line / notch / drill / text: select it (keep a multi-selection that contains it)
     if (!app.isSelected(sub.item)) app.applySel(sub.item, 'replace');
     const k = sub.item.k;
     openContextMenu(e.clientX, e.clientY, k === 'segment'
-      ? ['move.line', 'move.lineParallel', 'move.curve', '-', 'seg.length', 'seg.rotate', 'point.add', 'point.splineSupport', '-', 'seam.segment', 'seg.copy', 'seg.paste', '-', 'grade.pasteAround']
-      : k === 'internal' ? ['move.line', 'move.lineParallel', 'move.curve', '-', 'seg.swap', 'seg.dashed', 'seg.trim', '-', 'edit.delete']
+      ? ['move.line', 'move.lineParallel', 'move.curve', '-', 'seg.length', 'seg.rotate', 'point.add', 'point.cutTool', 'point.splineSupport', '-', 'seam.segment', 'seg.copy', 'seg.paste', '-', 'grade.pasteAround']
+      : k === 'internal' ? ['move.line', 'move.lineParallel', 'move.curve', 'point.cutTool', '-', 'seg.swap', 'seg.dashed', 'seg.trim', '-', 'edit.delete']
         : ['edit.delete']);
   } else if (h.kind === 'piece' && h.pieceId) {
     if (!app.sel.pieces.includes(h.pieceId)) app.selectPiece(h.pieceId);
