@@ -37,12 +37,15 @@ export function esc(s: string): string {
 
 export function clear(el: Element): void { while (el.firstChild) el.removeChild(el.firstChild); }
 
+const NON_TEXT_INPUTS = new Set(['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file', 'image']);
 /** True when keyboard focus is in an editable control (hotkeys must not fire). */
 export function isTyping(): boolean {
   const a = document.activeElement as HTMLElement | null;
   if (!a) return false;
   const t = a.tagName;
-  return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || a.isContentEditable;
+  // a checkbox / radio / button-like input is not a text field: after clicking "Nested view" the hotkeys must still work
+  if (t === 'INPUT') return !NON_TEXT_INPUTS.has((a as HTMLInputElement).type);
+  return t === 'TEXTAREA' || t === 'SELECT' || a.isContentEditable;
 }
 
 /**

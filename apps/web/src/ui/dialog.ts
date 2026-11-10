@@ -37,6 +37,8 @@ export interface DialogOptions {
 
 let openCount = 0;
 export function dialogOpen(): boolean { return openCount > 0; }
+/** A modal surface that is not a showDialog (command finder): hotkeys stay off until the returned release() runs. */
+export function modalHold(): () => void { openCount++; let done = false; return () => { if (!done) { done = true; openCount--; } }; }
 
 export function showDialog(opt: DialogOptions): Promise<DialogValues | null> {
   return new Promise(resolve => {
@@ -134,7 +136,17 @@ export function showDialog(opt: DialogOptions): Promise<DialogValues | null> {
       const all = document.querySelectorAll('.dlg-overlay');
       if (all[all.length - 1] !== overlay) return;
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); }
-      else if (e.key === 'Enter' && !(e.target instanceof HTMLTextAreaElement)) { e.preventDefault(); e.stopPropagation(); ok(); }
+      // Enter = OK, except on a focused button (Enter then presses THAT button: Tab → Cancel → Enter must cancel)
+      else if (e.key === 'Enter' && !(e.target instanceof HTMLTextAreaElement) && !(e.target instanceof HTMLButtonElement && box.contains(e.target))) { e.preventDefault(); e.stopPropagation(); ok(); }
+      else if (e.key === 'Tab') {
+        // focus trap: Tab cycles inside the dialog and never reaches the controls behind it
+        const f = [...box.querySelectorAll<HTMLElement>('input,select,textarea,button')].filter(x => !(x as HTMLInputElement).disabled && x.offsetParent !== null);
+        if (f.length) {
+          const a = document.activeElement as HTMLElement | null;
+          const i = a ? f.indexOf(a) : -1;
+          if (i < 0 || (e.shiftKey && i === 0) || (!e.shiftKey && i === f.length - 1)) { e.preventDefault(); f[e.shiftKey ? f.length - 1 : 0].focus(); }
+        }
+      }
       e.stopPropagation();
     };
     document.addEventListener('keydown', onKey, true);
@@ -147,12 +159,13 @@ export function showDialog(opt: DialogOptions): Promise<DialogValues | null> {
     if (opt.cancelLabel !== null) foot.append(h('button.btn', { onclick: () => finish(null) }, opt.cancelLabel ?? 'Cancel'));
     foot.append(h('button.btn.primary', { onclick: ok }, opt.okLabel ?? 'OK'));
 
-    const box = h('div.dlg' + (opt.wide ? '.wide' : ''), { role: 'dialog', 'aria-modal': 'true' }, h('div.dlg-title', {}, opt.title), body, foot);
+    const box = h('div.dlg' + (opt.wide ? '.wide' : ''), { role: 'dialog', 'aria-modal': 'true', 'aria-label': opt.title }, h('div.dlg-title', {}, opt.title), body, foot);
     overlay.append(box);
     overlay.addEventListener('pointerdown', e => { if (e.target === overlay) finish(null); });
     document.body.append(overlay);
-    const first = box.querySelector('input:not([type=checkbox]):not([type=radio]),textarea,select') as HTMLInputElement | null;
-    setTimeout(() => { first?.focus(); if (first && 'select' in first) try { first.select(); } catch { /* */ } }, 20);
+    // focus the first field; a dialog without fields focuses its primary button (focus never stays behind the dialog)
+    const first = (box.querySelector('input:not([type=checkbox]):not([type=radio]),textarea,select') ?? box.querySelector('input') ?? box.querySelector('.dlg-foot .btn.primary')) as HTMLInputElement | null;
+    setTimeout(() => { if (!document.body.contains(overlay)) return; first?.focus(); if (first && 'select' in first && first.type === 'text') try { first.select(); } catch { /* */ } }, 20);
   });
 }
 

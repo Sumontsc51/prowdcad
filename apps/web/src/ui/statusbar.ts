@@ -54,9 +54,11 @@ export function mountStatusbar(app: App, host: HTMLElement) {
     sel.textContent = np || subs.length ? `${np} piece${np === 1 ? '' : 's'}${subs.length ? ' · ' + subs.join(' · ') : ''}` : '';
     // step prompt of the active tool (always shown) + the last message
     prompt.textContent = app.tool?.hint?.(app) || '';
+    // the hint is often longer than the bar: hovering shows all of it, one step per line
+    prompt.title = prompt.textContent.split(' · ').join('\n');
     const amber = app.tool?.badge?.(app)?.amber && app.tool.id !== 'select';
     prompt.classList.toggle('amber', !!amber);
-    msg.textContent = app.statusMsg || '';
+    msg.textContent = app.statusMsg || ''; msg.title = msg.textContent;
   };
   app.setRenderer('status', render);
   render();
