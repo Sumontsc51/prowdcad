@@ -107,6 +107,13 @@ export class App {
         this.statusMsg = ''; // a message about the previous document must not survive a reload
       }
       this.pruneSelection();
+      // a piece disappearing (delete, undo, reload) under a half-finished construction (Dart, Pleat, Move pick…)
+      // leaves the tool pointing at geometry that no longer exists: start the tool over instead of rendering stale ids
+      const now = new Set(this.doc.style.pieces.map(p => p.id));
+      let gone = e.type === 'load';
+      for (const id of this.knownPieces) if (!now.has(id)) { gone = true; break; }
+      this.knownPieces = now;
+      if (gone && this.tool?.busy?.(this)) this.resetToolDraft();
       this.invalidate();
     });
   }
@@ -122,7 +129,26 @@ export class App {
   flush() {
     this.raf = 0;
     const parts = [...this.dirtyParts]; this.dirtyParts.clear();
-    for (const p of parts) { try { this.renderers[p]?.(); } catch (err) { console.error(`render ${p}`, err); } }
+    let failed = false;
+    for (const p of parts) { try { this.renderers[p]?.(); } catch (err) { failed = true; console.error(`render ${p}`, err); } }
+    // Safety net: a renderer threw (almost always a tool draft that references a deleted piece / point).
+    // Drop the draft once and draw again, so the canvas never stays frozen until the user switches tools.
+    if (failed && !this.recovering) {
+      this.recovering = true;
+      this.resetToolDraft(); this.preview.clear(); this.pruneSelection();
+      this.statusMsg = 'The current tool was reset because the geometry it was working on changed';
+      this.invalidate();
+    } else if (!failed) this.recovering = false;
+  }
+  private recovering = false;
+  private knownPieces = new Set<Id>();
+  /** Discard the active tool's in-progress construction (same as switching away and back). */
+  resetToolDraft() {
+    const t = this.tool; if (!t) return;
+    try {
+      if (t.hidden) this.setTool('select'); // a pick session: cancel it and hand the canvas back
+      else { t.deactivate?.(this); t.activate?.(this); }
+    } catch (err) { console.error('tool reset', err); }
   }
 
   // ───── document helpers ─────

@@ -10,7 +10,7 @@ import { makePiece, makeStyle, rectangleContour } from '@prowdcad/kernel';
 import { App } from './app';
 import { Canvas } from './canvas/canvas';
 import { TOOLS } from './tools/index';
-import { mountPalette } from './ui/palette';
+import { mountPalette, closeFly } from './ui/palette';
 import { mountMenubar, openContextMenu, closeMenus } from './ui/menu';
 import { mountStatusbar } from './ui/statusbar';
 import { mountDocks } from './panels/dock';
@@ -19,7 +19,8 @@ import { ruleDigitKey } from './panels/rules';
 import './canvas/badges';
 import { registerAll } from './actions/register';
 import { setCommandContext, commandForEvent, runCommand, onCommandsChanged } from './commands';
-import { startAutoBackup, offerRecovery } from './actions/file';
+import { startAutoBackup, offerRecovery, openDropped } from './actions/file';
+import { reportError } from './commands';
 import { isTyping } from './ui/dom';
 import { dialogOpen } from './ui/dialog';
 import { selectTool } from './tools/select';
@@ -125,7 +126,7 @@ window.addEventListener('keydown', e => {
   }
   if (isTyping()) return;
   // Esc on an open menu only closes the menu (it never also clears the selection)
-  if (e.key === 'Escape' && closeMenus()) { e.preventDefault(); escConsumedAt = performance.now(); return; }
+  if (e.key === 'Escape' && (closeMenus() || closeFly())) { e.preventDefault(); escConsumedAt = performance.now(); return; }
   // Space tap (press + release < 220 ms, no pan): Move / Modify tool ⇄ Select, selection kept (handled on keyup)
   // 0) Grade Rules: with points selected (window open / badges on), digits = apply rule #n
   if (ruleDigitKey(app, e)) { e.preventDefault(); return; }
@@ -154,6 +155,34 @@ window.addEventListener('keyup', e => {
 });
 window.addEventListener('blur', () => { if (app.space) { app.space = false; app.invalidate('canvas'); } });
 document.addEventListener('contextmenu', e => { if ((e.target as Element).closest?.('#app')) e.preventDefault(); });
+
+// ───────────── focus hygiene ─────────────
+// A mouse click on a button / checkbox leaves keyboard focus on it; the next Enter or Space would then press
+// that control again instead of reaching the tool (Enter = finish). Mouse clicks hand focus back; Tab focus stays.
+document.addEventListener('click', e => {
+  if (e.detail === 0) return; // keyboard activation
+  const t = (e.target as Element | null)?.closest?.('button, input[type=checkbox], input[type=radio]') as HTMLElement | null;
+  if (!t || t.closest('.dlg-overlay, .popover, .cmdk')) return;
+  if (document.activeElement === t) t.blur();
+});
+
+// ───────────── drag & drop files ─────────────
+// Dropping a file anywhere opens / imports it. Unhandled, the browser would navigate to the file and close the session.
+const hasFiles = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+let dragDepth = 0;
+const dropHint = document.createElement('div');
+dropHint.className = 'drop-hint';
+dropHint.innerHTML = '<div><b>Drop to open</b><span>.prowd.json style &nbsp;·&nbsp; DXF + RUL &nbsp;·&nbsp; SVG &nbsp;·&nbsp; PLT</span></div>';
+window.addEventListener('dragenter', e => { if (!hasFiles(e)) return; e.preventDefault(); if (++dragDepth === 1 && !dialogOpen()) document.body.append(dropHint); });
+window.addEventListener('dragleave', e => { if (!hasFiles(e)) return; if (--dragDepth <= 0) { dragDepth = 0; dropHint.remove(); } });
+window.addEventListener('dragover', e => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer!.dropEffect = dialogOpen() ? 'none' : 'copy'; });
+window.addEventListener('drop', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); dragDepth = 0; dropHint.remove();
+  if (dialogOpen()) return;
+  const files = [...(e.dataTransfer?.files ?? [])];
+  if (files.length) openDropped(app, files).catch(err => reportError(err, 'Open'));
+});
 
 // ───────────── start ─────────────
 async function start() {
