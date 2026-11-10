@@ -49,13 +49,17 @@ export class Document {
    * Run a mutation as one undoable step. Returns fn's result. After a successful top-level step the
    * edit rules run in the same step (`finishEdit`): seams follow segment edits, Lock Grading snapshots
    * refresh, locked internal lines follow the sew line.
+   * If fn throws at the top level, the style is restored to what it was before the step, no undo
+   * step is recorded and the redo history is kept; the error is re-thrown.
    */
   transact<T>(label: string, fn: (s: Style) => T): T {
     let cap: SewCapture | undefined, snap = '';
+    let dropped: { label: string; snap: string } | undefined, redoBefore: { label: string; snap: string }[] = [];
     if (this.txDepth === 0) {
       snap = JSON.stringify(this.style);
       this.undoStack.push({ label, snap });
-      if (this.undoStack.length > this.maxUndo) this.undoStack.shift();
+      if (this.undoStack.length > this.maxUndo) dropped = this.undoStack.shift();
+      redoBefore = this.redoStack;
       this.redoStack = [];
       this.txLabel = label;
       cap = this.captureEdit();
@@ -70,6 +74,15 @@ export class Document {
       this.txDepth--;
       if (this.txDepth === 0) {
         if (ok && cap) this.finishEdit(cap, () => (JSON.parse(snap) as Style).pieces);
+        if (!ok) {
+          // A step that throws is atomic: nothing of it stays. Without this the style kept whatever the
+          // op had already changed before failing (e.g. a half-unwound dart / pleat stack), under an
+          // error message that reads as "nothing happened", plus an undo step for the broken state.
+          this.style = JSON.parse(snap) as Style;
+          this.undoStack.pop();
+          if (dropped) this.undoStack.unshift(dropped);
+          this.redoStack = redoBefore;
+        }
         this.touch(); this.emit({ type: 'change', label: this.txLabel });
       }
     }
