@@ -237,9 +237,9 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <p>Press <kbd>N</kbd> and click the armhole. Leave the placement on <em>From previous point</em> and press OK. A single notch marks the front.</p>
       <h3>6 · Grade the front</h3>
       <ol class="steps">
-        <li><div>Open the grading table (<kbd>Ctrl+G</kbd>) and select the underarm point.</div></li>
-        <li><div>In the <strong>M</strong> column type dX <code>12.5</code> and dY <code>6</code>. That is the step from S to M.</div></li>
-        <li><div><span class="menu">Grade ▸ Edit ▸ Equal X</span> and <span class="menu">Equal Y</span> copy that step to L, XL and 2XL.</div></li>
+        <li><div>Open the grading table (<kbd>Ctrl+G</kbd>) and select the underarm point. Each size is a row.</div></li>
+        <li><div>In the <strong>L</strong> row type dX <code>12.5</code> and dY <code>6</code> (the step from M into L), and in the <strong>S</strong> row <code>-12.5</code> and <code>-6</code> (the step from M into S). The typed cells get a dot.</div></li>
+        <li><div>Leave <em>Smart fill</em> on <em>Equal steps</em> and press <strong>Fill</strong>: XL and 2XL get the same step.</div></li>
         <li><div>With the underarm still selected: <span class="menu">Grade ▸ Clipboard ▸ Copy grade</span>. Select the side hem and use <span class="menu">Paste X only</span>.</div></li>
         <li><div>Shoulder point: dX <code>9</code>, dY <code>12</code>, Equal X and Y. Copy it, select the neck point and the centre-front neck (<kbd>Shift</kbd>+click), then <span class="menu">Paste Y only</span>.</div></li>
         <li><div>Tick <em>Nested view</em> to see S–2XL together. Curve points follow by themselves.</div></li>
@@ -423,15 +423,53 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
 
     <section id="grading">
       <h2><small>Chapter 11</small>Grading</h2>
-      <p>Grading is stored as the step from one size to the next. In the table, the column for a size holds the step <em>into</em> that size: with base size M, the M column is the S → M step and the L column the M → L step. Switch to <em>Absolute</em> to see each size's total offset from the base.</p>
-      <div class="note"><strong>Editing one size only</strong>In the <em>Incremental</em> view a cell is a step, so changing the L cell also moves XL and every larger size (the table says so above the rows, and the status bar names the sizes that moved). To change one size only, click <em>Absolute (one size only)</em> and type the size's total offset there. Moving a point on the sheet with the L size active also changes L only.</div>
+      <p>The grading table (<kbd>Ctrl+G</kbd>) has <strong>one row per size</strong>, so it works the same for 4 sizes or 80: the header stays put while you scroll, the base size is marked ★ and the active size is highlighted (click a size name to make it active). The columns are the selected points, a dX / dY pair for each. With nothing selected you get every grade point of the selected piece. With one point you also get its X / Y position in every size and the other view (see below).</p>
+      <p>Two views, named for what a cell means:</p>
+      <ul>
+        <li><strong>Step into this size</strong> (incremental): the change from the size next to it toward the base. Sizes smaller than the base carry their own step, usually negative, the way an AccuMark rule table shows them.</li>
+        <li><strong>Total from base size</strong> (cumulative): how far the size is from the base ★.</li>
+      </ul>
       <div class="tbl"><table>
-        <thead><tr><th>Underarm, front</th><th class="num">S</th><th class="num">M ★</th><th class="num">L</th><th class="num">XL</th><th class="num">2XL</th></tr></thead>
+        <thead><tr><th>Size</th><th class="num">Step into this size, dX</th><th class="num">Total from base size, dX</th></tr></thead>
         <tbody>
-          <tr><td>Incremental dX</td><td class="num">0</td><td class="num">12.5</td><td class="num">12.5</td><td class="num">12.5</td><td class="num">12.5</td></tr>
-          <tr><td>Absolute dX</td><td class="num">−12.5</td><td class="num">0</td><td class="num">12.5</td><td class="num">25</td><td class="num">37.5</td></tr>
+          <tr><td>S</td><td class="num">−12.5</td><td class="num">−12.5</td></tr>
+          <tr><td>M ★</td><td class="num">0</td><td class="num">0</td></tr>
+          <tr><td>L</td><td class="num">12.5</td><td class="num">12.5</td></tr>
+          <tr><td>XL</td><td class="num">12.5</td><td class="num">25</td></tr>
+          <tr><td>2XL</td><td class="num">12.5</td><td class="num">37.5</td></tr>
         </tbody>
       </table></div>
+      <div class="note"><strong>Which sizes does my edit move?</strong>When a cell has focus, the rows it will move are tinted and the line above the table names them. A <em>step</em> edit moves that size and every size further from the base (changing L moves L, XL and 2XL). A <em>total</em> edit changes that size only. The button <em>Edit L only</em> next to the warning switches to the total view for that cell. Moving a point on the sheet with the L size active also changes L only.</div>
+      <p><strong>Typing.</strong> Arrow keys move between cells (← and → once the caret is at the edge of the text). <kbd>Enter</kbd> saves and goes down one size (<kbd>Shift+Enter</kbd> up), <kbd>Tab</kbd> goes to the next cell, <kbd>Esc</kbd> undoes your typing. Decimals and fractions both work (<code>1 1/8</code>, <code>9/8</code>). To bring values in from Excel, copy a column (or a block of dX and dY columns), click the first size's cell and press <kbd>Ctrl+V</kbd>. The values fill consecutive size rows, the base row is skipped, and the paste is one undo step.</p>
+      <h3>Smart fill and size breaks</h3>
+      <p>Type values in only a few rows, for example the first step and the last size. Typed cells get a dot. Then pick a method and press <strong>Fill</strong>:</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Method</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td>Equal steps</td><td>The same step for every size on that side of the base. One typed total at the last size is spread evenly.</td></tr>
+          <tr><td>Interpolate</td><td>Straight lines between the typed totals; between typed steps, the step itself ramps (a grade that grows with the size).</td></tr>
+          <tr><td>Repeat step</td><td>Each typed step repeats outward until the next typed one.</td></tr>
+          <tr><td>Split by break</td><td>The change up to each size break is shared evenly by the sizes in between, as in an AccuMark rule table. Click the ◆ next to a size to make it a break.</td></tr>
+        </tbody>
+      </table></div>
+      <p>A side of the base where you typed nothing keeps its values. Next to the table, the <strong>nest preview</strong> draws the point's path through every size and redraws as you type, before you press <kbd>Enter</kbd>.</p>
+      <h3>Grade rules</h3>
+      <p><span class="menu">Grade ▸ Grade rules (rule library)…</span> (<kbd>Shift+Alt+R</kbd>) works like an AccuMark rule table, with a few short cuts:</p>
+      <ol class="steps">
+        <li><div><strong>+ Library</strong> makes a rule table for the active size line. <strong>+ Rule</strong>, <em>From point</em> or <em>From contour</em> fills it with numbered rules.</div></li>
+        <li><div>Rules are chips (<code>#12 Side hem</code>). Click a chip to edit it: same rows-per-size table, views, Smart fill and breaks as above. Every point linked to the rule follows each edit (Modify Rule / Edit Rule Delta).</div></li>
+        <li><div>To apply a rule, drag its chip onto a point, double-click it to apply it to the selected points, or select points on the sheet and just type the rule number (<kbd>1</kbd> <kbd>2</kbd> <kbd>Enter</kbd>).</div></li>
+        <li><div><em>Copy rule</em> (Copy Table Rule, optionally flipped in X or Y), <em>Rename</em>, <em>Delete</em> (linked points keep their values), <em>Detach</em>.</div></li>
+      </ol>
+      <p><span class="menu">Grade ▸ Rule badges on grade points</span> (<kbd>Shift+Alt+B</kbd>, or <strong>#</strong> in the grading table) puts a tag next to every grade point: <strong style="color:#1c7ed6">blue 12</strong> = follows rule 12, <strong style="color:#e67700">amber 12*</strong> = linked but edited by hand, <strong style="color:#2b8a3e">green g</strong> = its own grading, no rule, <strong style="color:#868e96">grey 0</strong> = not graded. Editing a linked point in the grading table keeps the link, so you can see it is now "edited".</p>
+      <h3>Grade by measurement</h3>
+      <p>Make the grading fit a spec chart instead of working out each step yourself. <span class="menu">Grade ▸ Grade by measurement…</span>, or <em>Grade to spec…</em> in the Measure window:</p>
+      <ol class="steps">
+        <li><div><strong>Measurement:</strong> one you made with the Measure tool, e.g. front hem + side seam to the underarm (open, or kept with OK).</div></li>
+        <li><div><strong>Points that move:</strong> select them (e.g. side-seam hem and underarm) and click <em>Use selection</em>. Choose the direction (X, Y or an angle). A weight per point of <code>−1</code> moves it the opposite way, <code>0.5</code> half as far.</div></li>
+        <li><div><strong>Spec:</strong> paste the spec-chart column into the <em>Spec</em> cells (one row per size). <em>Spec = the measurement</em> or <em>change from the base size</em>. Use a <em>factor</em> of <code>0.5</code> when the pattern is half of the body measurement.</div></li>
+        <li><div><strong>Preview</strong> solves without changing anything. <strong>Apply</strong> writes it as one undo step. The table shows now / after / residual per size: green means it hits the spec within 0.01 mm. On curves the residual shows what is left. The base size is never changed: if its residual is not 0, the base pattern itself is off spec.</div></li>
+      </ol>
       <h3>Power tools</h3>
       <div class="tbl"><table>
         <thead><tr><th>Command</th><th>Shortcut</th><th>Use</th></tr></thead>
@@ -449,15 +487,25 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
         </tbody>
       </table></div>
       <p><strong>Sizes panel.</strong> Insert or append sizes; inserting a half size between two sizes splits their step in half automatically. <em>Axis 2</em> adds a second size dimension, for example Short / Regular / Long.</p>
-      <p><strong>Rule library</strong> (<kbd>Shift+Alt+R</kbd>) stores named rules you apply by number or name. <strong>Movement programs</strong> move points by a set amount per millimetre of a body measurement, e.g. front side seam 0.5 mm per +1 mm chest, the basis for made-to-measure.</p>
+      <p><strong>Movement programs</strong> move points by a set amount per millimetre of a body measurement, e.g. front side seam 0.5 mm per +1 mm chest, the basis for made-to-measure.</p>
     </section>
 
     <section id="measure">
       <h2><small>Chapter 12</small>Measure and check</h2>
+      <h3>Measure Line: add up lines in every size</h3>
+      <p>Press <kbd>M</kbd>. As in AccuMark <em>Measure ▸ Line Length</em>, every line you click is added up: L1 + L2 + L3 = total, in every size at once. A <em>line</em> is one piece of a seam or internal line between two grade points (points made with Cut Point count).</p>
+      <ol class="steps">
+        <li><div>Move over the pattern: the line under the cursor lights up and shows its length. Click it. It is labelled <strong>L1</strong> on the sheet and the <strong>Measure</strong> window opens at the right.</div></li>
+        <li><div>Click more lines: L2, L3, … The window has <strong>one row per size</strong> (it scrolls for 80 sizes) with a column per line, the total Σ, and Δ, the change from the previous size.</div></li>
+        <li><div>Click a picked line again to take it out. <kbd>Backspace</kbd> removes the last one. <kbd>Shift</kbd>+click takes every line from the last one up to the clicked one. Hold <kbd>Alt</kbd> to measure the <em>cut line</em> instead of the sew line (labelled ✂), or switch <em>Cut line</em> on in the tool strip.</div></li>
+        <li><div><kbd>Enter</kbd> or right-click = <strong>OK</strong>: the measurement goes into the list in the window, where you can rename it ("Front armhole"), reopen it, copy it for Excel (<em>Copy</em>, one row per size) or use it for <em>Grade to spec</em>. <kbd>Esc</kbd> cancels.</div></li>
+      </ol>
+      <p><strong>Compare.</strong> Click a line on <em>another</em> piece while a measurement is open (or <kbd>Ctrl</kbd>+click to force a new group on the same piece): a second group B starts. The window then shows Σ A, Σ B and the difference B − A in every size (the button flips it to A − B). Type a <em>target ease</em> and a tolerance: each size turns green if it is within tolerance, red if not. Example: A = front armhole + back armhole, B = sleeve cap, target ease 15 ± 3 mm. Name a group by typing in its chip.</p>
+      <p>The <em>Measure</em> box in the window switches between length along the line, straight distance, dX only and dY only. In nested view (<kbd>Alt+N</kbd>) you can click the outline of any size shown. Each row always uses that size's own pattern.</p>
       <div class="tbl"><table>
         <thead><tr><th>Tool</th><th>What you get</th></tr></thead>
         <tbody>
-          <tr><td>Measure <kbd>M</kbd></td><td>Click two points: length, dX, dY, angle, plus a per-size table. <kbd>Alt</kbd>+click a line for its length in every size.</td></tr>
+          <tr><td>Measure <kbd>M</kbd> ▸ Distance (<kbd>Tab</kbd>)</td><td>Point to point: click two points for length, dX, dY and angle, plus a table with a row per size. <kbd>Ctrl</kbd>+click three points for an angle. <kbd>Alt</kbd>+click a point for its position in every size.</td></tr>
           <tr><td>Piece info <kbd>Ctrl+I</kbd></td><td>Sew length, cut length and area of the selected piece in every size.</td></tr>
           <tr><td>Compare length <kbd>Ctrl+Shift+L</kbd></td><td>Add (+) and subtract (−) seams across pieces, e.g. sleeve cap − front armhole − back armhole = ease, per size. <em>Edit segment to target</em> fixes it on the spot.</td></tr>
           <tr><td>Walk <kbd>W</kbd></td><td>Click the start on the moving piece, then on the fixed piece. Arrow keys or the wheel walk the seam; <kbd>N</kbd> drops a matching notch pair. A walk ratio of 2 gathers 2:1 onto a band.</td></tr>
@@ -499,13 +547,17 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
           <tr><td><kbd>Shift+D</kbd> <kbd>Shift+L</kbd> <kbd>Shift+U</kbd></td><td>Dart · Pleat · Slash &amp; spread</td></tr>
           <tr><td>In Dart / Pleat / Slash &amp; spread</td><td>Right-click or type a number = exact values · <kbd>Shift</kbd> = round values · <kbd>+</kbd> <kbd>−</kbd> = number of pleats or slashes · <kbd>F</kbd> = flip pleat fold · <kbd>L</kbd> = pleats up to a last line · <kbd>Tab</kbd> = rotate / parallel · <kbd>Backspace</kbd> = back one click</td></tr>
           <tr><td><kbd>K</kbd> <kbd>W</kbd> <kbd>M</kbd> <kbd>H</kbd> <kbd>Z</kbd></td><td>Slash · Walk · Measure · Hand · Zoom</td></tr>
+          <tr><td>In Measure (Line)</td><td>Click = add a line (again = remove) · <kbd>Shift</kbd>+click = extend the run · <kbd>Alt</kbd>+click = cut line · <kbd>Ctrl</kbd>+click or another piece = compare · <kbd>Backspace</kbd> = last line off · <kbd>Enter</kbd> / right-click = OK · <kbd>Esc</kbd> = cancel · <kbd>Tab</kbd> = Distance mode</td></tr>
+          <tr><td><kbd>Shift+Alt+L</kbd></td><td>Measure Line (opens the Measure window)</td></tr>
+          <tr><td>In a size table (grading, rules, Measure)</td><td>Arrows = move cell · <kbd>Enter</kbd> = save and next size · <kbd>Tab</kbd> = next cell · <kbd>Ctrl+V</kbd> = paste an Excel column into consecutive sizes · <kbd>Esc</kbd> = undo typing</td></tr>
+          <tr><td><kbd>Shift+Alt+B</kbd> · digits + <kbd>Enter</kbd></td><td>Rule badges on / off · with points selected and the rule window open (or badges on): apply rule #n</td></tr>
           <tr><td><kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd></td><td>Undo / redo</td></tr>
           <tr><td><kbd>Ctrl+S</kbd> <kbd>Ctrl+O</kbd> <kbd>Ctrl+Alt+N</kbd></td><td>Save · Open · New</td></tr>
           <tr><td><kbd>Ctrl+Alt+I</kbd> <kbd>Ctrl+Shift+E</kbd> <kbd>Ctrl+P</kbd></td><td>Import · Export DXF · Export PDF</td></tr>
           <tr><td><kbd>Ctrl+D</kbd> <kbd>Ctrl+L</kbd> <kbd>Alt+R</kbd></td><td>Duplicate piece · Lock piece · Rotate 90°</td></tr>
           <tr><td><kbd>Ctrl+G</kbd> <kbd>Alt+N</kbd> <kbd>Alt+T</kbd></td><td>Grading table · Nested view · Point tracking</td></tr>
           <tr><td><kbd>Ctrl+[</kbd> <kbd>Ctrl+]</kbd> <kbd>Ctrl+B</kbd></td><td>Previous size · Next size · Base size</td></tr>
-          <tr><td><kbd>Shift+Alt+N</kbd> <kbd>Shift+Alt+R</kbd></td><td>Notch grid · Rule library</td></tr>
+          <tr><td><kbd>Shift+Alt+N</kbd> <kbd>Shift+Alt+R</kbd></td><td>Notch grid · Grade rules</td></tr>
           <tr><td><kbd>Ctrl+I</kbd> <kbd>Ctrl+Shift+L</kbd></td><td>Piece info · Compare length</td></tr>
           <tr><td><kbd>Ctrl+0</kbd> or <kbd>F</kbd> · <kbd>Ctrl+Alt+0</kbd></td><td>Fit everything on screen · 100 %</td></tr>
           <tr><td><kbd>Ctrl+'</kbd> · <kbd>Ctrl+Shift+'</kbd></td><td>Grid on/off · Snap to grid on/off</td></tr>
@@ -550,7 +602,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <h3>Esc did not clear my selection</h3>
       <p>An <kbd>Esc</kbd> that closes a menu, or that comes right after another <kbd>Esc</kbd> that cancelled something, keeps the selection. Press <kbd>Esc</kbd> again.</p>
       <h3>A size looks wrong but the base size is fine</h3>
-      <p>Open the grading table, switch to <em>Absolute</em>, and check that size's column. Remember the M column holds the S → M step, and an incremental edit of L also moves the larger sizes.</p>
+      <p>Open the grading table, switch to <em>Total from base size</em>, and check that size's row. Remember that a <em>step</em> edit of L also moves every size further from the base (the tinted rows); use the total view, or <em>Edit L only</em>, to change one size. Rule badges (<kbd>Shift+Alt+B</kbd>) show an amber <code>*</code> where a point linked to a rule was edited by hand.</p>
       <h3>An imported DXF has no seam allowance</h3>
       <p>When the file only has a cut line, ProwdCAD treats it as the sew line with no seam and says so in the import report. Use <span class="menu">Seam ▸ Internal → seam</span> if the file carried the sew line as an internal line.</p>
     </section>
@@ -567,6 +619,8 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
           <tr><td>Start point</td><td>Point 1 of a piece. Also where a cutter starts.</td></tr>
           <tr><td>Base size</td><td>The size you draft in (★). Other sizes are steps from it.</td></tr>
           <tr><td>Nest</td><td>All sizes of a piece drawn on top of each other.</td></tr>
+          <tr><td>Rule table / rule</td><td>A numbered set of grading steps per size (AccuMark rule table). Points linked to a rule follow it; rule badges show the number.</td></tr>
+          <tr><td>Size break</td><td>A size where a grading step changes; between breaks the change is shared evenly (Smart fill ▸ Split by break).</td></tr>
           <tr><td>Half piece</td><td>A symmetric piece stored as one half and opened at output.</td></tr>
           <tr><td>Walk</td><td>Rolling one seam along another to compare lengths and set notches.</td></tr>
           <tr><td>Locked internal</td><td>An internal line tied to a sew segment or point; it follows every change of the outline in every size.</td></tr>

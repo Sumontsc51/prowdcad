@@ -324,6 +324,7 @@ input.sg-in:focus { border-color: var(--accent); background: #101a26; }
 .sg-brk.on { color: var(--warn); }
 td.sg-rh.brk { border-bottom: 1px solid var(--warn); }
 .seg .seg-sub { color: var(--dim); font-size: 10px; }
+.seg button.on .seg-sub { color: inherit; opacity: .7; }
 
 /* grading table (dock) */
 .gr-body { display: flex; gap: 8px; align-items: flex-start; min-height: 0; }

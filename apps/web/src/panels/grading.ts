@@ -162,7 +162,7 @@ export function renderGrading(app: App, host: HTMLElement) {
     GS.live = null;
   };
 
-  const note = noteEl(app, view, null);
+  let note = noteEl(app, view, null);
   const strip = h('div.gr-strip');
   const grid = sizeGrid({
     rows: sizeRows(line, app.activeSize, breaks), cols, state: GS.scroll, cls: 'gr',
@@ -177,7 +177,8 @@ export function renderGrading(app: App, host: HTMLElement) {
       GS.focus = { r, c };
       GS.aff = new Set(ops.affectedSizes(sizes.length, b, r, view));
       for (const tr of grid.table.querySelectorAll('tbody tr[data-r]')) tr.classList.toggle('aff', GS.aff.has(+(tr as HTMLElement).dataset.r!));
-      note.replaceWith(noteEl(app, view, { r, sizes: sizes.map(s => s.name), b }, () => { app.gradeAbsolute = true; GS.scroll.focus = { r, c }; app.invalidate('panels'); requestAnimationFrame(() => (host.querySelector(`input[data-r="${r}"][data-c="${c}"]`) as HTMLInputElement | null)?.focus()); }));
+      const nn = noteEl(app, view, { r, sizes: sizes.map(s => s.name), b }, () => { app.gradeAbsolute = true; GS.scroll.focus = { r, c }; app.invalidate('panels'); requestAnimationFrame(() => (host.querySelector(`input[data-r="${r}"][data-c="${c}"]`) as HTMLInputElement | null)?.focus()); });
+      note.replaceWith(nn); note = nn;
     },
     onInput: (r, c, v) => { GS.live = v === null ? null : { r, c, v }; drawStrip(strip, app, pts, cols, b, view, sizes.map(s => s.id), live.id); },
   });

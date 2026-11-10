@@ -200,7 +200,8 @@ export function sizeGrid(o: SGOpts): SizeGrid {
       const v = parseLen(inp.value.trim());
       o.onInput?.(r, c, inp.value.trim() && Number.isFinite(v) ? v : null);
     });
-    inp.addEventListener('focus', () => { st.focus = { r, c }; o.onFocus?.(r, c); setTimeout(() => { try { inp.select(); } catch { /* */ } }, 0); });
+    // select the text once focused; select() also FOCUSES, so only when the cell still has focus (else two cells ping-pong)
+    inp.addEventListener('focus', () => { st.focus = { r, c }; o.onFocus?.(r, c); setTimeout(() => { if (document.activeElement === inp) try { inp.select(); } catch { /* */ } }, 0); });
     inp.addEventListener('blur', () => { commitInput(inp); });
     inp.addEventListener('keydown', e => {
       e.stopPropagation();

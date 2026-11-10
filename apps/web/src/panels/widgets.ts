@@ -37,7 +37,7 @@ export function lengthInput(mm: number, onCommit: (mm: number) => void, opt: { m
     e.stopPropagation();
   });
   inp.addEventListener('blur', commit);
-  inp.addEventListener('focus', () => { orig = inp.value; setTimeout(() => inp.select(), 0); });
+  inp.addEventListener('focus', () => { orig = inp.value; setTimeout(() => { if (document.activeElement === inp) inp.select(); }, 0); });
   return inp;
 }
 
@@ -66,7 +66,7 @@ export function numberInput(v: number, onCommit: (v: number) => void, opt: { min
     e.stopPropagation();
   });
   inp.addEventListener('blur', commit);
-  inp.addEventListener('focus', () => { orig = inp.value; setTimeout(() => inp.select(), 0); });
+  inp.addEventListener('focus', () => { orig = inp.value; setTimeout(() => { if (document.activeElement === inp) inp.select(); }, 0); });
   return inp;
 }
 
