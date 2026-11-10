@@ -290,10 +290,10 @@ function writeRules(app: App, lib: RuleLibrary, rules: GradeRule[], touched: Map
 
 // ───────────── click a point, type a number = apply rule #n ─────────────
 let digitBuf = '';
-let digitTimer = 0;
 /**
  * With the Grade Rules window open (or rule badges on) and points selected, digits typed on the
- * canvas collect a rule number: Enter (or a 1.2 s pause) applies it, Esc / Backspace edit it.
+ * canvas collect a rule number: Enter applies it (never on its own: a stray Select filter digit must
+ * not apply a rule), Esc cancels, Backspace edits it.
  * Returns true when the key was consumed (main.ts calls this before the tool's own keys).
  */
 export function ruleDigitKey(app: App, e: KeyboardEvent): boolean {
@@ -301,7 +301,6 @@ export function ruleDigitKey(app: App, e: KeyboardEvent): boolean {
   const active = (ruleWindowOpen() || settings.ruleBadges) && app.sel.anchors.length > 0;
   if (!active) { digitBuf = ''; return false; }
   const apply = () => {
-    window.clearTimeout(digitTimer);
     const n = digitBuf; digitBuf = '';
     if (!n) return;
     try {
@@ -313,14 +312,12 @@ export function ruleDigitKey(app: App, e: KeyboardEvent): boolean {
   };
   if (/^[0-9]$/.test(e.key)) {
     digitBuf += e.key;
-    window.clearTimeout(digitTimer);
-    digitTimer = window.setTimeout(apply, 1200);
     app.status(`Apply rule #${digitBuf} to ${app.sel.anchors.length} point(s) · Enter = apply now · Esc = cancel`);
     return true;
   }
   if (!digitBuf) return false;
   if (e.key === 'Enter') { apply(); return true; }
   if (e.key === 'Backspace') { digitBuf = digitBuf.slice(0, -1); app.status(digitBuf ? `Apply rule #${digitBuf}` : 'Rule number cleared'); return true; }
-  if (e.key === 'Escape') { window.clearTimeout(digitTimer); digitBuf = ''; app.status('Rule number cancelled'); return true; }
+  if (e.key === 'Escape') { digitBuf = ''; app.status('Rule number cancelled'); return true; }
   return false;
 }

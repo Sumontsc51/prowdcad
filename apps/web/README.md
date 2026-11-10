@@ -137,7 +137,7 @@ The **Inspector** shows *Lock grading* for a piece. For a sew grade point it add
 | Ctrl+[ / Ctrl+] / Ctrl+B | Previous / next / base size |
 | Ctrl+Alt+C / V / X / Y / M | Copy grade / paste / paste X only / paste Y only / Smart paste |
 | Ctrl+R · Shift+Alt+R · Shift+Alt+B | Apply rule by number or name · Grade rules window (Ctrl+Shift+R also bound; browser-reserved) · rule badges |
-| digits + Enter | With points selected and the Grade rules window open (or badges on): apply rule #n (Enter or a 1.2 s pause; Esc cancels). Takes precedence over the Select filter keys 0–5 only in that state |
+| digits + Enter | With points selected and the Grade rules window open (or badges on): apply rule #n (Enter applies, Esc cancels; nothing is applied without Enter). Takes precedence over the Select filter keys 0–5 only in that state |
 | Shift+Alt+L | Measure line (Measure tool in Line mode + the Measure window) |
 | Ctrl+I · Ctrl+Shift+L | Piece info · Compare length |
 | X | Cut Point tool |
