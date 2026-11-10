@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ProwdCAD</title>
+<title>ProwdCAD PRO</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{
   --bg:#0b0b0d; --panel:#141417; --panel2:#1b1b20; --line:#2a2a31; --line2:#3a3a44;
@@ -25,6 +26,7 @@ input[type=checkbox]{accent-color:var(--accent);width:auto}
 #menubar{display:flex;align-items:center;height:34px;background:var(--panel);border-bottom:1px solid var(--line);padding:0 10px;user-select:none;z-index:60;position:relative}
 #logo{font:600 12px var(--mono);letter-spacing:.14em;color:var(--accent);margin-right:14px;white-space:nowrap}
 #logo span{color:var(--dim);font-weight:400}
+#menus{display:flex;align-items:center;gap:1px}
 .menu-root{position:relative}
 .menu-root>button{padding:6px 10px;border-radius:4px;color:var(--text)}
 .menu-root>button:hover,.menu-root.open>button{background:var(--panel2)}
@@ -89,7 +91,7 @@ input[type=color]{border:1px solid var(--line);border-radius:3px;background:var(
 /* ---- canvas ---- */
 #canvaswrap{flex:1;position:relative;background:#39393f;min-width:0}
 #svg{position:absolute;inset:0;width:100%;height:100%;display:block;background:#39393f;touch-action:none}
-#floattool{position:absolute;top:12px;left:12px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:5px;display:flex;flex-direction:column;gap:3px;box-shadow:0 8px 22px rgba(0,0,0,.5);z-index:20}
+#floattool{position:absolute;top:12px;left:12px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:5px;display:grid;grid-template-columns:36px 36px;gap:3px;box-shadow:0 8px 22px rgba(0,0,0,.5);z-index:20}
 #floattool button{width:36px;height:34px;border-radius:5px;color:var(--dim);font:600 11px var(--mono);display:flex;align-items:center;justify-content:center;position:relative}
 #floattool button:hover{background:var(--panel2);color:var(--text)}
 #floattool button.active{background:var(--accent);color:#141414}
@@ -102,7 +104,8 @@ input[type=color]{border:1px solid var(--line);border-radius:3px;background:var(
 #floattool .flymenu button:hover{background:rgba(255,255,255,.07)}
 #floattool .flymenu button.sel{color:var(--accent)}
 #floattool .flymenu .flylabel{font:600 11px var(--sans);letter-spacing:.02em}
-#floattool .tsep{height:1px;background:var(--line);margin:2px 3px}
+#floattool .tsep{height:1px;background:var(--line);margin:2px 3px;grid-column:1/-1}
+#floattool .flywrap{grid-column:auto}
 #statsbar{position:absolute;left:0;right:0;bottom:0;height:26px;background:var(--panel);border-top:1px solid var(--line);display:flex;align-items:center;gap:22px;padding:0 14px;font:11px var(--mono);color:var(--dim);z-index:15}
 #statsbar b{color:var(--text);font-weight:500}
 #statsbar .warn{color:var(--danger)}
@@ -120,6 +123,13 @@ input[type=color]{border:1px solid var(--line);border-radius:3px;background:var(
 .dialog code{font:11px var(--mono);background:var(--panel2);padding:1px 5px;border-radius:3px}
 #toast{position:fixed;bottom:38px;left:50%;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line2);color:var(--text);padding:8px 16px;border-radius:6px;font:12px var(--mono);opacity:0;transition:opacity .2s;pointer-events:none;z-index:300;box-shadow:0 8px 24px rgba(0,0,0,.5)}
 #toast.show{opacity:1}
+.dialog.wide{max-width:900px;min-width:560px}
+.mchart{width:100%;border-collapse:collapse;font:11px var(--mono)}
+.mchart th{color:var(--dim);font-weight:400;text-align:left;padding:3px 6px;border-bottom:1px solid var(--line);font-size:10px}
+.mchart td{padding:3px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+.mchart td.num{text-align:right;white-space:nowrap}
+.mchart .dim,.dim{color:var(--dim)} .good{color:#5ad17a} .bad{color:var(--danger)}
+#modebar .mode-btn.keymap{margin-left:10px}
 kbd{font:10px var(--mono);background:var(--panel2);border:1px solid var(--line2);border-bottom-width:2px;border-radius:3px;padding:0 4px}
 </style>
 </head>
@@ -199,6 +209,9 @@ const S={
   draft:null,             // in-progress piece points
   fileName:{design:"untitled.wptn",marker:"untitled.wmrk"},
   vb:{design:null,marker:null},   // viewBoxes {x,y,w,h}
+  msel:[],                // multi-selected points [{pc,i}] (rectangle select)
+  keymap:store.get("wp.keymap")||"prowd",   // "prowd" | "tuka"
+  programParam:null,
 };
 function saveView(){store.set("wp.view",JSON.stringify(S.view));}
 function activePattern(){return S.patterns.find(p=>p.id===S.activePatternId)||null;}
@@ -206,8 +219,8 @@ function selPiece(){const p=activePattern();return p?p.pieces.find(pc=>pc.id===S
 
 /* ---------- model constructors ---------- */
 function newPattern(name,size){
-  return {type:"wptn",version:1,id:uid(),name:name||"Untitled",size:size||"M",
-          measurements:[],pieces:[],derivedFrom:null};
+  return {type:"wptn",version:2,id:uid(),name:name||"Untitled",size:size||"M",
+          measurements:[],pieces:[],derivedFrom:null,poms:[],targets:{},tolerance:7.62};
 }
 function defaultLineStyles(){
   return {
@@ -250,7 +263,7 @@ function dashFor(style,px){
    - smooth point : hIn,hOut present & mirrored (a "direction line" through the anchor)
    - hybrid point : one handle present, the other null (curved one side, straight other)
    Handles are ABSOLUTE coordinates (a "ball on a stick"), so they move with the anchor. */
-function newPoint(x,y,curve){return {id:uid(),x,y,curve:!!curve,hIn:null,hOut:null,grade:{}};}
+function newPoint(x,y,curve){return {id:uid(),x,y,curve:!!curve,hIn:null,hOut:null,grade:{},name:""};}
 function hOut(pt){return pt.hOut||null;}
 function hIn(pt){return pt.hIn||null;}
 function hasHandle(pt){return !!(pt.hIn||pt.hOut);}
@@ -459,6 +472,1225 @@ function generateSize(basePattern,sizeName,targets){
 }
 
 /* =========================================================
+   PRO 2.0 — HISTORY (Undo / Redo)
+   Snapshot of the document (patterns + marker) after every settled render.
+   Drags and pans are skipped; the release render records the result.
+   ========================================================= */
+const HIST={stack:[],pos:-1,max:150,mute:false};
+function docState(){return JSON.stringify({patterns:S.patterns,active:S.activePatternId,marker:S.marker});}
+function histCheckpoint(){
+  if(HIST.mute||(typeof drag!=="undefined"&&drag))return;
+  const s=docState();
+  if(HIST.pos>=0&&HIST.stack[HIST.pos]===s)return;
+  HIST.stack.splice(HIST.pos+1);HIST.stack.push(s);
+  if(HIST.stack.length>HIST.max)HIST.stack.shift();
+  HIST.pos=HIST.stack.length-1;
+}
+function histRestore(s){
+  const j=JSON.parse(s);S.patterns=j.patterns;S.activePatternId=j.active;S.marker=j.marker;
+  const p=activePattern();
+  if(!p||!p.pieces.find(pc=>pc.id===S.sel.piece)){S.sel.piece=null;S.sel.point=null;}
+  else{const pc=selPiece();if(S.sel.point!=null&&!pc.points[S.sel.point])S.sel.point=null;}
+  if(S.marker&&S.sel.placement!=null&&!S.marker.placements[S.sel.placement])S.sel.placement=null;
+  S.msel=[];S.op=null;
+  HIST.mute=true;render();HIST.mute=false;
+}
+function undo(){if(HIST.pos<=0)return toast("Nothing to undo");HIST.pos--;histRestore(HIST.stack[HIST.pos]);status("Undo");}
+function redo(){if(HIST.pos>=HIST.stack.length-1)return toast("Nothing to redo");HIST.pos++;histRestore(HIST.stack[HIST.pos]);status("Redo");}
+
+/* =========================================================
+   PRO 2.0 — MEASUREMENT CHART (TUKAdesign-compatible naming)
+   • Name a grade point "03 Hip/m" → the contour from that point to the next
+     grade (non-curve) point is measured. Same names add up across pieces.
+   • /q2 overrides the multiplier (default = piece quantity incl. opposite pairs).
+   • Measure tool (K / TUKA: M) saves straight or along-contour measurements.
+   • Internal lines can be named the same way (right-click › Name internal line).
+   ========================================================= */
+function parseMeasName(s){
+  if(s==null)return null;s=String(s).trim();if(!s)return null;
+  const parts=s.split("/");const base=parts[0].trim();let m=false,q=null;
+  for(const f of parts.slice(1)){const t=f.trim().toLowerCase();
+    if(t==="m")m=true;else if(/^q\d+(\.\d+)?$/.test(t))q=parseFloat(t.slice(1));}
+  return {base,m,q};
+}
+/* matching key: "01 High Waist" ≡ "Waist (High)" ≡ "high waist" */
+function normMeas(s){
+  return String(s||"").toLowerCase().replace(/^\s*\d+[\s._-]*/,"").replace(/\([^)]*\)/g,m=>" "+m.slice(1,-1)+" ")
+    .replace(/[^a-z0-9]+/g," ").trim().split(/\s+/).filter(Boolean).sort().join(" ");
+}
+function pieceMult(pc){return (pc.qty||1)*(pc.oppositeX?2:1)*(pc.oppositeY?2:1);}
+function contourRun(pc,i){             // segments from point i to the next grade (non-curve) point
+  const n=pc.points.length;const segs=[i];let j=(i+1)%n,g=0;
+  while(j!==i&&pc.points[j].curve&&g++<n){segs.push(j);j=(j+1)%n;}
+  return {segs,end:j};
+}
+function contourLenBetween(pc,ia,ib,dir){ // along the outline from point ia to ib (dir +1 / −1)
+  const n=pc.points.length;let L=0,i=ia,g=0;
+  if(dir>0){while(i!==ib&&g++<=n){L+=segLen(pc,i);i=(i+1)%n;}}
+  else{while(i!==ib&&g++<=n){const k=(i-1+n)%n;L+=segLen(pc,k);i=k;}}
+  return L;
+}
+function findPt(p,ref){ // ref {pc:pieceId,id:pointId}
+  const pc=p.pieces.find(x=>x.id===ref.pc);if(!pc)return null;
+  const i=pc.points.findIndex(q=>q.id===ref.id);return i<0?null:{pc,i,pt:pc.points[i]};
+}
+function partLength(p,part){
+  const a=findPt(p,part.a),b=findPt(p,part.b);if(!a||!b)return null;
+  if(part.type==="contour"&&a.pc===b.pc)return contourLenBetween(a.pc,a.i,b.i,part.dir||1);
+  if(part.type==="dx")return Math.abs(b.pt.x-a.pt.x);
+  if(part.type==="dy")return Math.abs(b.pt.y-a.pt.y);
+  return Math.hypot(b.pt.x-a.pt.x,b.pt.y-a.pt.y);
+}
+function partLabel(p,part){
+  const a=findPt(p,part.a),b=findPt(p,part.b);if(!a||!b)return "(missing point)";
+  const t={line:"straight",contour:"contour",dx:"X",dy:"Y"}[part.type]||part.type;
+  return a.pc===b.pc?`${a.pc.name} · ${t} ${a.i+1}→${b.i+1}`:`${a.pc.name} ${a.i+1} → ${b.pc.name} ${b.i+1} · ${t}`;
+}
+function measureRows(p){
+  const rows=new Map();
+  const add=(name,label,len,q,src)=>{const k=normMeas(name)||name;let r=rows.get(k);
+    if(!r){r={key:k,name,value:0,parts:[]};rows.set(k,r);}
+    r.parts.push({label,len,q,src});r.value+=len*q;};
+  if(!p)return [];
+  for(const pc of p.pieces){
+    pc.points.forEach((pt,i)=>{const nm=parseMeasName(pt.name);if(!nm||!nm.m)return;
+      const run=contourRun(pc,i);let L=0;for(const s of run.segs)L+=segLen(pc,s);
+      add(nm.base,`${pc.name} · pt ${i+1}→${run.end+1}`,L,nm.q!=null?nm.q:pieceMult(pc),{kind:"seg",pc:pc.id,id:pt.id});});
+    const groups={};
+    (pc.internals||[]).forEach(il=>{const nm=parseMeasName(il.name);if(!nm||!nm.m)return;
+      const k=il.gid||il.name;(groups[k]=groups[k]||{nm,L:0}).L+=Math.hypot(il.x2-il.x1,il.y2-il.y1);});
+    for(const k in groups){const g=groups[k];add(g.nm.base,`${pc.name} · internal line`,g.L,g.nm.q!=null?g.nm.q:pieceMult(pc),{kind:"int",pc:pc.id,gid:k});}
+  }
+  for(const pm of (p.poms||[]))for(const part of pm.parts){
+    const L=partLength(p,part);if(L==null)continue;
+    add(pm.name,partLabel(p,part),L,part.q!=null?part.q:1,{kind:"pom",pom:pm.id});
+  }
+  return [...rows.values()].sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+}
+function rowByKey(p,key){return measureRows(p).find(r=>r.key===key);}
+function targetsOf(p){p.targets=p.targets||{};return p.targets;}   // key → {target(mm), tol(mm), label}
+function tolOf(p,key){const t=targetsOf(p)[key];return t&&t.tol!=null?t.tol:(p.tolerance!=null?p.tolerance:3.175);}
+function chartStatus(p,r){
+  const t=targetsOf(p)[r.key];if(!t||t.target==null)return {diff:null,ok:null};
+  const d=r.value-t.target;return {diff:d,ok:Math.abs(d)<=tolOf(p,r.key)+1e-9};
+}
+function showMeasurementChart(){
+  const p=activePattern();if(!p)return toast("No active pattern");
+  const rows=measureRows(p);
+  const body=rows.length?`<table class="mchart"><tr><th>Measurement</th><th>Parts</th><th>Pattern</th><th>Target</th><th>Diff</th><th>Tol ±</th><th></th></tr>
+    ${rows.map(r=>{const st=chartStatus(p,r),t=targetsOf(p)[r.key];
+      return `<tr><td><b>${esc(r.name)}</b></td>
+        <td class="dim">${r.parts.map(x=>`${esc(x.label)} = ${fmt(x.len)}${x.q!==1?` ×${x.q}`:""}`).join("<br>")}</td>
+        <td class="num">${fmt(r.value)}</td>
+        <td><input type="number" step="any" class="mc-t" data-k="${r.key}" value="${t&&t.target!=null?fmt(t.target):""}" style="width:72px"></td>
+        <td class="num ${st.ok===false?"bad":st.ok?"good":""}">${st.diff==null?"":(st.diff>0?"+":"")+fmt(st.diff)}</td>
+        <td><input type="number" step="any" class="mc-tol" data-k="${r.key}" value="${fmt(tolOf(p,r.key))}" style="width:56px"></td>
+        <td>${st.ok==null?"":st.ok?'<span class="good">✓</span>':'<span class="bad">✗</span>'}</td></tr>`;}).join("")}
+    </table>`
+    :`<p>No measurements yet.</p><p class="hintline">Name a grade point with <code>/m</code> (e.g. <code>03 Hip/m/q2</code>) in the Point panel, or use the Measure tool (${keyFor("tool.measure")||"K"}) and “Add to chart”.</p>`;
+  dialog(`Measurement Chart — ${esc(p.name)} (${S.units})`,body+
+    `<p class="hintline" style="margin-top:8px">Contour = from the named grade point to the next grade point. /q overrides the count (default = piece quantity). Targets come from an order Excel or can be typed here.</p>`,
+    [{label:"Export CSV",action:()=>{exportChartCSV(p);return false;}},
+     {label:"Close",primary:true}]);
+  $("#dialog").classList.add("wide");
+  $$(".mc-t").forEach(i=>i.onchange=e=>{const k=e.target.dataset.k,v=e.target.value.trim();const t=targetsOf(p);
+    t[k]=t[k]||{};t[k].target=v===""?null:toMM(v);t[k].label=t[k].label||(rows.find(r=>r.key===k)||{}).name;render();showMeasurementChart();});
+  $$(".mc-tol").forEach(i=>i.onchange=e=>{const k=e.target.dataset.k;const t=targetsOf(p);t[k]=t[k]||{};t[k].tol=toMM(e.target.value);render();showMeasurementChart();});
+}
+function exportChartCSV(p){
+  const rows=measureRows(p);const q=s=>`"${String(s).replace(/"/g,'""')}"`;
+  const lines=[["Measurement","Pattern ("+S.units+")","Target","Diff","Tolerance","Status","Parts"].map(q).join(",")];
+  for(const r of rows){const st=chartStatus(p,r),t=targetsOf(p)[r.key];
+    lines.push([r.name,fmt(r.value),t&&t.target!=null?fmt(t.target):"",st.diff==null?"":fmt(st.diff),fmt(tolOf(p,r.key)),st.ok==null?"":st.ok?"PASS":"FAIL",
+      r.parts.map(x=>x.label+" = "+fmt(x.len)+(x.q!==1?" x"+x.q:"")).join(" | ")].map(q).join(","));}
+  download((p.name+"-measurements.csv").replace(/\s+/g,"_"),lines.join("\r\n"),"text/csv");
+}
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+
+/* sidebar panel: compact live chart */
+function buildChartPanel(sb,p){
+  const rows=measureRows(p);
+  const panel=el(`<div class="panel"><h3>Measurement Chart <button class="pact" id="mc-open" title="Shift+M">open ▸</button></h3></div>`);
+  if(!rows.length)panel.appendChild(el(`<p class="hintline">Name points <code>…/m</code> or use the Measure tool to build the chart.</p>`));
+  else{
+    const list=el(`<div class="list"></div>`);
+    rows.forEach(r=>{const st=chartStatus(p,r);
+      list.appendChild(el(`<div class="list-item" style="cursor:default" title="${esc(r.parts.map(x=>x.label).join("\n"))}">
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(r.name)}</span>
+        <span>${fmt(r.value)}</span>${st.diff!=null?`<span class="sub ${st.ok?"good":"bad"}">${st.diff>0?"+":""}${fmt(st.diff)}</span>`:""}</div>`));});
+    panel.appendChild(list);
+  }
+  sb.appendChild(panel);
+  $("#mc-open").onclick=showMeasurementChart;
+}
+
+/* =========================================================
+   PRO 2.0 — TOOLS: Measure · Move Point (Q) · Move Points (rect) · Program
+   ========================================================= */
+function snapAnchor(w,maxPx){const a=nearestAnchor(w,maxPx||14);if(!a)return null;const pt=a.piece.points[a.idx];return {pc:a.piece,i:a.idx,x:pt.x,y:pt.y};}
+function measureClick(w){
+  const a=snapAnchor(w);const pos=a||{x:w.x,y:w.y};
+  if(!S.op||S.op.kind!=="measure"||S.op.b){S.op={kind:"measure",a:pos,cur:w};render();status("Measure: click the second point");return;}
+  S.op.b=pos;render();showMeasureResult(S.op.a,S.op.b);
+}
+function showMeasureResult(a,b){
+  const p=activePattern();
+  const dx=b.x-a.x,dy=b.y-a.y,D=Math.hypot(dx,dy),ang=(deg(Math.atan2(-dy,dx))+360)%360;
+  let fwd=null,bwd=null;
+  if(a.pc&&b.pc&&a.pc===b.pc&&a.i!==b.i){fwd=contourLenBetween(a.pc,a.i,b.i,1);bwd=contourLenBetween(a.pc,a.i,b.i,-1);}
+  const canSave=!!(a.pc&&b.pc);
+  const names=measureRows(p).map(r=>r.name);
+  dialog("Measure",`
+    <table class="mchart">
+      <tr><td>D (straight)</td><td class="num"><b>${fmtU(D)}</b></td></tr>
+      <tr><td>X</td><td class="num">${fmtU(Math.abs(dx))}</td></tr>
+      <tr><td>Y</td><td class="num">${fmtU(Math.abs(dy))}</td></tr>
+      <tr><td>Angle</td><td class="num">${ang.toFixed(2)}°</td></tr>
+      ${fwd!=null?`<tr><td>Contour →</td><td class="num">${fmtU(fwd)}</td></tr><tr><td>Contour ←</td><td class="num">${fmtU(bwd)}</td></tr>`:""}
+    </table>
+    ${canSave?`<h4>Add to Measurement Chart</h4>
+      <div class="row"><label>Name</label><input id="ms-name" type="text" list="ms-names" placeholder="e.g. 08 Inseam"><datalist id="ms-names">${names.map(n=>`<option value="${esc(n)}">`).join("")}</datalist></div>
+      <div class="row"><label>Type</label><select id="ms-type">
+        ${fwd!=null?`<option value="contour:${fwd<=bwd?1:-1}">Contour (shorter, ${fmtU(Math.min(fwd,bwd))})</option><option value="contour:${fwd<=bwd?-1:1}">Contour (longer, ${fmtU(Math.max(fwd,bwd))})</option>`:""}
+        <option value="line">Straight (D)</option><option value="dx">X only</option><option value="dy">Y only</option></select></div>
+      <div class="row"><label>Count ×</label><input id="ms-q" type="number" step="any" value="1" style="max-width:70px"></div>
+      <p class="hintline">Same name = parts add up (e.g. front rise on panel + waistband).</p>`
+    :`<p class="hintline">Snap both clicks to points to save this as a chart measurement.</p>`}`,
+    canSave?[{label:"Close"},{label:"Add to chart",primary:true,action:()=>{
+      const name=$("#ms-name").value.trim();if(!name){toast("Enter a name");return false;}
+      const [type,dir]=$("#ms-type").value.split(":");
+      const part={type,a:{pc:a.pc.id,id:a.pc.points[a.i].id},b:{pc:b.pc.id,id:b.pc.points[b.i].id},q:parseFloat($("#ms-q").value)||1};
+      if(type==="contour")part.dir=+dir;
+      p.poms=p.poms||[];let pm=p.poms.find(x=>normMeas(x.name)===normMeas(name));
+      if(!pm){pm={id:uid(),name,parts:[]};p.poms.push(pm);}
+      pm.parts.push(part);S.op=null;render();toast(`Added to chart: ${name}`);}}]
+    :[{label:"Close",primary:true}]);
+  setTimeout(()=>{const i=$("#ms-name");if(i)i.focus();},30);
+}
+/* points (+internal endpoints) inside a world rectangle */
+function pointsInRect(p,r,onlyPiece){
+  const x1=Math.min(r.x1,r.x2),x2=Math.max(r.x1,r.x2),y1=Math.min(r.y1,r.y2),y2=Math.max(r.y1,r.y2);
+  const inR=q=>q.x>=x1&&q.x<=x2&&q.y>=y1&&q.y<=y2;
+  const pts=[],ints=[];
+  for(const pc of p.pieces){if(onlyPiece&&pc!==onlyPiece)continue;
+    pc.points.forEach((pt,i)=>{if(inR(pt))pts.push({pc:pc.id,i});});
+    (pc.internals||[]).forEach((il,k)=>{const e1=inR({x:il.x1,y:il.y1}),e2=inR({x:il.x2,y:il.y2});if(e1||e2)ints.push({pc:pc.id,k,e1,e2});});
+  }
+  return {pts,ints};
+}
+function movePointsBy(p,sel,dx,dy){
+  for(const s of sel.pts){const pc=p.pieces.find(x=>x.id===s.pc);const pt=pc&&pc.points[s.i];if(!pt)continue;
+    pt.x+=dx;pt.y+=dy;moveHandlesWith(pt,dx,dy);}
+  for(const s of (sel.ints||[])){const pc=p.pieces.find(x=>x.id===s.pc);const il=pc&&pc.internals[s.k];if(!il)continue;
+    if(s.e1){il.x1+=dx;il.y1+=dy;}if(s.e2){il.x2+=dx;il.y2+=dy;}}
+}
+function moveSelectionDialog(sel,title){
+  const p=activePattern();
+  if(!sel.pts.length&&!(sel.ints||[]).length)return toast("No points in that area");
+  const pcs=new Set(sel.pts.map(s=>s.pc));
+  dialog(title||"Move points and internals",`
+    <p>${sel.pts.length} point${sel.pts.length===1?"":"s"} on ${pcs.size} piece${pcs.size===1?"":"s"}${(sel.ints||[]).length?` · ${sel.ints.length} internal line end(s)`:""}</p>
+    <div class="row"><label>X (dX)</label><input id="mv-dx" type="number" step="any" value="0"><span class="dim">${S.units}</span></div>
+    <div class="row"><label>Y (dY)</label><input id="mv-dy" type="number" step="any" value="0"><span class="dim">${S.units}</span></div>
+    <p class="hintline">+X = right · +Y = down (screen). Negative values move left / up.</p>`,
+    [{label:"Cancel"},{label:"Move",primary:true,action:()=>{
+      const dx=toMM($("#mv-dx").value),dy=toMM($("#mv-dy").value);
+      movePointsBy(p,sel,dx,dy);render();toast(`Moved ${sel.pts.length} point(s) by ${fmt(dx)}, ${fmt(dy)} ${S.units}`);}}]);
+  setTimeout(()=>{const i=$("#mv-dx");if(i){i.focus();i.select();}},30);
+}
+function movePointDialog(pc,idx){
+  const pt=pc.points[idx];
+  dialog(`Move Point — ${esc(pc.name)} #${idx+1}`,`
+    <div class="row"><label>dX</label><input id="mp-dx" type="number" step="any" value="0"><span class="dim">${S.units}</span></div>
+    <div class="row"><label>dY</label><input id="mp-dy" type="number" step="any" value="0"><span class="dim">${S.units}</span></div>
+    <p class="hintline">Currently at X ${fmt(pt.x)} · Y ${fmt(pt.y)} ${S.units}</p>`,
+    [{label:"Cancel"},{label:"Move",primary:true,action:()=>{
+      const dx=toMM($("#mp-dx").value),dy=toMM($("#mp-dy").value);
+      pt.x+=dx;pt.y+=dy;moveHandlesWith(pt,dx,dy);syncTwin(pc,idx,twinIndex(pc,idx));render();}}]);
+  setTimeout(()=>{const i=$("#mp-dx");if(i){i.focus();i.select();}},30);
+}
+/* Program (alteration rule): set Δx/Δy per +1 unit of an alteration parameter on points in a rectangle */
+function programDialog(sel){
+  const p=activePattern();
+  if(!sel.pts.length)return toast("No points in that area");
+  p.measurements=p.measurements||[];
+  const rows=measureRows(p);
+  const params=p.measurements;
+  const cur=S.programParam&&params.find(m=>m.id===S.programParam);
+  dialog("Alteration rule (Movement Program)",`
+    <p>${sel.pts.length} point(s) selected.</p>
+    <div class="row"><label>Measurement</label><select id="pg-m">
+      ${params.map(m=>`<option value="${m.id}" ${cur&&cur.id===m.id?"selected":""}>${esc(m.name)}</option>`).join("")}
+      ${rows.filter(r=>!params.find(m=>normMeas(m.name)===r.key)).map(r=>`<option value="new:${esc(r.name)}">${esc(r.name)} (new)</option>`).join("")}
+      <option value="new:">+ new parameter…</option></select></div>
+    <div class="row" id="pg-newrow" style="display:none"><label>New name</label><input id="pg-new" type="text" placeholder="same name as the chart row, e.g. 08 Inseam"></div>
+    <div class="row"><label>Δx per +1</label><input id="pg-dx" type="number" step="any" value="0"></div>
+    <div class="row"><label>Δy per +1</label><input id="pg-dy" type="number" step="any" value="0"></div>
+    <div class="row"><label>Quick</label>
+      <button class="btn sm" data-q="-1,0">← −X</button><button class="btn sm" data-q="1,0">+X →</button>
+      <button class="btn sm" data-q="0,-1">↑ −Y</button><button class="btn sm" data-q="0,1">+Y ↓</button></div>
+    <div class="row"><label>Mode</label><select id="pg-mode"><option value="set">Set (replace)</option><option value="add">Add to existing</option><option value="clear">Clear rule on these points</option></select></div>
+    <p class="hintline">Points move Δ × (change in this measurement). For a length (inseam) select the hem end and set the direction it grows; for a girth split it over the side seams (¼ each on a 4-panel jean). The order solver fine-tunes the amount, so the direction and the ratio between points are what matter.</p>`,
+    [{label:"Cancel"},{label:"Apply",primary:true,action:()=>{
+      let mid=$("#pg-m").value;
+      if(mid.startsWith("new:")){let nm=mid.slice(4)||$("#pg-new").value.trim();if(!nm){toast("Type a name for the new parameter");return false;}
+        const r=rows.find(x=>x.name===nm);const m={id:uid(),name:nm,base:r?r.value:0};params.push(m);mid=m.id;}
+      S.programParam=mid;
+      const dx=parseFloat($("#pg-dx").value)||0,dy=parseFloat($("#pg-dy").value)||0,mode=$("#pg-mode").value;
+      for(const s of sel.pts){const pc=p.pieces.find(x=>x.id===s.pc);const pt=pc.points[s.i];pt.grade=pt.grade||{};
+        if(mode==="clear"){delete pt.grade[mid];continue;}
+        const g=pt.grade[mid]||{dx:0,dy:0};
+        pt.grade[mid]=mode==="add"?{dx:g.dx+dx,dy:g.dy+dy}:{dx,dy};}
+      S.view.movement=true;saveView();render();toast(`Rule ${mode==="clear"?"cleared":"set"} on ${sel.pts.length} point(s)`);}}]);
+  $$("#dialog [data-q]").forEach(b=>b.onclick=()=>{const [x,y]=b.dataset.q.split(",");$("#pg-dx").value=x;$("#pg-dy").value=y;});
+  const syncNew=()=>{$("#pg-newrow").style.display=$("#pg-m").value==="new:"?"flex":"none";};$("#pg-m").onchange=syncNew;syncNew();
+}
+
+/* =========================================================
+   PRO 2.0 — ALTERATION SOLVER (made-to-measure)
+   Parameters = pattern.measurements (Movement Programs on points).
+   Each target row with a parameter of the same name is solved with Newton
+   iterations on a finite-difference Jacobian, so curves, quantities and
+   multi-part measurements all land on target.
+   ========================================================= */
+function applyParamDeltas(base,deltas){ // deltas {paramId: mm}; returns new pattern (not registered)
+  const targets={};for(const m of base.measurements)targets[m.id]=m.base+(deltas[m.id]||0);
+  return generateSize(base,base.size,targets);
+}
+function solveSquare(A,b){ // Gaussian elimination with partial pivoting; returns x or null
+  const n=b.length,M=A.map((r,i)=>[...r,b[i]]);
+  for(let c=0;c<n;c++){let piv=c;for(let r=c+1;r<n;r++)if(Math.abs(M[r][c])>Math.abs(M[piv][c]))piv=r;
+    if(Math.abs(M[piv][c])<1e-12)return null;[M[c],M[piv]]=[M[piv],M[c]];
+    for(let r=0;r<n;r++){if(r===c)continue;const f=M[r][c]/M[c][c];for(let k=c;k<=n;k++)M[r][k]-=f*M[c][k];}}
+  return M.map((r,i)=>r[n]/r[i]);
+}
+function alterToTargets(base,opts){
+  opts=opts||{};
+  const tg=targetsOf(base);
+  /* pair each target row with the parameter of the same name */
+  const rows0=measureRows(base);
+  const pairs=[];
+  for(const r of rows0){const t=tg[r.key];if(!t||t.target==null)continue;
+    const m=base.measurements.find(mm=>normMeas(mm.name)===r.key);
+    const programmed=m&&base.pieces.some(pc=>pc.points.some(pt=>pt.grade&&pt.grade[m.id]&&(pt.grade[m.id].dx||pt.grade[m.id].dy)));
+    pairs.push({key:r.key,name:r.name,target:t.target,param:programmed?m.id:null,start:r.value});}
+  const active=pairs.filter(x=>x.param);
+  const valuesOf=pat=>{const rs=measureRows(pat);const o={};for(const r of rs)o[r.key]=r.value;return o;};
+  const errOf=pt=>{const v=valuesOf(pt);return active.map(x=>(v[x.key]??0)-x.target);};
+  const norm2=F=>Math.sqrt(F.reduce((s,f)=>s+f*f,0));
+  let u={};active.forEach(x=>u[x.param]=0);
+  let pat=base,F=errOf(pat),log=[];
+  const cap=Math.max(50,...active.map(x=>Math.abs(x.target-x.start)*3));   // never move a parameter wildly
+  for(let it=0;it<25&&active.length;it++){
+    const err=Math.max(...F.map(Math.abs));log.push(err);
+    if(err<0.02)break;                                          // 0.02 mm
+    const h=1,v0=valuesOf(pat);const J=active.map(()=>active.map(()=>0));
+    active.forEach((xj,j)=>{const u2=Object.assign({},u);u2[xj.param]+=h;
+      const v2=valuesOf(applyParamDeltas(base,u2));active.forEach((xi,i)=>{J[i][j]=((v2[xi.key]??0)-(v0[xi.key]??0))/h;});});
+    let du=solveSquare(J,F.map(f=>-f));
+    if(!du||du.some(d=>!isFinite(d)))du=active.map((x,i)=>Math.abs(J[i][i])>1e-9?-F[i]/J[i][i]:0);   // diagonal fallback
+    /* backtracking: accept only steps that reduce the error */
+    let step=1,ok=false;
+    for(let b=0;b<12;b++){const un=Object.assign({},u);
+      active.forEach((x,j)=>un[x.param]=clamp(u[x.param]+du[j]*step,-cap,cap));
+      const pn=applyParamDeltas(base,un),Fn=errOf(pn);
+      if(norm2(Fn)<norm2(F)){u=un;pat=pn;F=Fn;ok=true;break;}step/=2;}
+    if(!ok)break;                                              // can't improve further (conflicting rules)
+  }
+  if(pat===base)pat=applyParamDeltas(base,u);
+  const vEnd=valuesOf(pat);
+  const report=pairs.map(x=>({name:x.name,key:x.key,start:x.start,target:x.target,result:vEnd[x.key],programmed:!!x.param,
+    ok:Math.abs((vEnd[x.key]??0)-x.target)<=tolOf(base,x.key)+1e-9}));
+  return {pattern:pat,report,iterations:log.length};
+}
+
+/* =========================================================
+   PRO 2.0 — SCALE & SHRINK (Shift+Enter)
+   Warp = along each piece's grain line, weft = across it.
+   "Proportional to 100%": L ÷ (1 − s) so the piece washes back to exact size.
+   ========================================================= */
+function pieceGrainAxis(pc,fallback){
+  if(pc.grain){const dx=pc.grain.x2-pc.grain.x1,dy=pc.grain.y2-pc.grain.y1,l=Math.hypot(dx,dy);if(l>1e-6)return {x:dx/l,y:dy/l};}
+  return fallback==="x"?{x:1,y:0}:{x:0,y:1};
+}
+function scalePiece(pc,kW,kF,axisFallback){
+  const u=pieceGrainAxis(pc,axisFallback),v={x:-u.y,y:u.x};
+  const bb=polyBBox(samplePiece(pc));const c={x:(bb.x1+bb.x2)/2,y:(bb.y1+bb.y2)/2};
+  const T=q=>{const rx=q.x-c.x,ry=q.y-c.y;const a=(rx*u.x+ry*u.y)*kW,b=(rx*v.x+ry*v.y)*kF;return {x:c.x+a*u.x+b*v.x,y:c.y+a*u.y+b*v.y};};
+  const TP=o=>{const r=T(o);o.x=r.x;o.y=r.y;};
+  pc.points.forEach(pt=>{TP(pt);if(pt.hIn)TP(pt.hIn);if(pt.hOut)TP(pt.hOut);});
+  (pc.internals||[]).forEach(il=>{const a=T({x:il.x1,y:il.y1}),b=T({x:il.x2,y:il.y2});il.x1=a.x;il.y1=a.y;il.x2=b.x;il.y2=b.y;});
+  if(pc.grain){const a=T({x:pc.grain.x1,y:pc.grain.y1}),b=T({x:pc.grain.x2,y:pc.grain.y2});pc.grain={x1:a.x,y1:a.y,x2:b.x,y2:b.y};}
+  if(pc.sym){const a=T({x:pc.sym.x1,y:pc.sym.y1}),b=T({x:pc.sym.x2,y:pc.sym.y2});Object.assign(pc.sym,{x1:a.x,y1:a.y,x2:b.x,y2:b.y});}
+}
+function shrinkFactor(s,proportional){return proportional?1/Math.max(0.01,1-s):1+s;}
+function makeShrunkPattern(p,warp,weft,opts){
+  opts=opts||{};
+  const np=clone(p);np.id=uid();np.derivedFrom=p.id;
+  np.name=opts.name||(p.name+" POSTSHRINK");
+  np.shrink={warp,weft,proportional:opts.proportional!==false};
+  const kW=shrinkFactor(warp,opts.proportional!==false),kF=shrinkFactor(weft,opts.proportional!==false);
+  np.pieces.forEach(pc=>{if(opts.onlyPiece&&pc.id!==opts.onlyPiece)return;scalePiece(pc,kW,kF,opts.axis||"y");
+    if(opts.scaleSeam)pc.seam*=Math.max(kW,kF);
+    if(opts.describe)pc.annotations=[...(pc.annotations||[]),`Shrink warp ${(warp*100).toFixed(2)}% weft ${(weft*100).toFixed(2)}%`];});
+  np.targets={};   // targets were for the preshrink garment
+  return np;
+}
+function showScaleShrink(){
+  const p=activePattern();if(!p)return toast("No active pattern");
+  const o=p.order||{};
+  dialog("Scale and Shrink",`
+    <div class="row"><label>Warp (grain) %</label><input id="sh-w" type="number" step="any" value="${o.warp!=null?+(o.warp*100).toFixed(3):0}"></div>
+    <div class="row"><label>Weft (across) %</label><input id="sh-f" type="number" step="any" value="${o.weft!=null?+(o.weft*100).toFixed(3):0}"></div>
+    <div class="row"><label>Proportional to 100%</label><input id="sh-p" type="checkbox" checked></div>
+    <div class="row"><label>No-grain pieces</label><select id="sh-ax"><option value="y">warp = vertical (Y)</option><option value="x">warp = horizontal (X)</option></select></div>
+    <div class="row"><label>Scale seam</label><input id="sh-s" type="checkbox"></div>
+    <div class="row"><label>Add info to piece</label><input id="sh-d" type="checkbox" checked></div>
+    <div class="row"><label>Result</label><select id="sh-o"><option value="new">New pattern (keep original)</option><option value="inplace">Apply to this pattern</option></select></div>
+    <p class="hintline">Proportional: a 10" block with 10% shrink becomes 11.111" and washes back to 10" (TUKA “Proportional to 100%”). Off: 10" × 1.10 = 11".</p>`,
+    [{label:"Cancel"},{label:"Apply",primary:true,action:()=>{
+      const warp=(parseFloat($("#sh-w").value)||0)/100,weft=(parseFloat($("#sh-f").value)||0)/100;
+      const np=makeShrunkPattern(p,warp,weft,{proportional:$("#sh-p").checked,axis:$("#sh-ax").value,scaleSeam:$("#sh-s").checked,describe:$("#sh-d").checked});
+      if($("#sh-o").value==="inplace"){np.id=p.id;np.name=p.name;np.derivedFrom=p.derivedFrom;np.targets=p.targets;
+        const ix=S.patterns.indexOf(p);S.patterns[ix]=np;}
+      else{np.order=p.order?clone(p.order):undefined;S.patterns.push(np);S.activePatternId=np.id;}
+      render();toast(`Shrink applied — warp ${(warp*100).toFixed(2)}% · weft ${(weft*100).toFixed(2)}%`);}}]);
+}
+
+/* =========================================================
+   PRO 2.0 — PIECE COMMANDS (flip / rotate / copy / paste / zoom)
+   ========================================================= */
+function transformPieceXY(pc,f){
+  const TP=o=>{const r=f(o);o.x=r.x;o.y=r.y;};
+  pc.points.forEach(pt=>{TP(pt);if(pt.hIn)TP(pt.hIn);if(pt.hOut)TP(pt.hOut);});
+  (pc.internals||[]).forEach(il=>{const a=f({x:il.x1,y:il.y1}),b=f({x:il.x2,y:il.y2});il.x1=a.x;il.y1=a.y;il.x2=b.x;il.y2=b.y;});
+  if(pc.grain){const a=f({x:pc.grain.x1,y:pc.grain.y1}),b=f({x:pc.grain.x2,y:pc.grain.y2});pc.grain={x1:a.x,y1:a.y,x2:b.x,y2:b.y};}
+  if(pc.sym){const a=f({x:pc.sym.x1,y:pc.sym.y1}),b=f({x:pc.sym.x2,y:pc.sym.y2});Object.assign(pc.sym,{x1:a.x,y1:a.y,x2:b.x,y2:b.y});}
+}
+function reversePieceOrder(pc){reversePieceFull(pc);}   // after a reflection: keep winding
+function targetPieces(){const p=activePattern();if(!p)return[];const pc=selPiece();return pc?[pc]:p.pieces;}
+function flipPieces(axis){
+  const pcs=targetPieces();if(!pcs.length)return toast("No piece");
+  for(const pc of pcs){const bb=polyBBox(samplePiece(pc)),cx=(bb.x1+bb.x2)/2,cy=(bb.y1+bb.y2)/2;
+    transformPieceXY(pc,q=>axis==="h"?{x:2*cx-q.x,y:q.y}:{x:q.x,y:2*cy-q.y});reversePieceOrder(pc);}
+  render();toast(`Flipped ${axis==="h"?"horizontally":"vertically"} (${pcs.length} piece${pcs.length===1?"":"s"})`);
+}
+function rotatePieces(degCW){
+  const pcs=targetPieces();if(!pcs.length)return toast("No piece");
+  const a=rad(degCW),c=Math.cos(a),s=Math.sin(a);
+  for(const pc of pcs){const bb=polyBBox(samplePiece(pc)),cx=(bb.x1+bb.x2)/2,cy=(bb.y1+bb.y2)/2;
+    transformPieceXY(pc,q=>({x:cx+(q.x-cx)*c-(q.y-cy)*s,y:cy+(q.x-cx)*s+(q.y-cy)*c}));}
+  render();
+}
+let pieceClipboard=null;
+function copyPiece(){const pc=selPiece();if(!pc)return toast("Select a piece");pieceClipboard=clone(pc);toast(`Copied “${pc.name}”`);}
+function pastePiece(){
+  const p=activePattern();if(!p||!pieceClipboard)return toast("Nothing to paste");
+  const pc=clone(pieceClipboard);pc.id=uid();pc.points.forEach(pt=>pt.id=uid());pc.name+=" copy";
+  const bb=polyBBox(samplePiece(pc));transformPieceXY(pc,q=>({x:q.x+bb.w*0.15+30,y:q.y+30}));
+  p.pieces.push(pc);S.sel.piece=pc.id;S.sel.point=null;render();toast("Pasted");
+}
+function zoomAll(){fitView(S.workspace);render();}
+function zoomSelected(){
+  const pc=selPiece();if(!pc)return zoomAll();
+  const r=$("#svg").getBoundingClientRect(),ar=Math.max(.2,r.width/Math.max(1,r.height));
+  const bb=polyBBox(samplePiece(pc));const pad=Math.max(bb.w,bb.h)*.15+20;let w=bb.w+pad*2,h=bb.h+pad*2;
+  if(w/h<ar)w=h*ar;else h=w/ar;S.vb.design={x:bb.x1-(w-bb.w)/2,y:bb.y1-(h-bb.h)/2,w,h};render();
+}
+function selectAllPoints(){
+  const p=activePattern();if(!p)return;
+  const pcs=selPiece()?[selPiece()]:p.pieces;S.msel=[];
+  pcs.forEach(pc=>pc.points.forEach((pt,i)=>S.msel.push({pc:pc.id,i})));render();toast(`${S.msel.length} points selected`);
+}
+function showPieceInfo(){
+  const pc=selPiece();if(!pc)return toast("Select a piece first");
+  const poly=samplePiece(pc),bb=polyBBox(poly);
+  dialog(`Piece Info — ${esc(pc.name)}`,`
+    <table class="mchart">
+      <tr><td>Points</td><td class="num">${pc.points.length} (${pc.points.filter(q=>!q.curve).length} grade)</td></tr>
+      <tr><td>Width × Height</td><td class="num">${fmt(bb.w)} × ${fmt(bb.h)} ${S.units}</td></tr>
+      <tr><td>Area</td><td class="num">${(Math.abs(polyArea(poly))/(S.units==="inch"?645.16:S.units==="cm"?100:1)).toFixed(2)} ${S.units}²</td></tr>
+      <tr><td>Perimeter</td><td class="num">${fmtU(perimeterLength(pc))}</td></tr>
+      <tr><td>Seam allowance</td><td class="num">${fmtU(pc.seam)}</td></tr>
+      <tr><td>Quantity</td><td class="num">${pc.qty}${pc.oppositeX?" + opposite X":""}${pc.oppositeY?" + opposite Y":""} = ${pieceMult(pc)}</td></tr>
+      <tr><td>Grain angle</td><td class="num">${grainAngle(pc.grain).toFixed(1)}°</td></tr>
+      ${(pc.annotations||[]).length?`<tr><td>Notes</td><td>${pc.annotations.map(esc).join("<br>")}</td></tr>`:""}
+    </table>`,[{label:"Close",primary:true}]);
+}
+
+/* =========================================================
+   PRO 2.0 — ORDER (made-to-measure from an order Excel)
+   Reads the Neems "Pattern Sheet" (or any sheet with a measurement/target
+   table), fills chart targets, shrinkage and fabric width, and can run the
+   whole chain: alter → postshrink → marker.
+   ========================================================= */
+function sheetJSready(){if(!window.XLSX){toast("SheetJS not loaded (offline?) — Excel import unavailable");return false;}return true;}
+const ORDER_MEAS_ALIASES={  // excel label → chart key family (normalised); extend freely
+  "waist high":"high waist","waist":"waist","hip":"hip","seat":"hip","upper thigh":"upper thigh","thigh":"upper thigh",
+  "mid thigh":"mid thigh","knee":"knee","calf":"calf","ankle":"ankle","ankle leg opening":"ankle","leg opening":"ankle","hem":"ankle",
+  "inseam":"inseam","total rise":"total rise","front rise":"front rise","back rise":"back rise","outseam":"outseam","low waist":"low waist",
+  "crotch to hip":"crotch to hip","top of waistband":"waistband","waistband":"waistband"};
+function aliasKey(label){const k=normMeas(label);const a=ORDER_MEAS_ALIASES[k];return a?normMeas(a):k;}
+function cellNum(v){
+  if(v==null||v==="")return null;if(typeof v==="number")return v;
+  let s=String(v).trim().replace(/["”]/g,"");
+  let m=s.match(/^(-?\d+)\s+(\d+)\/(\d+)$/);if(m)return (+m[1])+(+m[2]/+m[3])*(+m[1]<0?-1:1);
+  m=s.match(/^(\d+)\/(\d+)$/);if(m)return +m[1]/+m[2];
+  m=s.match(/^(-?\d*\.?\d+)\s*(%|in|inch|inches|cm|mm)?/i);if(!m)return null;
+  let n=parseFloat(m[1]);return n;
+}
+function parseOrderWorkbook(wb){
+  const o={title:"",name:"",pattern:"",rows:[],warp:null,weft:null,fabricWidth:null,units:"inch",info:[]};
+  const grid=[];
+  for(const sn of wb.SheetNames){const ws=wb.Sheets[sn];const aoa=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:null});aoa.forEach(r=>grid.push(r));}
+  const txt=r=>r.map(c=>c==null?"":String(c));
+  /* header line */
+  for(const r of grid){const t=txt(r).join(" ");if(/order\s*#?\s*\d+/i.test(t)){o.title=t.trim();const m=t.match(/order\s*#?\s*(\d+)/i);o.number=m?m[1]:"";break;}}
+  for(let i=0;i<grid.length;i++){const t=txt(grid[i]).join(" ").trim();
+    if(/recommended starting pattern/i.test(t)&&grid[i+1]){o.pattern=txt(grid[i+1]).find(x=>x)||"";}
+    if(/custom\s*\(([^)]+)\)/i.test(t)){o.name=t.match(/custom\s*\(([^)]+)\)/i)[1].trim();}
+  }
+  /* measurement table: header row containing "Preshrink Target" or "MEDIDA_MOLDE" */
+  for(let i=0;i<grid.length;i++){const hdr=txt(grid[i]).map(x=>x.toLowerCase());
+    let tc=hdr.findIndex(h=>/preshrink\s*target|medida_molde|target/.test(h));
+    if(tc<0)continue;
+    const nc=hdr.findIndex(h=>/^(measurement|english|pom|point of measure|description)$/.test(h.trim()));
+    const nameCol=nc>=0?nc:0;
+    const sc=hdr.findIndex(h=>/starting\s*pattern|pattern$/.test(h));
+    let blanks=0,found=0;
+    for(let r=i+1;r<grid.length;r++){const row=grid[r];const nm=row[nameCol];
+      if(nm!=null&&/^\s*(adjustment\s*=|key information|shrinkage|garment measurements|notes?)\b/i.test(String(nm)))break;
+      const v=cellNum(row[tc]);
+      if(nm==null||String(nm).trim()===""||v==null){if(++blanks>1&&found)break;continue;}blanks=0;
+      if(v<=0)continue;                                  // "0" / "—" = not specified
+      o.rows.push({label:String(nm).trim(),key:aliasKey(nm),target:v,start:sc>=0?cellNum(row[sc]):null});found++;}
+    if(found)break;
+  }
+  /* key information */
+  const near=(re)=>{for(const r of grid){const t=txt(r);for(let c=0;c<t.length;c++){if(re.test(t[c])){for(let k=c+1;k<t.length;k++){if(t[k]!=="")return r[k];}}}}return null;};
+  const pct=v=>{const n=cellNum(v);if(n==null)return null;return (typeof v==="string"&&/%/.test(v))||n>1?n/100:n;};
+  o.warp=pct(near(/warp/i));o.weft=pct(near(/weft/i));
+  const fw=near(/fabric\s*width/i);o.fabricWidth=cellNum(fw);
+  const hem=near(/hem\s*type/i);if(hem)o.info.push("Hem: "+hem);
+  const fly=near(/fly\s*type/i);if(fly)o.info.push("Fly: "+fly);
+  const tol=near(/tolerance/i);o.tolerance=cellNum(tol);
+  if(/cm\b/i.test(JSON.stringify(grid).slice(0,2000))&&!/inch|"/.test(JSON.stringify(grid).slice(0,2000)))o.units="cm";
+  return o;
+}
+function unitToMM(v,u){return v==null?null:v*(u==="inch"?25.4:u==="cm"?10:1);}
+function importOrderFile(file){
+  if(!sheetJSready())return;
+  const rd=new FileReader();
+  rd.onload=()=>{let wb;try{wb=XLSX.read(rd.result,{type:"array"});}catch(e){return toast("Could not read Excel: "+e.message);}
+    const o=parseOrderWorkbook(wb);o.file=file.name;
+    if(!o.rows.length)return toast("No measurement table with a Target column found");
+    showOrderDialog(o);};
+  rd.readAsArrayBuffer(file);
+}
+function orderBaseName(o){
+  const n=(o.number?o.number+"_":"")+(o.name||"").replace(/\s+/g,"");
+  return n||o.file.replace(/\.(xlsx|xlsm|xls)$/i,"");
+}
+function showOrderDialog(o){
+  const p=activePattern();
+  const rows=p?measureRows(p):[];
+  const chartKeys=new Set(rows.map(r=>r.key));
+  const paramKeys=new Set(p?p.measurements.map(m=>normMeas(m.name)):[]);
+  dialog(`Order — ${esc(o.title||o.file)}`,`
+    <p>${o.name?`Customer <b>${esc(o.name)}</b> · `:""}${o.pattern?`starting pattern <code>${esc(o.pattern)}</code>`:""}</p>
+    <p class="dim">${o.info.join(" · ")}${o.warp!=null?` · shrink warp ${(o.warp*100).toFixed(1)}% weft ${(o.weft*100).toFixed(1)}%`:""}${o.fabricWidth?` · fabric ${o.fabricWidth} ${o.units}`:""}</p>
+    <table class="mchart"><tr><th>Excel</th><th>Target</th><th>Chart row</th><th>Rule</th></tr>
+      ${o.rows.map(r=>`<tr><td>${esc(r.label)}</td><td class="num">${r.target}</td>
+        <td>${chartKeys.has(r.key)?'<span class="good">✓ '+esc(rows.find(x=>x.key===r.key).name)+'</span>':'<span class="dim">— not measured</span>'}</td>
+        <td>${paramKeys.has(r.key)?'<span class="good">✓</span>':'<span class="dim">—</span>'}</td></tr>`).join("")}
+    </table>
+    <div class="row" style="margin-top:8px"><label>Units in Excel</label><select id="od-u"><option value="inch" ${o.units==="inch"?"selected":""}>inch</option><option value="cm" ${o.units==="cm"?"selected":""}>cm</option><option value="mm">mm</option></select></div>
+    <div class="row"><label>Tolerance ±</label><input id="od-tol" type="number" step="any" value="${o.tolerance!=null?o.tolerance:0.3}" style="max-width:70px"><span class="dim">same units</span></div>
+    <p class="hintline">“Chart row” = this pattern already measures it. “Rule” = points are programmed for it, so Auto-alter can hit the target. Rows without a rule are checked only.</p>`,
+    [{label:"Cancel"},
+     {label:"Set targets only",action:()=>{applyOrder(o,false);}},
+     {label:"Auto-alter → new pattern",primary:true,disabled:!p,action:()=>{applyOrder(o,true);}}]);
+  $("#dialog").classList.add("wide");
+}
+function applyOrder(o,alter){
+  const p=activePattern();if(!p)return toast("Open the closest-fit pattern first");
+  const u=$("#od-u").value,tol=unitToMM(parseFloat($("#od-tol").value)||0.3,u);
+  p.tolerance=tol;const t=targetsOf(p);
+  for(const r of o.rows){t[r.key]={target:unitToMM(r.target,u),label:r.label,tol};}
+  p.order={number:o.number,name:o.name,file:o.file,warp:o.warp,weft:o.weft,fabricWidth:unitToMM(o.fabricWidth,u),units:u,baseName:orderBaseName(o)};
+  if(!alter){render();toast("Targets set — see Measurement Chart");return;}
+  runAutoAlter(p);
+}
+function runAutoAlter(p){
+  const res=alterToTargets(p);
+  const np=res.pattern;np.name=(p.order&&p.order.baseName)||(p.name+" altered");np.size=p.size;np.order=p.order?clone(p.order):undefined;np.targets=clone(p.targets);np.tolerance=p.tolerance;
+  S.patterns.push(np);S.activePatternId=np.id;S.sel={piece:null,point:null,placement:null};render();
+  showAlterReport(res,np);
+}
+function showAlterReport(res,np){
+  const r=res.report;
+  dialog(`Auto-alter — ${esc(np.name)}`,`
+    <table class="mchart"><tr><th>Measurement</th><th>Was</th><th>Target</th><th>Now</th><th>Diff</th><th></th></tr>
+    ${r.map(x=>`<tr><td>${esc(x.name)}${x.programmed?"":' <span class="dim">(no rule)</span>'}</td><td class="num">${fmt(x.start)}</td><td class="num">${fmt(x.target)}</td><td class="num"><b>${fmt(x.result)}</b></td>
+      <td class="num ${x.ok?"good":"bad"}">${x.result-x.target>0?"+":""}${fmt(x.result-x.target)}</td><td>${x.ok?'<span class="good">✓</span>':'<span class="bad">✗</span>'}</td></tr>`).join("")}</table>
+    <p class="hintline">${res.iterations} solver pass${res.iterations===1?"":"es"}. Rows marked “no rule” need a Movement Program (select points → Program) before they can be altered automatically.</p>`,
+    [{label:"Close",primary:true}]);
+  $("#dialog").classList.add("wide");
+}
+/* one-click chain for an order: alter → postshrink → marker */
+function runOrderChain(){
+  const p=activePattern();if(!p)return toast("No pattern");
+  if(!p.order)return toast("Import an order Excel first (File › Import order…)");
+  const res=alterToTargets(p);const alt=res.pattern;alt.name=p.order.baseName+"_Preshrink";alt.order=clone(p.order);alt.targets=clone(p.targets);alt.tolerance=p.tolerance;
+  S.patterns.push(alt);
+  const post=makeShrunkPattern(alt,p.order.warp||0,p.order.weft||0,{name:p.order.baseName+"_Postshrink",describe:true});post.order=clone(p.order);
+  S.patterns.push(post);S.activePatternId=post.id;
+  S.marker={type:"wmrk",version:1,pattern:clone(post),fabricWidth:p.order.fabricWidth||1500,shrinkX:0,shrinkY:0,placements:[],mode:"marker"};
+  buildInstances();autoNest();
+  S.workspace="marker";S.sel={piece:null,point:null,placement:null};fitView("marker");render();
+  const bad=res.report.filter(x=>!x.ok).length;
+  toast(`Order chain done: ${alt.name} → ${post.name} → marker${bad?` · ${bad} measurement(s) off target`:""}`);
+}
+function exportOrderBundle(){
+  const p=activePattern();const M=S.marker;
+  const base=(p&&p.order&&p.order.baseName)||(p?p.name:"pattern");
+  if(p){download(base+"_pattern.wptn",JSON.stringify(p,null,1),"application/json");exportDXF("aama",base+"_Preshrink.dxf");exportChartCSV(p);}
+  if(M){download(base+"_marker.wmrk",JSON.stringify(M,null,1),"application/json");exportPLT(base+".plt");exportPlotDXF(base+"_marker.dxf");}
+  toast("Bundle exported");
+}
+
+/* =========================================================
+   PRO 2.0 — MARKER: auto-nest (bottom-left fill) + HPGL/PLT export
+   ========================================================= */
+function autoNest(opts){
+  const M=S.marker;if(!M)return;
+  opts=opts||{};const gap=opts.gap!=null?opts.gap:3,W=M.fabricWidth;
+  const items=M.placements.map((pl,i)=>{const pc=M.pattern.pieces.find(x=>x.id===pl.pieceId);
+    /* grain must run along the fabric length (x). Mirrored copies flip the grain angle. */
+    let g=pc&&pc.grain?grainAngle(pc.grain):90;if(pl.mx)g=180-g;if(pl.my)g=-g;
+    const g0=((Math.round(g*100)/100)%360+360)%360;
+    const rots=pc&&pc.rotationAllow?[g0,(g0+180)%360]:[g0];
+    const cands=rots.map(rot=>{const poly=placementPoly(Object.assign({},pl,{x:0,y:0,rot}),true);const bb=polyBBox(poly);return {rot,bb,area:bb.w*bb.h};});
+    return {i,pl,cands,area:Math.abs(polyArea(placementPoly(Object.assign({},pl,{x:0,y:0,rot:0}),false)))};}).sort((a,b)=>b.area-a.area);
+  const placed=[];   // bounding boxes {x1,y1,x2,y2}
+  const fits=(bb,x,y)=>{if(y+bb.h>W+1e-6||y<-1e-6||x<-1e-6)return false;for(const q of placed){if(x<q.x2&&x+bb.w>q.x1&&y<q.y2&&y+bb.h>q.y1)return false;}return true;};
+  for(const it of items){
+    let best=null;
+    const xs=[0,...placed.map(q=>q.x2)],ys=[0,...placed.map(q=>q.y2)];
+    for(const c of it.cands)for(const x of xs)for(const y of ys){
+      if(!fits(c.bb,x,y))continue;
+      const score=(x+c.bb.w)*1000+y; if(!best||score<best.score)best={score,x,y,c};}
+    if(!best){const x=Math.max(0,...placed.map(q=>q.x2));best={x,y:0,c:it.cands[0]};}
+    const {x,y,c}=best;it.pl.rot=c.rot;it.pl.x=x-c.bb.x1+gap/2;it.pl.y=y-c.bb.y1+gap/2;
+    placed.push({x1:x,y1:y,x2:x+c.bb.w+gap,y2:y+c.bb.h+gap});
+  }
+  /* precise fix-up: nudge any true-polygon overlaps apart along x */
+  for(let i=0;i<M.placements.length;i++){let g=0;while(!placementValid(i)&&g++<200)M.placements[i].x+=2;}
+}
+function exportPLT(fname){
+  const M=S.marker;if(!M)return toast("Marker is empty");
+  const U=40;const L=[];L.push("IN;SP1;");
+  const pen=(x,y,down)=>L.push(`${down?"PD":"PU"}${Math.round(x*U)},${Math.round(y*U)};`);
+  for(const pl of M.placements){
+    const poly=placementPoly(pl,false);if(poly.length<3)continue;
+    poly.forEach((q,k)=>pen(q.x,-q.y+M.fabricWidth,k>0));pen(poly[0].x,-poly[0].y+M.fabricWidth,true);
+    const pc=M.pattern.pieces.find(x=>x.id===pl.pieceId);const sc=shrinkScale();
+    if(pc){for(const il of (pc.internals||[])){
+        if(il.kind==="drill"){for(const [dx,dy] of [[5,0],[0,5]]){const tp=transformPoly([{x:(il.x1-dx)*sc.x,y:(il.y1-dy)*sc.y},{x:(il.x1+dx)*sc.x,y:(il.y1+dy)*sc.y}],pl);
+          pen(tp[0].x,-tp[0].y+M.fabricWidth,false);pen(tp[1].x,-tp[1].y+M.fabricWidth,true);}continue;}
+        const tp=transformPoly([{x:il.x1*sc.x,y:il.y1*sc.y},{x:il.x2*sc.x,y:il.y2*sc.y}],pl);
+        pen(tp[0].x,-tp[0].y+M.fabricWidth,false);pen(tp[1].x,-tp[1].y+M.fabricWidth,true);}
+      if(pc.grain){const tp=transformPoly([{x:pc.grain.x1*sc.x,y:pc.grain.y1*sc.y},{x:pc.grain.x2*sc.x,y:pc.grain.y2*sc.y}],pl);
+        pen(tp[0].x,-tp[0].y+M.fabricWidth,false);pen(tp[1].x,-tp[1].y+M.fabricWidth,true);}
+      {const sg=polyArea(samplePiece(pc))>0?1:-1,sv=S.view.seam;S.view.seam=true;
+       for(const nt of (pc.notches||[]))for(const [u,v] of notchGeom(pc,nt,sg)){const a=transformPoly([{x:u.x*sc.x,y:u.y*sc.y},{x:v.x*sc.x,y:v.y*sc.y}],pl);
+        pen(a[0].x,-a[0].y+M.fabricWidth,false);pen(a[1].x,-a[1].y+M.fabricWidth,true);}S.view.seam=sv;}
+    }
+  }
+  L.push("PU0,0;SP0;IN;");
+  download(fname||((M.pattern.name+".plt").replace(/\s+/g,"_")),L.join("\n"),"application/octet-stream");
+  toast("PLT exported (40 units/mm)");
+}
+
+/* =========================================================
+   PRO 2.0 — DXF IMPORT v2: BLOCK/INSERT per piece (TUKAcad, Gerber, Lectra, Optitex)
+   ========================================================= */
+function parseDXFFull(txt){
+  const raw=txt.split(/\r\n|\r|\n/);const pairs=[];
+  for(let i=0;i+1<raw.length;i+=2)pairs.push([raw[i].trim(),raw[i+1]]);
+  const ents=[],blocks={};let i=0,cur=null,curBlock=null,section="";
+  const ENT=new Set(["LINE","LWPOLYLINE","POLYLINE","VERTEX","SEQEND","POINT","TEXT","MTEXT","SPLINE","ARC","CIRCLE","INSERT"]);
+  const flush=()=>{if(cur){(curBlock?curBlock.ents:ents).push(cur);cur=null;}};
+  while(i<pairs.length){const [c,v]=pairs[i];const val=v.trim();
+    if(c==="0"){flush();
+      if(val==="SECTION"){section=pairs[i+1]?pairs[i+1][1].trim():"";}
+      else if(val==="BLOCK"){curBlock={name:"",ents:[],bx:0,by:0};}
+      else if(val==="ENDBLK"){if(curBlock){blocks[curBlock.name]=curBlock;}curBlock=null;}
+      else if(ENT.has(val)){cur={etype:val,layer:"0",pts:[],x:0,y:0,x2:0,y2:0,text:"",closed:false,name:"",rot:0,sx:1,sy:1,fit:[],ctrl:[],bulge:[]};}
+      i++;continue;}
+    if(cur){const f=parseFloat(val);
+      if(c==="8")cur.layer=val;else if(c==="2")cur.name=val;else if(c==="70")cur.closed=((parseInt(val)||0)&1)===1;
+      else if(c==="10"){if(cur.etype==="LWPOLYLINE")cur.pts.push({x:f,y:0});else if(cur.etype==="SPLINE")cur.ctrl.push({x:f,y:0});else cur.x=f;}
+      else if(c==="20"){if(cur.etype==="LWPOLYLINE")cur.pts[cur.pts.length-1].y=-f;else if(cur.etype==="SPLINE")cur.ctrl[cur.ctrl.length-1].y=-f;else cur.y=-f;}
+      else if(c==="11"){if(cur.etype==="SPLINE")cur.fit.push({x:f,y:0});else cur.x2=f;}
+      else if(c==="21"){if(cur.etype==="SPLINE")cur.fit[cur.fit.length-1].y=-f;else cur.y2=-f;}
+      else if(c==="42"&&cur.etype==="LWPOLYLINE")cur.bulge[cur.pts.length-1]=f;
+      else if(c==="1")cur.text=val;else if(c==="50")cur.rot=f;else if(c==="41")cur.sx=f;else if(c==="42")cur.sy=f;}
+    else if(curBlock){if(c==="2")curBlock.name=val;else if(c==="10")curBlock.bx=parseFloat(val);else if(c==="20")curBlock.by=-parseFloat(val);}
+    i++;}
+  flush();
+  const stitch=list=>{const out=[];for(let k=0;k<list.length;k++){const e=list[k];
+    if(e.etype==="POLYLINE"){const pl={etype:"POLY",layer:e.layer,pts:[],closed:e.closed};k++;
+      while(k<list.length&&list[k].etype==="VERTEX"){pl.pts.push({x:list[k].x,y:list[k].y});k++;}
+      if(k<list.length&&list[k].etype!=="SEQEND")k--;out.push(pl);}
+    else if(e.etype==="LWPOLYLINE")out.push({etype:"POLY",layer:e.layer,pts:e.pts,closed:e.closed});
+    else if(e.etype==="SPLINE"){const pts=e.fit.length>=2?e.fit:e.ctrl;out.push({etype:"POLY",layer:e.layer,pts:sampleOpen(pts.map(q=>({x:q.x,y:q.y,curve:true,hIn:null,hOut:null}))),closed:false,spline:true});}
+    else if(e.etype!=="VERTEX"&&e.etype!=="SEQEND")out.push(e);}
+    return out;};
+  for(const b in blocks)blocks[b].ents=stitch(blocks[b].ents);
+  return {ents:stitch(ents),blocks};
+}
+function importDXF2(txt,fname){
+  let d;try{d=parseDXFFull(txt);}catch(err){return toast("DXF parse failed: "+err.message);}
+  const inserts=d.ents.filter(e=>e.etype==="INSERT"&&d.blocks[e.name]&&d.blocks[e.name].ents.some(x=>x.etype==="POLY"&&LAYER_MAP[x.layer]==="boundary"));
+  if(!inserts.length)return importDXF(txt,fname);           // flat file → v1 importer
+  const report={pieces:0,notches:0,grains:0,texts:0,internals:0,sew:0,unknownLayers:{},unsupported:{}};
+  const pat=newPattern(fname.replace(/\.dxf$/i,""),"import");
+  const place=(e,q)=>{const b=d.blocks[e.name];const c=Math.cos(rad(-e.rot||0)),s=Math.sin(rad(-e.rot||0));
+    const x=(q.x-b.bx)*(e.sx||1),y=(q.y-b.by)*(e.sy||1);return {x:e.x+x*c-y*s,y:e.y+x*s+y*c};};
+  const all=[];
+  for(const ins of inserts){const b=d.blocks[ins.name];
+    const bnd=b.ents.filter(x=>x.etype==="POLY"&&LAYER_MAP[x.layer]==="boundary").sort((a,c)=>Math.abs(polyArea(c.pts))-Math.abs(polyArea(a.pts)))[0];
+    const sew=b.ents.find(x=>x.etype==="POLY"&&LAYER_MAP[x.layer]==="sew");
+    const pc=newPiece(ins.name);pc.seam=0;
+    let pts=bnd.pts.map(q=>place(ins,q));if(pts.length>1&&Math.hypot(pts[0].x-pts[pts.length-1].x,pts[0].y-pts[pts.length-1].y)<0.01)pts.pop();
+    const turn=b.ents.filter(x=>x.etype==="POINT"&&LAYER_MAP[x.layer]==="turn").map(q=>place(ins,q));
+    const curv=b.ents.filter(x=>x.etype==="POINT"&&LAYER_MAP[x.layer]==="curvept").map(q=>place(ins,q));
+    /* if the file marks turn points, treat every other vertex as a curve point (TUKA/Gerber convention) */
+    pc.points=pts.map(q=>{const isTurn=turn.length?turn.some(t=>Math.hypot(t.x-q.x,t.y-q.y)<0.3):true;
+      const isCurve=curv.some(t=>Math.hypot(t.x-q.x,t.y-q.y)<0.3)||(turn.length&&!isTurn);return newPoint(q.x,q.y,isCurve);});
+    if(pc.points.length<3)continue;
+    if(sew&&sew.pts.length>=3){const sp=sew.pts.map(q=>place(ins,q));   // seam allowance ≈ mean distance cut→sew
+      let dsum=0,n=0;for(const q of pc.points){let bd=1e9;for(const s2 of sp){const dd=Math.hypot(s2.x-q.x,s2.y-q.y);if(dd<bd)bd=dd;}dsum+=bd;n++;}
+      const sa=n?dsum/n:0;if(sa>0.5&&sa<60){pc.seam=Math.round(sa*100)/100;pc.sewLine=sp;report.sew++;}}
+    for(const e of b.ents){const role=LAYER_MAP[e.layer];
+      if(e===bnd||e===sew)continue;
+      if(!role){report.unknownLayers[e.layer]=(report.unknownLayers[e.layer]||0)+1;continue;}
+      if(role==="grain"&&e.etype==="LINE"){const a=place(ins,{x:e.x,y:e.y}),c=place(ins,{x:e.x2,y:e.y2});pc.grain={x1:a.x,y1:a.y,x2:c.x,y2:c.y};report.grains++;}
+      else if((role==="internal"||role==="drill"||role==="mirror")&&(e.etype==="LINE"||e.etype==="POLY")){
+        const segs=e.etype==="LINE"?[[{x:e.x,y:e.y},{x:e.x2,y:e.y2}]]:e.pts.slice(0,-1).map((q,k)=>[q,e.pts[k+1]]);
+        for(const [a0,b0] of segs){const a=place(ins,a0),c=place(ins,b0);pc.internals.push({x1:a.x,y1:a.y,x2:c.x,y2:c.y});report.internals++;}}
+      else if(role==="notch"){const q=e.etype==="LINE"?place(ins,{x:e.x,y:e.y}):place(ins,{x:e.x,y:e.y});
+        let best=null,bd=6;for(let seg=0;seg<pc.points.length;seg++)for(let s=0;s<=SEG_STEPS;s++){const t=s/SEG_STEPS,pt=pointOnSegment(pc,seg,t);const dd=Math.hypot(pt.x-q.x,pt.y-q.y);if(dd<bd){bd=dd;best={seg,t};}}
+        if(!best&&e.etype==="LINE"){const q2=place(ins,{x:e.x2,y:e.y2});for(let seg=0;seg<pc.points.length;seg++)for(let s=0;s<=SEG_STEPS;s++){const t=s/SEG_STEPS,pt=pointOnSegment(pc,seg,t);const dd=Math.hypot(pt.x-q2.x,pt.y-q2.y);if(dd<bd){bd=dd;best={seg,t};}}}
+        if(best){pc.notches.push(best);report.notches++;}}
+      else if((e.etype==="TEXT"||e.etype==="MTEXT")&&e.text){const m=e.text.match(/^\s*piece\s*name\s*:\s*(.+)$/i);
+        if(m)pc.name=m[1].trim();else{const m2=e.text.match(/^\s*(quantity|category|size|annotation)\s*:\s*(.+)$/i);if(m2&&m2[1].toLowerCase()==="quantity"){const q=parseInt(m2[2]);if(q>0)pc.qty=q;}else pc.annotations.push(e.text);}report.texts++;}
+      else if(e.etype==="ARC"||e.etype==="CIRCLE")report.unsupported[e.etype]=(report.unsupported[e.etype]||0)+1;}
+    pat.pieces.push(pc);report.pieces++;all.push(...pc.points);
+  }
+  if(!pat.pieces.length)return showImportReport(report,fname,null);
+  const bb=polyBBox(all);pat.pieces.forEach(pc=>transformPieceXY(pc,q=>({x:q.x-bb.x1,y:q.y-bb.y1})));
+  pat.pieces.forEach(pc=>{if(pc.sewLine)pc.sewLine=pc.sewLine.map(q=>({x:q.x-bb.x1,y:q.y-bb.y1}));
+    if(!pc.grain){const b2=polyBBox(samplePiece(pc));pc.grain={x1:(b2.x1+b2.x2)/2,y1:b2.y1+b2.h*.25,x2:(b2.x1+b2.x2)/2,y2:b2.y1+b2.h*.75};}});
+  S.patterns.push(pat);S.activePatternId=pat.id;S.workspace="design";S.sel={piece:null,point:null,placement:null};
+  fitView("design");render();showImportReport(report,fname,pat);
+}
+
+/* =========================================================
+   PRO 2.1 — PATTERN-MAKING TOOLS (modelled on TUKAdesign)
+   Draft · Seam per segment + corners · Notch types · Drill ·
+   Add Point · Segment Length · Compare Length · Cut · Join ·
+   Fullness (slash & spread) · Dart · Round Corner · Align · Parallel
+   ========================================================= */
+
+/* ---------- shared helpers ---------- */
+function polySign(pc){return polyArea(samplePiece(pc))>0?1:-1;}
+function outwardNormal(pc,seg,t,sgn){const tg=segTangent(pc,seg,t);const s=sgn||polySign(pc);return {x:s*tg.y,y:-s*tg.x};}
+/* nearest point on a piece outline → {seg,t,x,y,d} (coarse sample + local refine) */
+function nearestOnPiece(pc,q){
+  const n=pc.points.length;let best=null;const N=40;
+  for(let seg=0;seg<n;seg++)for(let s=0;s<=N;s++){const t=s/N,p=pointOnSegment(pc,seg,t),d=Math.hypot(p.x-q.x,p.y-q.y);if(!best||d<best.d)best={seg,t,x:p.x,y:p.y,d};}
+  let lo=Math.max(0,best.t-1/N),hi=Math.min(1,best.t+1/N);
+  for(let k=0;k<40;k++){const m1=lo+(hi-lo)/3,m2=hi-(hi-lo)/3;const a=pointOnSegment(pc,best.seg,m1),b=pointOnSegment(pc,best.seg,m2);
+    if(Math.hypot(a.x-q.x,a.y-q.y)<Math.hypot(b.x-q.x,b.y-q.y))hi=m2;else lo=m1;}
+  const t=(lo+hi)/2,p=pointOnSegment(pc,best.seg,t);return {seg:best.seg,t,x:p.x,y:p.y,d:Math.hypot(p.x-q.x,p.y-q.y)};
+}
+function notchesXY(pc){return (pc.notches||[]).map(nt=>{const q=pointOnSegment(pc,nt.seg,nt.t);return {x:q.x,y:q.y,type:nt.type};});}
+function reattachNotches(pc,list,tol){
+  pc.notches=[];for(const n of list){const h=nearestOnPiece(pc,n);if(h.d<=(tol||1)){
+    let seg=h.seg,t=h.t;if(t>0.9999){seg=(seg+1)%pc.points.length;t=0;}pc.notches.push({seg,t,type:n.type});}}
+}
+/* grade run = from a grade (non-curve) point to the next grade point; returns {i0,i1,segs[]} */
+function runFromSeg(pc,seg){
+  const n=pc.points.length;let i0=seg,g=0;while(pc.points[i0].curve&&g++<n)i0=(i0-1+n)%n;
+  const segs=[];let i=i0;g=0;do{segs.push(i);i=(i+1)%n;}while(pc.points[i].curve&&i!==i0&&g++<n);
+  return {i0,i1:i,segs};
+}
+function runLength(pc,run){let L=0;for(const s of run.segs)L+=segLen(pc,s);return L;}
+function runAt(w){const h=nearestEdge(w);if(!h)return null;const run=runFromSeg(h.piece,h.seg);return Object.assign({pc:h.piece,hit:h},run);}
+function runPolyline(pc,run){const out=[];for(const s of run.segs)for(let k=0;k<SEG_STEPS;k++)out.push(pointOnSegment(pc,s,k/SEG_STEPS));
+  const e=pc.points[run.i1];out.push({x:e.x,y:e.y});return out;}
+/* contour arc-length helpers (whole closed outline) */
+function contourTable(pc){const n=pc.points.length,rows=[];let L=0;
+  for(let seg=0;seg<n;seg++){let prev=pointOnSegment(pc,seg,0);for(let s=1;s<=SEG_STEPS;s++){const t=s/SEG_STEPS,p=pointOnSegment(pc,seg,t);const d=Math.hypot(p.x-prev.x,p.y-prev.y);rows.push({seg,t0:(s-1)/SEG_STEPS,t1:t,L0:L,L1:L+d});L+=d;prev=p;}}
+  return {rows,total:L};}
+function arcPos(pc,seg,t){const T=contourTable(pc);for(const r of T.rows)if(r.seg===seg&&t>=r.t0-1e-9&&t<=r.t1+1e-9)return r.L0+(r.L1-r.L0)*((t-r.t0)/((r.t1-r.t0)||1));return 0;}
+function posAtArc(pc,s){const T=contourTable(pc);s=((s%T.total)+T.total)%T.total;
+  for(const r of T.rows)if(s<=r.L1+1e-9){const f=(s-r.L0)/((r.L1-r.L0)||1);return {seg:r.seg,t:r.t0+(r.t1-r.t0)*f};}
+  const r=T.rows[T.rows.length-1];return {seg:r.seg,t:r.t1};}
+
+/* reverse point order keeping shape, handles, notches, per-segment seams */
+function reversePieceFull(pc){
+  const n=pc.points.length,nx=notchesXY(pc),old=pc.seamSeg||{},ids=pc.points.map(q=>q.id);
+  pc.points.reverse();pc.points.forEach(pt=>{const h=pt.hIn;pt.hIn=pt.hOut;pt.hOut=h;});
+  const ns={};for(let k=0;k<n;k++){const nextId=pc.points[(k+1)%n].id;if(old[nextId]!=null)ns[pc.points[k].id]=old[nextId];}
+  pc.seamSeg=ns;reattachNotches(pc,nx,0.5);
+}
+/* ---------- insert point keeping the curve (de Casteljau split for bézier) ---------- */
+function blendGrade(a,b,t){const g={};const ks=new Set([...Object.keys(a.grade||{}),...Object.keys(b.grade||{})]);
+  for(const k of ks){const ga=(a.grade||{})[k]||{dx:0,dy:0},gb=(b.grade||{})[k]||{dx:0,dy:0};g[k]={dx:ga.dx+(gb.dx-ga.dx)*t,dy:ga.dy+(gb.dy-ga.dy)*t};}return g;}
+function insertPointExact(pc,seg,t,asGrade){
+  const n=pc.points.length,a=pc.points[seg],b=pc.points[(seg+1)%n];
+  const nx=notchesXY(pc);
+  const q=pointOnSegment(pc,seg,t);const np=newPoint(q.x,q.y,!asGrade);np.grade=blendGrade(a,b,t);
+  if(a.hOut||b.hIn){                                   // bézier → exact split
+    const P0=a,P1=a.hOut||a,P2=b.hIn||b,P3=b,L=(u,v)=>({x:u.x+(v.x-u.x)*t,y:u.y+(v.y-u.y)*t});
+    const A=L(P0,P1),B=L(P1,P2),C=L(P2,P3),D=L(A,B),E=L(B,C);
+    if(a.hOut)a.hOut=A;np.hIn=D;np.hOut=E;if(b.hIn)b.hIn=C;
+  }else if(a.curve||b.curve){                          // spline segment → smooth handles from tangent
+    const tg=segTangent(pc,seg,t);const la=Math.hypot(q.x-a.x,q.y-a.y)/3,lb=Math.hypot(b.x-q.x,b.y-q.y)/3;
+    np.hIn={x:q.x-tg.x*la,y:q.y-tg.y*la};np.hOut={x:q.x+tg.x*lb,y:q.y+tg.y*lb};
+  }
+  pc.points.splice(seg+1,0,np);reattachNotches(pc,nx,0.5);
+  return seg+1;
+}
+
+/* ---------- SEAM: per-segment widths + corner types ---------- */
+function seamW(pc,seg){const id=pc.points[seg]&&pc.points[seg].id;const m=pc.seamSeg||{};return (id&&m[id]!=null)?m[id]:(pc.seam||0);}
+function hasSeam(pc){if((pc.seam||0)>0)return true;const m=pc.seamSeg||{};return Object.values(m).some(v=>v>0);}
+function lineX(a,da,b,db){const det=da.x*db.y-da.y*db.x;if(Math.abs(det)<1e-12)return null;const t=((b.x-a.x)*db.y-(b.y-a.y)*db.x)/det;return {x:a.x+da.x*t,y:a.y+da.y*t};}
+function reflectAcross(p,o,dir){const l2=dir.x*dir.x+dir.y*dir.y||1;const t=((p.x-o.x)*dir.x+(p.y-o.y)*dir.y)/l2;const f={x:o.x+dir.x*t,y:o.y+dir.y*t};return {x:2*f.x-p.x,y:2*f.y-p.y};}
+function seamPolygon(pc){
+  const poly=samplePiece(pc);const n=poly.length;if(n<3)return poly;
+  if(!hasSeam(pc))return poly.map(p=>({x:p.x,y:p.y}));
+  const sgn=polyArea(poly)>0?1:-1;const corners=pc.corner||{};
+  const L=[];   // offset line per sampled edge
+  for(let i=0;i<n;i++){const a=poly[i],b=poly[(i+1)%n];const ex=b.x-a.x,ey=b.y-a.y,l=Math.hypot(ex,ey);
+    const d=seamW(pc,a.seg);if(l<1e-9){L.push(null);continue;}
+    const nx=sgn*ey/l,ny=-sgn*ex/l;L.push({a:{x:a.x+nx*d,y:a.y+ny*d},b:{x:b.x+nx*d,y:b.y+ny*d},e:{x:ex/l,y:ey/l},o:{x:a.x,y:a.y},d});}
+  const out=[];
+  for(let k=0;k<n;k++){
+    let i1=(k-1+n)%n,g=0;while(!L[i1]&&g++<n)i1=(i1-1+n)%n;const L1=L[i1],L2=L[k];if(!L1||!L2)continue;
+    const P=poly[k];const isAnchor=P.t===0;const ctype=isAnchor?(corners[pc.points[P.seg].id]||"miter"):"miter";
+    const miter=()=>{const X=lineX(L1.a,L1.e,L2.a,L2.e);
+      if(!X||Math.hypot(X.x-L1.b.x,X.y-L1.b.y)>Math.max(L1.d,L2.d)*4+2){out.push(L1.b,L2.a);}else out.push(X);};
+    if(ctype==="bevel"){out.push(L1.b,L2.a);continue;}
+    if(ctype==="square"){out.push({x:L1.b.x+L1.e.x*L2.d,y:L1.b.y+L1.e.y*L2.d},{x:L2.a.x-L2.e.x*L1.d,y:L2.a.y-L2.e.y*L1.d});continue;}
+    if(ctype==="mirrorNext"||ctype==="mirrorPrev"){
+      /* hem / fold corner: the seam of one side is mirrored across the fold (sew) line of the other */
+      const next=ctype==="mirrorNext";
+      const fold=next?{o:P,e:L2.e}:{o:P,e:L1.e};
+      const Ls=next?L1:L2,Lf=next?L2:L1;                       // Ls = side seam, Lf = folded (hem) seam
+      const Q=lineX(Ls.a,Ls.e,fold.o,fold.e);
+      const r1=reflectAcross(Ls.a,fold.o,fold.e),r2=reflectAcross({x:Ls.a.x+Ls.e.x,y:Ls.a.y+Ls.e.y},fold.o,fold.e);
+      const R=lineX(r1,{x:r2.x-r1.x,y:r2.y-r1.y},Lf.a,Lf.e);
+      if(Q&&R){if(next)out.push(Q,R);else out.push(R,Q);continue;}
+    }
+    miter();
+  }
+  return out;
+}
+function seamToolClick(w){
+  const r=runAt(w);if(!r)return toast("Click on a piece edge");
+  const pc=r.pc;S.sel.piece=pc.id;render();
+  const cur=seamW(pc,r.i0),c0=(pc.corner||{})[pc.points[r.i0].id]||"miter",c1=(pc.corner||{})[pc.points[r.i1].id]||"miter";
+  const opts=v=>[["miter","Miter (extend)"],["square","Square (right angle)"],["mirrorNext","Mirror — fold next segment (hem)"],["mirrorPrev","Mirror — fold previous segment"],["bevel","Bevel"]].map(([k,l])=>`<option value="${k}" ${v===k?"selected":""}>${l}</option>`).join("");
+  dialog(`Seam — ${esc(pc.name)} · segment ${r.i0+1}→${r.i1+1} (${fmtU(runLength(pc,r))})`,`
+    <div class="row"><label>Seam width</label><input id="sm-w" type="number" step="any" value="${fmt(cur)}"><span class="dim">${S.units}</span></div>
+    <div class="row"><label>Corner at ${r.i0+1}</label><select id="sm-c0">${opts(c0)}</select></div>
+    <div class="row"><label>Corner at ${r.i1+1}</label><select id="sm-c1">${opts(c1)}</select></div>
+    <div class="row"><label>Apply width to</label><select id="sm-to"><option value="seg">this segment</option><option value="piece">whole piece</option><option value="all">all pieces</option></select></div>
+    <p class="hintline">Hem: give the hem segment its turn-up width (e.g. 1") and set the corners where the side seams meet the hem to “Mirror — fold” so the allowance folds back correctly.</p>`,
+    [{label:"Cancel"},{label:"Apply",primary:true,action:()=>{
+      const wv=toMM($("#sm-w").value),to=$("#sm-to").value;
+      const setPiece=q=>{q.seam=wv;q.seamSeg={};};
+      if(to==="all")activePattern().pieces.forEach(setPiece);else if(to==="piece")setPiece(pc);
+      else{pc.seamSeg=pc.seamSeg||{};r.segs.forEach(s=>pc.seamSeg[pc.points[s].id]=wv);}
+      pc.corner=pc.corner||{};pc.corner[pc.points[r.i0].id]=$("#sm-c0").value;pc.corner[pc.points[r.i1].id]=$("#sm-c1").value;
+      S.view.seam=true;saveView();render();}}]);
+  setTimeout(()=>{const i=$("#sm-w");if(i){i.focus();i.select();}},30);
+}
+
+/* ---------- NOTCH types + drill holes ---------- */
+function notchSetup(){S.notch=S.notch||JSON.parse(store.get("wp.notch")||'{"type":"slit","len":6.35,"w":3.2}');return S.notch;}
+function notchGeom(pc,nt,sgn){
+  const N=notchSetup();const type=nt.type||N.type;
+  const q=pointOnSegment(pc,nt.seg,nt.t),tg=segTangent(pc,nt.seg,nt.t);const n={x:sgn*tg.y,y:-sgn*tg.x};
+  const sw=S.view.seam?seamW(pc,nt.seg):0;const c={x:q.x+n.x*sw,y:q.y+n.y*sw};
+  const L=N.len,W=N.w/2,P=(u,v)=>({x:c.x+tg.x*u-n.x*v,y:c.y+tg.y*u-n.y*v});   // u along edge, v inward
+  if(type==="v")return [[P(-W,0),P(0,L)],[P(0,L),P(W,0)]];
+  if(type==="t")return [[P(0,0),P(0,L)],[P(-W,L),P(W,L)]];
+  if(type==="castle")return [[P(-W,0),P(-W,L)],[P(-W,L),P(W,L)],[P(W,L),P(W,0)]];
+  return [[P(0,0),P(0,L)]];
+}
+function drawNotchTyped(g,pc,nt,stroke,sw,sgn){for(const [a,b] of notchGeom(pc,nt,sgn))svgEl("line",{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke,"stroke-width":sw},g);}
+function notchClick(w,e){
+  const N=notchSetup();const a=nearestAnchor(w,10);
+  if(a){const pc=a.piece;pc.notches.push({seg:a.idx,t:0,type:e&&e.altKey?undefined:N.type});S.sel.piece=pc.id;render();return;}
+  const hit=nearestEdge(w);if(hit){hit.piece.notches.push({seg:hit.seg,t:hit.t,type:N.type});S.sel.piece=hit.piece.id;render();}
+}
+function showNotchSetup(){
+  const N=notchSetup();
+  dialog("Notch Setup",`
+    <div class="row"><label>Type</label><select id="ns-t">${[["slit","Slit (I)"],["v","V"],["t","T"],["castle","Castle (U)"]].map(([k,l])=>`<option value="${k}" ${N.type===k?"selected":""}>${l}</option>`).join("")}</select></div>
+    <div class="row"><label>Depth</label><input id="ns-l" type="number" step="any" value="${fmt(N.len)}"><span class="dim">${S.units}</span></div>
+    <div class="row"><label>Width</label><input id="ns-w" type="number" step="any" value="${fmt(N.w)}"><span class="dim">${S.units}</span></div>
+    <div class="row"><label>Apply type to existing</label><input id="ns-all" type="checkbox"></div>
+    <p class="hintline">Notches sit on the cut line (seam edge) and point inward. Click a point with the Notch tool to notch exactly at that point.</p>`,
+    [{label:"Cancel"},{label:"OK",primary:true,action:()=>{N.type=$("#ns-t").value;N.len=toMM($("#ns-l").value);N.w=toMM($("#ns-w").value);store.set("wp.notch",JSON.stringify(N));
+      if($("#ns-all").checked){const p=activePattern();if(p)p.pieces.forEach(pc=>pc.notches.forEach(nt=>nt.type=N.type));}render();}}]);
+}
+function drillClick(w){
+  const pc=pieceAt(w);if(!pc)return toast("Click inside a piece");
+  pc.internals.push({x1:w.x,y1:w.y,x2:w.x,y2:w.y,kind:"drill"});S.sel.piece=pc.id;render();toast("Drill hole added");
+}
+function drawDrill(g,il,stroke,px){const r=3.2;svgEl("circle",{cx:il.x1,cy:il.y1,r,fill:"none",stroke,"stroke-width":1.1*px},g);
+  svgEl("line",{x1:il.x1-r*1.6,y1:il.y1,x2:il.x1+r*1.6,y2:il.y1,stroke,"stroke-width":px},g);svgEl("line",{x1:il.x1,y1:il.y1-r*1.6,x2:il.x1,y2:il.y1+r*1.6,stroke,"stroke-width":px},g);}
+
+/* ---------- DRAFT: new piece by points (or internal line when started inside a piece) ---------- */
+function draftClick(e,w){
+  const p=activePattern();if(!p){const np=newPattern("Untitled","M");S.patterns.push(np);S.activePatternId=np.id;}
+  const curve=!!(e.ctrlKey||e.metaKey)!==!!S.curveMode;
+  const an=nearestAnchor(w,10);let wpt=an?{x:an.piece.points[an.idx].x,y:an.piece.points[an.idx].y}:null;
+  if(!wpt){const sn=snapToBoundary(w,null);if(sn)wpt={x:sn.x,y:sn.y};}
+  if(!wpt&&S.draft&&S.draft.points.length&&e.shiftKey)wpt=constrain45(S.draft.points[S.draft.points.length-1],w);
+  if(!wpt)wpt={x:w.x,y:w.y};
+  if(!S.draft){
+    const onEdge=an?an.piece:(snapToBoundary(w,null)||{}).piece;
+    const host=onEdge?null:pieceAt(wpt);
+    S.draft={points:[newPoint(wpt.x,wpt.y,curve)],hover:null,host,kind:host?"internal":onEdge?"auto":"piece",cand:onEdge||null};
+    penLast={t:performance.now(),x:w.x,y:w.y};drag={type:"pendraw",pt:S.draft.points[0],startW:w,moved:false,curvature:false};
+    status(host?"Draft: internal line on "+host.name+" — click points, click start to close, dbl-click/Enter to end":"Draft: new piece — click points, click start (or Enter) to close · Tab = exact length/angle");
+    render();return;
+  }
+  const d=S.draft;
+  if(d.kind==="auto"){const inside=d.cand&&pointInPoly(wpt,samplePiece(d.cand))&&!nearestAnchor(w,10,d.cand);
+    d.kind=inside?"internal":"piece";d.host=inside?d.cand:null;}
+  if(isDoubleClick(penLast,w)){penLast=null;closeDraft();return;}
+  penLast={t:performance.now(),x:w.x,y:w.y};
+  if(d.points.length>=2&&Math.hypot(d.points[0].x-wpt.x,d.points[0].y-wpt.y)<9*pxScale()){
+    if(d.kind==="piece")commitDraftPiece();else commitInternal(true);return;}
+  const pt=newPoint(wpt.x,wpt.y,curve);d.points.push(pt);drag={type:"pendraw",pt,startW:w,moved:false,curvature:false};render();
+}
+function commitDraftPiece(){
+  const p=activePattern();const d=S.draft;if(!d)return;const pts=d.points;
+  while(pts.length>1){const a=pts[pts.length-1],b=pts[pts.length-2];if(Math.hypot(a.x-b.x,a.y-b.y)<6*pxScale())pts.pop();else break;}
+  if(pts.length>2&&Math.hypot(pts[0].x-pts[pts.length-1].x,pts[0].y-pts[pts.length-1].y)<6*pxScale())pts.pop();
+  if(pts.length<3){toast("A piece needs at least 3 points");return;}
+  const pc=newPiece("Piece "+(p.pieces.length+1));pc.seam=S.units==="inch"?9.525:10;pc.points=pts;
+  const bb=polyBBox(samplePiece(pc));pc.grain={x1:(bb.x1+bb.x2)/2,y1:bb.y1+bb.h*.2,x2:(bb.x1+bb.x2)/2,y2:bb.y1+bb.h*.8};
+  p.pieces.push(pc);S.draft=null;penLast=null;S.sel.piece=pc.id;S.sel.point=null;render();
+  toast(`New piece “${pc.name}” — ${pts.length} points · perimeter ${fmtU(perimeterLength(pc))}`);
+}
+function draftExactDialog(){
+  const d=S.draft;if(!d||!d.points.length)return;const last=d.points[d.points.length-1];
+  dialog("Next point — exact",`
+    <div class="row"><label>Mode</label><select id="dx-m"><option value="la">Length + angle</option><option value="xy">dX + dY</option></select></div>
+    <div class="row"><label id="dx-l1">Length</label><input id="dx-a" type="number" step="any" value="0"><span class="dim" id="dx-u1">${S.units}</span></div>
+    <div class="row"><label id="dx-l2">Angle °</label><input id="dx-b" type="number" step="any" value="0"><span class="dim" id="dx-u2">0 = right · 90 = up</span></div>
+    <div class="row"><label>Curve point</label><input id="dx-c" type="checkbox"></div>`,
+    [{label:"Cancel"},{label:"Add point",primary:true,action:()=>{
+      const m=$("#dx-m").value,a=parseFloat($("#dx-a").value)||0,b=parseFloat($("#dx-b").value)||0;let x,y;
+      if(m==="la"){const L=toMM(a);x=last.x+L*Math.cos(rad(b));y=last.y-L*Math.sin(rad(b));}else{x=last.x+toMM(a);y=last.y+toMM(b);}
+      d.points.push(newPoint(x,y,$("#dx-c").checked));render();}}]);
+  $("#dx-m").onchange=e=>{const xy=e.target.value==="xy";$("#dx-l1").textContent=xy?"dX":"Length";$("#dx-l2").textContent=xy?"dY":"Angle °";$("#dx-u2").textContent=xy?S.units+" (+ = down)":"0 = right · 90 = up";};
+  setTimeout(()=>{$("#dx-a").focus();$("#dx-a").select();},30);
+}
+
+/* ---------- ADD POINT ---------- */
+function addPointClick(e,w){
+  const hit=nearestEdge(w);if(!hit)return toast("Click on a piece edge");const pc=hit.piece;
+  const r=runFromSeg(pc,hit.seg);const from=pc.points[r.i0];
+  const sAt=arcPos(pc,hit.seg,hit.t),s0=arcPos(pc,r.i0,0);const T=contourTable(pc).total;const dist=((sAt-s0)%T+T)%T;
+  const doIns=(distMM,grade)=>{const pos=posAtArc(pc,s0+distMM);const idx=insertPointExact(pc,pos.seg,pos.t,grade);S.sel.piece=pc.id;S.sel.point=idx;render();toast(`Point added ${fmtU(distMM)} from point ${r.i0+1}`);};
+  if(!e.shiftKey){doIns(dist,!e.ctrlKey);return;}
+  dialog("Add Point — exact distance",`
+    <p>Segment ${r.i0+1}→${r.i1+1} on <b>${esc(pc.name)}</b> · length ${fmtU(runLength(pc,r))}</p>
+    <div class="row"><label>From point ${r.i0+1}</label><input id="ap-d" type="number" step="any" value="${fmt(dist)}"><span class="dim">${S.units}</span></div>
+    <div class="row"><label>Grade point</label><input id="ap-g" type="checkbox" checked></div>`,
+    [{label:"Cancel"},{label:"Add",primary:true,action:()=>doIns(toMM($("#ap-d").value),$("#ap-g").checked)}]);
+  setTimeout(()=>{$("#ap-d").focus();$("#ap-d").select();},30);
+}
+
+/* ---------- SEGMENT LENGTH (TUKA methods) ---------- */
+function segLenApply(pc,run,method,s){
+  const n=pc.points.length;const pts=pc.points;
+  const idxs=[run.i0,...run.segs.slice(1),run.i1];       // run point indices in order
+  const arc=[0];for(const sg of run.segs)arc.push(arc[arc.length-1]+segLen(pc,sg));const tot=arc[arc.length-1]||1;
+  const mv=(pt,dx,dy)=>{pt.x+=dx;pt.y+=dy;moveHandlesWith(pt,dx,dy);};
+  if(method==="curve"){
+    const A=pts[run.i0],B=pts[run.i1];const ex=B.x-A.x,ey=B.y-A.y,l2=ex*ex+ey*ey||1;
+    const sc=p=>{const t=((p.x-A.x)*ex+(p.y-A.y)*ey)/l2;const f={x:A.x+ex*t,y:A.y+ey*t};return {x:f.x+(p.x-f.x)*(1+s),y:f.y+(p.y-f.y)*(1+s)};};
+    idxs.slice(1,-1).forEach(i=>{const pt=pts[i];const r=sc(pt);const dx=r.x-pt.x,dy=r.y-pt.y;pt.x=r.x;pt.y=r.y;
+      if(pt.hIn){const h=sc(pt.hIn);pt.hIn=h;}if(pt.hOut){const h=sc(pt.hOut);pt.hOut=h;}});
+    if(A.hOut)A.hOut=sc(A.hOut);if(B.hIn)B.hIn=sc(B.hIn);return;
+  }
+  const first=method[0]==="1",ax=method.slice(2);   // "1-H" etc.
+  const movingIdx=first?run.i0:run.i1,fixedIdx=first?run.i1:run.i0;
+  const M=pts[movingIdx],F=pts[fixedIdx];
+  let dir=ax==="H"?{x:1,y:0}:ax==="V"?{x:0,y:1}:(()=>{const l=Math.hypot(M.x-F.x,M.y-F.y)||1;return {x:(M.x-F.x)/l,y:(M.y-F.y)/l};})();
+  idxs.forEach((i,k)=>{const fr=first?1-arc[k]/tot:arc[k]/tot;if(i===fixedIdx)return;mv(pts[i],dir.x*s*fr,dir.y*s*fr);});
+}
+function setRunLength(pc,run,target,method){
+  const base=clone(pc.points);const f=s=>{pc.points=clone(base);segLenApply(pc,run,method,s);return runLength(pc,run)-target;};
+  let s0=0,f0=f(0);if(Math.abs(f0)<0.005){pc.points=base;return true;}
+  let s1=method==="curve"?0.1:-f0,f1=f(s1);
+  if(method!=="curve"&&Math.abs(f1)>=Math.abs(f0)){s1=f0;f1=f(s1);}
+  for(let it=0;it<40;it++){if(Math.abs(f1)<0.005)break;const d=(f1-f0)||1e-9;const s2=s1-f1*(s1-s0)/d;s0=s1;f0=f1;s1=s2;f1=f(s1);}
+  f(s1);if(Math.abs(f1)>=0.05){pc.points=base;return false;}return true;
+}
+function segLengthClick(w){
+  const r=runAt(w);if(!r)return toast("Click on a piece edge");const pc=r.pc;S.sel.piece=pc.id;render();
+  const cur=runLength(pc,r);const hasMid=r.segs.length>1||pc.points[r.i0].hOut||pc.points[r.i1].hIn||pc.points[r.i0].curve;
+  dialog(`Segment Length — ${esc(pc.name)} ${r.i0+1}→${r.i1+1}`,`
+    <div class="row"><label>Current</label><b>${fmtU(cur)}</b></div>
+    <div class="row"><label>New length</label><input id="sl-v" type="number" step="any" value="${fmt(cur)}"><span class="dim">${S.units}</span></div>
+    <div class="row"><label>Extend method</label><select id="sl-m">
+      ${hasMid?'<option value="curve">Curve — ends fixed, curve grows</option>':""}
+      <option value="1-H">1-Horizontal (move point ${r.i0+1})</option><option value="2-H">2-Horizontal (move point ${r.i1+1})</option>
+      <option value="1-V">1-Vertical (move point ${r.i0+1})</option><option value="2-V">2-Vertical (move point ${r.i1+1})</option>
+      <option value="1-D">1-Diagonal (move point ${r.i0+1})</option><option value="2-D" selected>2-Diagonal (move point ${r.i1+1})</option></select></div>
+    <p class="hintline">Curve points between move proportionally so the curve keeps its shape. Same methods as TUKA's Segment Length Edit.</p>`,
+    [{label:"Cancel"},{label:"Apply",primary:true,action:()=>{
+      const ok=setRunLength(pc,r,toMM($("#sl-v").value),$("#sl-m").value);render();toast(ok?`Segment now ${fmtU(runLength(pc,r))}`:"Could not reach that length with this method");}}]);
+  setTimeout(()=>{$("#sl-v").focus();$("#sl-v").select();},30);
+}
+
+/* ---------- COMPARE LENGTH (Ctrl+M) ---------- */
+function compareClick(e,w){
+  const r=runAt(w);if(!r)return toast("Click on a piece edge");S.compare=S.compare||[];
+  S.compare.push({pc:r.pc.id,a:r.pc.points[r.i0].id,sign:e.shiftKey?-1:1});render();
+}
+function compareRows(){const p=activePattern();if(!p)return [];return (S.compare||[]).map(c=>{const pc=p.pieces.find(x=>x.id===c.pc);if(!pc)return null;
+  const i=pc.points.findIndex(q=>q.id===c.a);if(i<0)return null;const r=runFromSeg(pc,i);return {c,pc,r,len:runLength(pc,r)};}).filter(Boolean);}
+function buildComparePanel(sb){
+  const rows=compareRows();if(S.tool!=="compare"&&!rows.length)return;
+  const plus=rows.filter(x=>x.c.sign>0).reduce((s,x)=>s+x.len,0),minus=rows.filter(x=>x.c.sign<0).reduce((s,x)=>s+x.len,0);
+  const panel=el(`<div class="panel"><h3>Compare Length <button class="pact" id="cmp-clr">clear</button></h3>
+    <div class="list">${rows.map((x,k)=>`<div class="list-item" style="cursor:default"><button class="cmp-s" data-k="${k}" style="color:${x.c.sign>0?"#5ad17a":"var(--danger)"};width:16px">${x.c.sign>0?"+":"−"}</button><span style="flex:1">${esc(x.pc.name)} ${x.r.i0+1}→${x.r.i1+1}</span><span>${fmt(x.len)}</span></div>`).join("")||'<div class="list-item" style="color:var(--dim);cursor:default">click segments · Shift = minus</div>'}</div>
+    <table class="mchart" style="margin-top:6px"><tr><td>Total +</td><td class="num">${fmtU(plus)}</td></tr><tr><td>Total −</td><td class="num">${fmtU(minus)}</td></tr><tr><td><b>Difference</b></td><td class="num ${Math.abs(plus-minus)<=3.175?"good":"bad"}"><b>${fmtU(plus-minus)}</b></td></tr></table></div>`);
+  sb.insertBefore(panel,sb.firstChild);
+  $("#cmp-clr").onclick=()=>{S.compare=[];render();};
+  panel.querySelectorAll(".cmp-s").forEach(b=>b.onclick=()=>{const it=S.compare[+b.dataset.k];it.sign*=-1;render();});
+}
+
+/* ---------- CUT / SPLIT ---------- */
+function splitPieceAt(pc,i,j){   // indices of two points on pc → [partA(i..j), partB(j..i)]
+  const n=pc.points.length;const A=[],B=[];let k=i;while(true){A.push(pc.points[k]);if(k===j)break;k=(k+1)%n;}
+  k=j;while(true){B.push(pc.points[k]);if(k===i)break;k=(k+1)%n;}
+  return [A,B];
+}
+function piecesFromParts(pc,parts,nx){
+  const out=parts.map((pts,k)=>{const q=clone(pc);q.id=uid();q.name=pc.name+(k?" B":" A");
+    q.points=clone(pts);const last=q.points.length-1;
+    q.points[0].hIn=null;q.points[last].hOut=null;q.points[0].curve=false;q.points[last].curve=false;
+    q.notches=[];q.internals=[];q.sym=null;q.seamSeg=Object.assign({},pc.seamSeg||{});q.corner=Object.assign({},pc.corner||{});
+    if(k){const o0=q.points[0].id;q.points[0].id=uid();q.points[last].id=uid();   // shared cut ends get their own ids on part B
+      q.seamSeg[q.points[0].id]=seamW(pc,pc.points.findIndex(x=>x.id===o0));}
+    q.seamSeg[q.points[last].id]=pc.cutSeam!=null?pc.cutSeam:(pc.seam||0);    // the new cut edge
+    return q;});
+  for(const il of (pc.internals||[])){const m={x:(il.x1+il.x2)/2,y:(il.y1+il.y2)/2};const host=out.find(q=>pointInPoly(m,samplePiece(q)));if(host)host.internals.push(clone(il));}
+  out.forEach(q=>{reattachNotches(q,nx,0.5);const bb=polyBBox(samplePiece(q));
+    if(!q.grain||!pointInPoly({x:(q.grain.x1+q.grain.x2)/2,y:(q.grain.y1+q.grain.y2)/2},samplePiece(q))){
+      const ga=pc.grain?Math.atan2(pc.grain.y2-pc.grain.y1,pc.grain.x2-pc.grain.x1):Math.PI/2,L=Math.min(bb.w,bb.h)*.35+Math.max(bb.w,bb.h)*.15;
+      const c={x:(bb.x1+bb.x2)/2,y:(bb.y1+bb.y2)/2};q.grain={x1:c.x-Math.cos(ga)*L,y1:c.y-Math.sin(ga)*L,x2:c.x+Math.cos(ga)*L,y2:c.y+Math.sin(ga)*L};}});
+  return out;
+}
+function insertAtXY(pc,q){const h=nearestOnPiece(pc,q);
+  if(h.t<1e-4)return pc.points[h.seg].id;if(h.t>1-1e-4)return pc.points[(h.seg+1)%pc.points.length].id;
+  const idx=insertPointExact(pc,h.seg,h.t,true);return pc.points[idx].id;}
+function cutClick(w){
+  const hit=nearestEdge(w);if(!hit)return toast("Click on a piece edge");
+  const q=pointOnSegment(hit.piece,hit.seg,hit.t);const an=nearestAnchor(w,10,hit.piece);const pos=an?{x:an.piece.points[an.idx].x,y:an.piece.points[an.idx].y}:q;
+  if(!S.op||S.op.kind!=="cut"){S.op={kind:"cut",piece:hit.piece,a:pos,cur:w};render();status("Cut: click the second point on the same piece");return;}
+  if(hit.piece!==S.op.piece)return toast("Second click must be on the same piece");
+  const pc=S.op.piece,a=S.op.a;S.op=null;
+  const nx=notchesXY(pc);const ia=insertAtXY(pc,a),ib=insertAtXY(pc,pos);
+  const i=pc.points.findIndex(x=>x.id===ia),j=pc.points.findIndex(x=>x.id===ib);if(i===j||i<0||j<0){render();return toast("Pick two different points");}
+  const parts=splitPieceAt(pc,i,j);if(parts[0].length<3||parts[1].length<3){render();return toast("Cut line must cross the piece");}
+  const [A,B]=piecesFromParts(pc,parts,nx);const p=activePattern();const ix=p.pieces.indexOf(pc);p.pieces.splice(ix,1,A,B);
+  S.sel.piece=A.id;S.sel.point=null;render();toast(`Cut “${pc.name}” into “${A.name}” and “${B.name}”`);
+}
+
+/* ---------- JOIN PIECES ---------- */
+function rigidFromSegments(p0,p1,q0,q1){ // transform mapping p0→q0, p1→q1 direction (no scale)
+  const a1=Math.atan2(p1.y-p0.y,p1.x-p0.x),a2=Math.atan2(q1.y-q0.y,q1.x-q0.x),th=a2-a1,c=Math.cos(th),s=Math.sin(th);
+  return q=>({x:q0.x+(q.x-p0.x)*c-(q.y-p0.y)*s,y:q0.y+(q.x-p0.x)*s+(q.y-p0.y)*c});
+}
+function joinClick(w){
+  const r=runAt(w);if(!r)return toast("Click on a piece edge");
+  if(!S.op||S.op.kind!=="join"){S.op={kind:"join",a:{pc:r.pc,i0:r.i0,i1:r.i1},cur:w};S.sel.piece=r.pc.id;render();status("Join: click the matching edge on the other piece");return;}
+  const A=S.op.a;S.op=null;const pa=A.pc,pb=r.pc;if(pa===pb){render();return toast("Pick an edge on a different piece");}
+  const p=activePattern();
+  /* make windings agree */
+  const sa=polySign(pa),sb=polySign(pb);let B=clone(pb);let bi0=r.i0,bi1=r.i1;
+  if(sa!==sb){const n=B.points.length;reversePieceFull(B);const t0=n-1-bi1,t1=n-1-bi0;bi0=t0;bi1=t1;}
+  const a0=pa.points[A.i0],a1=pa.points[A.i1],b0=B.points[bi0],b1=B.points[bi1];
+  const T=rigidFromSegments(b0,b1,a1,a0);        // B's edge runs opposite to A's
+  const nxB=notchesXY(B).map(q=>Object.assign(T(q),{type:q.type}));transformPieceXY(B,T);
+  const nxA=notchesXY(pa);
+  const n=pa.points.length,m=B.points.length,pts=[];
+  for(let k=A.i1;;k=(k+1)%n){pts.push(pa.points[k]);if(k===A.i0)break;}
+  for(let k=(bi1+1)%m;k!==bi0;k=(k+1)%m)pts.push(B.points[k]);
+  const J=clone(pa);J.points=clone(pts);
+  const ja0=J.points.findIndex(x=>x.id===a0.id);                 // joint where A meets B
+  J.points[ja0].hOut=B.points[bi1].hOut?clone(B.points[bi1].hOut):null;J.points[0].hIn=B.points[bi0].hIn?clone(B.points[bi0].hIn):null;
+  J.name=pa.name+"+"+pb.name;J.internals=[...(pa.internals||[]),...(B.internals||[])];
+  J.seamSeg=Object.assign({},B.seamSeg||{},pa.seamSeg||{});J.seamSeg[a0.id]=seamW(B,bi1);J.corner=Object.assign({},B.corner||{},pa.corner||{});
+  reattachNotches(J,[...nxA,...nxB],0.5);J.sym=null;
+  const ix=p.pieces.indexOf(pa);p.pieces.splice(ix,1,J);p.pieces=p.pieces.filter(x=>x!==pb);
+  S.sel.piece=J.id;S.sel.point=null;render();
+  const gap=Math.abs(runLength(pa,{segs:runFromSeg(pa,A.i0).segs})-runLength(pb,{segs:runFromSeg(pb,r.i0).segs}));
+  toast(`Joined → “${J.name}”${gap>1?` · edge lengths differed by ${fmtU(gap)}`:""}`);
+}
+
+/* ---------- FULLNESS: slash & spread ---------- */
+function fullnessClick(w){
+  const hit=nearestEdge(w);if(!hit)return toast("Click on a piece edge");
+  const an=nearestAnchor(w,10,hit.piece);const pos=an?{x:an.piece.points[an.idx].x,y:an.piece.points[an.idx].y}:pointOnSegment(hit.piece,hit.seg,hit.t);
+  if(!S.op||S.op.kind!=="fullness"){S.op={kind:"fullness",piece:hit.piece,a:pos,cur:w};S.sel.piece=hit.piece.id;render();status("Fullness: click the other end of the slash line");return;}
+  if(hit.piece!==S.op.piece)return toast("Second click must be on the same piece");
+  const pc=S.op.piece,a=S.op.a,b=pos;S.op=null;render();
+  dialog(`Add Fullness — ${esc(pc.name)}`,`
+    <div class="row"><label>Opening at 1st</label><input id="fu-a" type="number" step="any" value="0"><span class="dim">${S.units}</span></div>
+    <div class="row"><label>Opening at 2nd</label><input id="fu-b" type="number" step="any" value="${fmt(25.4)}"><span class="dim">${S.units}</span></div>
+    <div class="row"><label>Side that moves</label><select id="fu-s"><option value="1">Side A</option><option value="2">Side B</option></select></div>
+    <p class="hintline">0 at one end = pivot (fan / flare). Same value at both ends = parallel spread. Smooth the opened edges afterwards with the Smooth tool.</p>`,
+    [{label:"Cancel"},{label:"Spread",primary:true,action:()=>{spreadPiece(pc,a,b,toMM($("#fu-a").value),toMM($("#fu-b").value),+$("#fu-s").value);}}]);
+}
+function spreadPiece(pc,a,b,da,db,side){
+  const p=activePattern();const nx=notchesXY(pc);const ia=insertAtXY(pc,a),ib=insertAtXY(pc,b);
+  let i=pc.points.findIndex(x=>x.id===ia),j=pc.points.findIndex(x=>x.id===ib);
+  const [P1,P2]=splitPieceAt(pc,i,j);const moving=side===2?P1:P2,fixed=side===2?P2:P1;
+  const A=pc.points[i],B=pc.points[j];
+  const mc=polyCentroid(moving.map(q=>({x:q.x,y:q.y})));let n={x:-(B.y-A.y),y:B.x-A.x};const nl=Math.hypot(n.x,n.y)||1;n={x:n.x/nl,y:n.y/nl};
+  if((mc.x-A.x)*n.x+(mc.y-A.y)*n.y<0)n={x:-n.x,y:-n.y};
+  let T;
+  if(Math.abs(da-db)<1e-6)T=q=>({x:q.x+n.x*da,y:q.y+n.y*da});
+  else{const f=da/(da-db);const C={x:A.x+(B.x-A.x)*f,y:A.y+(B.y-A.y)*f};
+    const far=Math.abs(da)>=Math.abs(db)?A:B,amt=Math.abs(da)>=Math.abs(db)?da:db;const R=Math.hypot(far.x-C.x,far.y-C.y)||1;
+    let th=2*Math.asin(clamp(Math.abs(amt)/(2*R),-1,1));
+    const rot=t=>q=>({x:C.x+(q.x-C.x)*Math.cos(t)-(q.y-C.y)*Math.sin(t),y:C.y+(q.x-C.x)*Math.sin(t)+(q.y-C.y)*Math.cos(t)});
+    const test=rot(th)(far);if(((test.x-far.x)*n.x+(test.y-far.y)*n.y)*Math.sign(amt||1)<0)th=-th;T=rot(th);}
+  const movedIds=new Set(moving.map(q=>q.id));
+  const merged=[];const mv=clone(moving);
+  mv.forEach(pt=>{const r=T(pt);pt.x=r.x;pt.y=r.y;if(pt.hIn)pt.hIn=T(pt.hIn);if(pt.hOut)pt.hOut=T(pt.hOut);});
+  pc.seamSeg=pc.seamSeg||{};const m0=mv[0].id,mL=mv.length-1;mv[0].id=uid();mv[mL].id=uid();
+  if(pc.seamSeg[m0]!=null)pc.seamSeg[mv[0].id]=pc.seamSeg[m0];
+  const prevId=mv[Math.max(0,mL-1)].id;if(pc.seamSeg[prevId]!=null)pc.seamSeg[mv[mL].id]=pc.seamSeg[prevId];
+  mv[0].hIn=null;mv[mv.length-1].hOut=null;mv[0].curve=false;mv[mv.length-1].curve=false;
+  const fx=clone(fixed);fx[0].hIn=null;fx[fx.length-1].hOut=null;
+  merged.push(...fx,...mv);
+  /* moved notches / internals follow the moving side */
+  const movingPoly=moving.map(q=>({x:q.x,y:q.y}));
+  const nx2=nx.map(q=>{const h=nearestOnPiece({points:moving},q);return h.d<0.6?Object.assign(T(q),{type:q.type}):q;});
+  pc.internals=(pc.internals||[]).map(il=>{const m={x:(il.x1+il.x2)/2,y:(il.y1+il.y2)/2};if(!pointInPoly(m,movingPoly))return il;
+    const u=T({x:il.x1,y:il.y1}),v=T({x:il.x2,y:il.y2});return Object.assign({},il,{x1:u.x,y1:u.y,x2:v.x,y2:v.y});});
+  const areaBefore=Math.abs(polyArea(samplePiece(pc)));
+  pc.points=merged;reattachNotches(pc,nx2,0.8);
+  render();toast(`Spread ${fmtU(da)} / ${fmtU(db)} · area +${(Math.abs(polyArea(samplePiece(pc)))-areaBefore>0?((Math.abs(polyArea(samplePiece(pc)))-areaBefore)/(S.units==="inch"?645.16:100)).toFixed(2):"0")} ${S.units==="inch"?"in²":"cm²"}`);
+}
+
+/* ---------- DART (contour cap + legs as internals + drill) ---------- */
+function dartClick(w){
+  if(!S.op||S.op.kind!=="dart"){const hit=nearestEdge(w);if(!hit)return toast("Click on the edge where the dart opens");
+    const q=pointOnSegment(hit.piece,hit.seg,hit.t);S.op={kind:"dart",piece:hit.piece,c:{x:q.x,y:q.y,seg:hit.seg,t:hit.t},cur:w};S.sel.piece=hit.piece.id;render();status("Dart: click the apex inside the piece");return;}
+  const o=S.op;S.op=null;const pc=o.piece;const apex={x:w.x,y:w.y};render();
+  dialog(`Create Dart — ${esc(pc.name)}`,`
+    <div class="row"><label>Width (intake)</label><input id="dt-w" type="number" step="any" value="${fmt(25.4)}"><span class="dim">${S.units}</span></div>
+    <div class="row"><label>Length</label><span>${fmtU(Math.hypot(apex.x-o.c.x,apex.y-o.c.y))}</span></div>
+    <div class="row"><label>Press toward</label><select id="dt-p"><option value="1">first leg side</option><option value="2">second leg side</option><option value="0">no cap (straight)</option></select></div>
+    <div class="row"><label>Drill from apex</label><input id="dt-d" type="number" step="any" value="${fmt(12.7)}"><span class="dim">${S.units}</span></div>`,
+    [{label:"Cancel"},{label:"Create",primary:true,action:()=>{createDart(pc,o.c,apex,toMM($("#dt-w").value),+$("#dt-p").value,toMM($("#dt-d").value));}}]);
+}
+function createDart(pc,c,apex,width,press,drill){
+  const s0=arcPos(pc,c.seg,c.t);const nx=notchesXY(pc);
+  const p1=posAtArc(pc,s0-width/2),p2=posAtArc(pc,s0+width/2);
+  const P1=pointOnSegment(pc,p1.seg,p1.t),P2=pointOnSegment(pc,p2.seg,p2.t);
+  const pre=pointOnSegment(pc,posAtArc(pc,s0-width/2-25).seg,posAtArc(pc,s0-width/2-25).t);
+  const post=pointOnSegment(pc,posAtArc(pc,s0+width/2+25).seg,posAtArc(pc,s0+width/2+25).t);
+  const id2=insertAtXY(pc,P2),id1=insertAtXY(pc,P1);
+  /* remove anything strictly between the legs, add the cap point */
+  const n=pc.points.length;let i1=pc.points.findIndex(x=>x.id===id1),i2=pc.points.findIndex(x=>x.id===id2);
+  const between=[];for(let k=(i1+1)%n;k!==i2;k=(k+1)%n)between.push(pc.points[k].id);
+  pc.points=pc.points.filter(x=>!between.includes(x.id));i1=pc.points.findIndex(x=>x.id===id1);
+  const L1=pc.points[i1],L2=pc.points.find(x=>x.id===id2);L1.hOut=null;L2.hIn=null;L1.curve=false;L2.curve=false;
+  const mid={x:(L1.x+L2.x)/2,y:(L1.y+L2.y)/2},cdir={x:mid.x-apex.x,y:mid.y-apex.y};
+  let cap=mid;
+  if(press){const leg=press===1?L1:L2,outside=press===1?pre:post;const ldir={x:leg.x-apex.x,y:leg.y-apex.y};
+    const cr=reflectAcross({x:apex.x+cdir.x,y:apex.y+cdir.y},apex,ldir);
+    const Y=lineX(outside,{x:leg.x-outside.x,y:leg.y-outside.y},apex,{x:cr.x-apex.x,y:cr.y-apex.y});
+    if(Y)cap=reflectAcross(Y,apex,ldir);}
+  const cp=newPoint(cap.x,cap.y,false);cp.grade=blendGrade(L1,L2,0.5);pc.points.splice(i1+1,0,cp);
+  const gid=uid();pc.internals.push({x1:L1.x,y1:L1.y,x2:apex.x,y2:apex.y,gid,name:"dart"},{x1:L2.x,y1:L2.y,x2:apex.x,y2:apex.y,gid,name:"dart"});
+  const dl=Math.hypot(cdir.x,cdir.y)||1;if(drill>0)pc.internals.push({x1:apex.x+cdir.x/dl*drill,y1:apex.y+cdir.y/dl*drill,x2:apex.x+cdir.x/dl*drill,y2:apex.y+cdir.y/dl*drill,kind:"drill"});
+  reattachNotches(pc,[...nx,{x:L1.x,y:L1.y},{x:L2.x,y:L2.y}],0.8);
+  render();toast(`Dart created — intake ${fmtU(width)}, length ${fmtU(dl)}`);
+}
+
+/* ---------- ROUND CORNER ---------- */
+function roundCornerClick(w){
+  const a=nearestAnchor(w,12);if(!a)return toast("Click a corner point");const pc=a.piece,i=a.idx;
+  dialog(`Round Corner — ${esc(pc.name)} #${i+1}`,`<div class="row"><label>Radius</label><input id="rc-r" type="number" step="any" value="${fmt(12.7)}"><span class="dim">${S.units}</span></div>`,
+    [{label:"Cancel"},{label:"Round",primary:true,action:()=>{if(!roundCorner(pc,i,toMM($("#rc-r").value)))toast("Radius too large for the neighbouring edges");}}]);
+  setTimeout(()=>{$("#rc-r").focus();$("#rc-r").select();},30);
+}
+function roundCorner(pc,i,r){
+  const n=pc.points.length,P=pc.points[i],A=pc.points[(i-1+n)%n],B=pc.points[(i+1)%n];
+  const u1={x:A.x-P.x,y:A.y-P.y},u2={x:B.x-P.x,y:B.y-P.y},l1=Math.hypot(u1.x,u1.y),l2=Math.hypot(u2.x,u2.y);if(l1<1e-6||l2<1e-6)return false;
+  u1.x/=l1;u1.y/=l1;u2.x/=l2;u2.y/=l2;const phi=Math.acos(clamp(u1.x*u2.x+u1.y*u2.y,-1,1));if(phi<1e-3||phi>Math.PI-1e-3)return false;
+  const d=r/Math.tan(phi/2);if(d>=l1*0.98||d>=l2*0.98)return false;
+  const k=4/3*Math.tan((Math.PI-phi)/4)*r;const nx=notchesXY(pc);
+  const T1=newPoint(P.x+u1.x*d,P.y+u1.y*d,false),T2=newPoint(P.x+u2.x*d,P.y+u2.y*d,false);
+  T1.hOut={x:T1.x-u1.x*k,y:T1.y-u1.y*k};T2.hIn={x:T2.x-u2.x*k,y:T2.y-u2.y*k};T1.grade=clone(P.grade||{});T2.grade=clone(P.grade||{});T1.name=P.name||"";
+  pc.points.splice(i,1,T1,T2);reattachNotches(pc,nx,1);render();toast(`Corner rounded r=${fmtU(r)}`);return true;
+}
+
+/* ---------- ALIGN POINTS ---------- */
+function alignPointsDialog(){
+  const p=activePattern();const sel=(S.msel&&S.msel.length)?S.msel:[];
+  if(sel.length<2)return toast("Rectangle-select 2+ points first (Select tool, drag on empty canvas)");
+  dialog("Align Points",`<p>${sel.length} points</p>
+    <div class="row"><label>Align</label><select id="al-m"><option value="y">Horizontally (same Y)</option><option value="x">Vertically (same X)</option><option value="line">On line first → last</option></select></div>
+    <div class="row"><label>To</label><select id="al-t"><option value="first">first selected</option><option value="avg">average</option></select></div>`,
+    [{label:"Cancel"},{label:"Align",primary:true,action:()=>{
+      const pts=sel.map(s=>{const pc=p.pieces.find(x=>x.id===s.pc);return pc&&pc.points[s.i];}).filter(Boolean);
+      const m=$("#al-m").value,to=$("#al-t").value;
+      if(m==="line"){const A=pts[0],B=pts[pts.length-1],ex=B.x-A.x,ey=B.y-A.y,l2=ex*ex+ey*ey||1;
+        pts.slice(1,-1).forEach(q=>{const t=((q.x-A.x)*ex+(q.y-A.y)*ey)/l2;const dx=A.x+ex*t-q.x,dy=A.y+ey*t-q.y;q.x+=dx;q.y+=dy;moveHandlesWith(q,dx,dy);});}
+      else{const v=to==="first"?pts[0][m]:pts.reduce((s,q)=>s+q[m],0)/pts.length;pts.forEach(q=>{const d=v-q[m];q[m]=v;moveHandlesWith(q,m==="x"?d:0,m==="y"?d:0);});}
+      render();toast("Points aligned");}}]);
+}
+
+/* ---------- CREATE PARALLEL (internal line parallel to a segment) ---------- */
+function parallelClick(w){
+  const r=runAt(w);if(!r)return toast("Click on a piece edge");const pc=r.pc;S.sel.piece=pc.id;render();
+  dialog(`Create Parallel — ${esc(pc.name)} ${r.i0+1}→${r.i1+1}`,`
+    <div class="row"><label>Distance inside</label><input id="pa-d" type="number" step="any" value="${fmt(6.35)}"><span class="dim">${S.units}</span></div>
+    <div class="row"><label>Name</label><input id="pa-n" type="text" placeholder="e.g. topstitch, fold line"></div>
+    <div class="row"><label>Count</label><input id="pa-c" type="number" step="1" min="1" value="1" style="max-width:60px"></div>`,
+    [{label:"Cancel"},{label:"Create",primary:true,action:()=>{
+      const d=toMM($("#pa-d").value),cnt=Math.max(1,parseInt($("#pa-c").value)||1),nm=$("#pa-n").value.trim();
+      const pl=runPolyline(pc,r),sgn=polySign(pc);
+      for(let c=1;c<=cnt;c++){const off=pl.map((q,k)=>{const a=pl[Math.max(0,k-1)],b=pl[Math.min(pl.length-1,k+1)];const ex=b.x-a.x,ey=b.y-a.y,l=Math.hypot(ex,ey)||1;
+          return {x:q.x-sgn*ey/l*d*c,y:q.y+sgn*ex/l*d*c};});
+        const gid=uid();for(let k=0;k<off.length-1;k++)pc.internals.push({x1:off[k].x,y1:off[k].y,x2:off[k+1].x,y2:off[k+1].y,gid,name:nm});}
+      render();toast(`${cnt} parallel line(s) at ${fmtU(d)}`);}}]);
+  setTimeout(()=>{$("#pa-d").focus();$("#pa-d").select();},30);
+}
+
+/* =========================================================
    MENU BAR (3)
    ========================================================= */
 function buildMenus(){
@@ -496,31 +1728,193 @@ function buildMenus(){
       {label:"AAMA DXF",action:()=>exportDXF("aama")},
       {label:"ASTM DXF",action:()=>exportDXF("astm")},
       {label:"PDF (A4 tiled, 1:1)",action:()=>exportPatternPDF()},
+      {label:"Measurement chart CSV",action:()=>{const p=activePattern();if(p)exportChartCSV(p);}},
     ]:[
       {label:"Plot DXF (1:1 marker)",action:()=>exportPlotDXF(),disabled:mm!=="marker"},
+      {label:"PLT / HPGL (plotter)",action:()=>exportPLT(),disabled:mm!=="marker"},
       {label:"PDF — tiled pages",action:()=>exportMarkerPDF(),disabled:mm==="marker"},
     ];
+  const K=id=>keyFor(id);
   mk("File",[
-    {label:"Open File…",hint:"wptn / wmrk",action:()=>openFile(".wptn,.wmrk,application/json")},
+    {label:"New pattern",hint:K("file.new"),action:()=>CMD["file.new"]()},
+    {label:"Open File…",hint:K("file.open"),action:()=>openFile(".wptn,.wmrk,application/json")},
     {sep:true},
-    {label:"Save",hint:design?".wptn":".wmrk",action:()=>saveFile(false)},
-    {label:"Save As…",action:()=>saveFile(true)},
+    {label:"Save",hint:K("file.save"),action:()=>saveFile(false)},
+    {label:"Save As…",hint:K("file.saveas"),action:()=>saveFile(true)},
     {sep:true},
-    {label:"Import…",hint:"DXF / PLT / SVG",action:()=>openFile(".dxf,.plt,.hpgl,.hpg,.svg")},
+    {label:"Import pattern…",hint:"DXF / PLT / SVG",action:()=>openFile(".dxf,.plt,.hpgl,.hpg,.svg")},
+    {label:"Import order Excel…",hint:"xlsx",action:()=>openFile(".xlsx,.xlsm,.xls")},
     {label:"Export",sub:exportSub},
+    {label:"Export order bundle",hint:"wptn+dxf+csv+plt",action:exportOrderBundle},
   ]);
+  mk("Edit",[
+    {label:"Undo",hint:K("edit.undo"),action:undo,disabled:HIST.pos<=0},
+    {label:"Redo",hint:K("edit.redo"),action:redo,disabled:HIST.pos>=HIST.stack.length-1},
+    {sep:true},
+    {label:"Copy piece",hint:K("edit.copy"),action:copyPiece,disabled:!design},
+    {label:"Paste piece",hint:K("edit.paste"),action:pastePiece,disabled:!design},
+    {label:"Select all points",hint:K("edit.selectall"),action:selectAllPoints,disabled:!design},
+    {sep:true},
+    {label:"Delete",hint:"Del",action:()=>CMD["edit.delete"]()},
+  ]);
+  if(design){
+    mk("Piece",[
+      {label:"Piece Info…",hint:K("piece.info"),action:showPieceInfo},
+      {sep:true},
+      {label:"Flip Horizontal",hint:K("piece.fliph"),action:()=>flipPieces("h")},
+      {label:"Flip Vertical",hint:K("piece.flipv"),action:()=>flipPieces("v")},
+      {label:"Rotate CW 90°",hint:K("piece.rotcw"),action:()=>rotatePieces(90)},
+      {label:"Rotate CCW 90°",hint:K("piece.rotccw"),action:()=>rotatePieces(-90)},
+      {label:"Rotate to grain (vertical)",hint:K("piece.tograin"),action:()=>{const pcs=targetPieces();for(const pc of pcs){const a=grainAngle(pc.grain);rotatePieces(0);const d=((90-a)%360+360)%360;const r=rad(-d),c=Math.cos(r),s=Math.sin(r);const bb=polyBBox(samplePiece(pc)),cx=(bb.x1+bb.x2)/2,cy=(bb.y1+bb.y2)/2;transformPieceXY(pc,q=>({x:cx+(q.x-cx)*c-(q.y-cy)*s,y:cy+(q.x-cx)*s+(q.y-cy)*c}));}render();}},
+      {sep:true},
+      {label:"Scale and Shrink…",hint:K("piece.shrink"),action:showScaleShrink},
+      {label:"Generate size…",action:showGenerateSize},
+      {sep:true},
+      {label:"Mirror / unfold (Y tool)",action:()=>setTool("piecemirror")},
+      {label:"Line mirror copy (L tool)",action:()=>setTool("linemirror")},
+    ]);
+    mk("Point",[
+      {label:"Move Point…",hint:K("point.move"),action:()=>CMD["point.move"]()},
+      {label:"Move Points by area…",hint:K("point.movearea"),action:()=>setTool("movepoints")},
+      {label:"Program points by area… (alteration rule)",hint:K("point.program"),action:()=>setTool("program")},
+      {sep:true},
+      {label:"Name point (/m = measure)…",hint:K("point.name"),action:()=>CMD["point.name"]()},
+      {label:"Align Points…",hint:K("point.align"),action:alignPointsDialog},
+      {label:"Add Point tool",hint:K("tool.addpoint"),action:()=>setTool("addpoint")},
+      {label:"Convert corner ⇄ smooth",action:()=>{const pc=selPiece();if(pc&&S.sel.point!=null){toggleCorner(pc,S.sel.point);render();}}},
+      {label:"Smooth segment (S tool)",action:()=>setTool("smooth")},
+      {label:"Delete point",hint:"Del",action:()=>CMD["edit.delete"]()},
+    ]);
+    mk("Segment",[
+      {label:"Draft (new piece / internal)",hint:K("tool.draft"),action:()=>setTool("draft")},
+      {label:"Add Point",hint:K("tool.addpoint"),action:()=>setTool("addpoint")},
+      {label:"Segment Length…",hint:K("tool.seglen"),action:()=>setTool("seglen")},
+      {label:"Compare Length",hint:K("tool.compare"),action:()=>setTool("compare")},
+      {label:"Create Parallel",hint:K("tool.parallel"),action:()=>setTool("parallel")},
+      {label:"Round Corner",hint:K("tool.roundcorner"),action:()=>setTool("roundcorner")},
+      {label:"Align Points…",hint:K("point.align"),action:alignPointsDialog},
+      {sep:true},
+      {label:"Cut piece",hint:K("tool.cut"),action:()=>setTool("cut")},
+      {label:"Join pieces",hint:K("tool.join"),action:()=>setTool("join")},
+      {label:"Add Fullness (slash & spread)",hint:K("tool.fullness"),action:()=>setTool("fullness")},
+      {label:"Create Dart",hint:K("tool.dart"),action:()=>setTool("dart")},
+    ]);
+    mk("Seam",[
+      {label:"Seam tool (per segment)",hint:K("tool.seam"),action:()=>setTool("seam")},
+      {label:"Global seam (all pieces)…",action:()=>{const p=activePattern();if(!p)return;promptDialog(`Seam width for ALL pieces (${S.units}):`,fmt(S.units==="inch"?9.525:10),v=>{const w2=toMM(v);p.pieces.forEach(pc=>{pc.seam=w2;pc.seamSeg={};});S.view.seam=true;saveView();render();});}},
+      {label:"Delete seam (selected / all)",action:()=>{for(const pc of targetPieces()){pc.seam=0;pc.seamSeg={};}render();}},
+      {sep:true},
+      {label:"Notch setup…",action:showNotchSetup},
+      {label:"Notch tool",hint:K("tool.notch"),action:()=>setTool("notch")},
+      {label:"Drill hole tool",hint:K("tool.drill"),action:()=>setTool("drill")},
+    ]);
+    mk("Order",[
+      {label:"Import order Excel…",action:()=>openFile(".xlsx,.xlsm,.xls")},
+      {label:"Auto-alter to targets → new pattern",action:()=>{const p=activePattern();if(!p)return toast("No pattern");if(!Object.keys(targetsOf(p)).length)return toast("No targets — import an order or type targets in the Measurement Chart");runAutoAlter(p);}},
+      {label:"Run order chain (alter → postshrink → marker)",action:runOrderChain},
+      {sep:true},
+      {label:"Export order bundle",action:exportOrderBundle},
+    ]);
+    mk("Report",[
+      {label:"Measurement Chart…",hint:K("report.chart"),action:showMeasurementChart},
+      {label:"Measure tool",hint:K("tool.measure"),action:()=>setTool("measure")},
+      {label:"Piece Info…",hint:K("piece.info"),action:showPieceInfo},
+    ]);
+  }else{
+    mk("Marker",[
+      {label:"Auto-nest (bottom-left fill)",action:()=>{autoNest();render();}},
+      {label:"Shelf arrange (simple)",action:()=>{autoArrange();render();}},
+      {label:"Rotate selected 90°",hint:"R",action:rotateSelected},
+      {sep:true},
+      {label:"Export PLT / HPGL",action:()=>exportPLT()},
+      {label:"Export Plot DXF",action:()=>exportPlotDXF()},
+    ]);
+  }
   mk("View",[
+    {label:"Zoom all",hint:K("view.zoomall"),action:zoomAll},
+    {label:"Zoom selected piece",hint:K("view.zoomsel"),action:zoomSelected},
+    {sep:true},
     {label:"Seam",checked:S.view.seam,keepOpen:true,action:()=>{S.view.seam=!S.view.seam;saveView();render();}},
-    {label:"Measurements",checked:S.view.measurements,keepOpen:true,action:()=>{S.view.measurements=!S.view.measurements;saveView();render();}},
+    {label:"Segment lengths",checked:S.view.measurements,keepOpen:true,action:()=>{S.view.measurements=!S.view.measurements;saveView();render();}},
+    {label:"Point names",checked:S.view.names!==false,keepOpen:true,action:()=>{S.view.names=S.view.names===false;saveView();render();}},
     {label:"Pattern Tool",checked:S.view.patternTool,keepOpen:true,action:()=>{S.view.patternTool=!S.view.patternTool;saveView();render();}},
     {label:"Movement Programs",checked:S.view.movement,keepOpen:true,action:()=>{S.view.movement=!S.view.movement;saveView();render();}},
     {sep:true},
     {label:"Grid",checked:S.view.grid,keepOpen:true,action:()=>{S.view.grid=!S.view.grid;saveView();render();}},
   ]);
+  mk("Tools",[
+    {label:"Keyboard: ProwdCAD",checked:S.keymap==="prowd",keepOpen:true,action:()=>{S.keymap="prowd";store.set("wp.keymap","prowd");render();}},
+    {label:"Keyboard: TUKAdesign layout",checked:S.keymap==="tuka",keepOpen:true,action:()=>{S.keymap="tuka";store.set("wp.keymap","tuka");render();}},
+    {sep:true},
+    {label:"Working units: mm",checked:S.units==="mm",keepOpen:true,action:()=>{S.units="mm";store.set("wp.units","mm");$("#unitsel").value="mm";render();}},
+    {label:"Working units: cm",checked:S.units==="cm",keepOpen:true,action:()=>{S.units="cm";store.set("wp.units","cm");$("#unitsel").value="cm";render();}},
+    {label:"Working units: inch",checked:S.units==="inch",keepOpen:true,action:()=>{S.units="inch";store.set("wp.units","inch");$("#unitsel").value="inch";render();}},
+  ]);
   mk("Help",[
     {label:"Index",action:showHelpIndex},
+    {label:"Hot keys",action:showHotKeys},
     {label:"About",action:showAbout},
   ]);
+}
+/* ---------- command registry + two keyboard layouts ---------- */
+const CMD={
+  "file.new":()=>{const np=newPattern("Untitled","M");S.patterns.push(np);S.activePatternId=np.id;S.sel={piece:null,point:null,placement:null};render();},
+  "file.open":()=>openFile(".wptn,.wmrk,application/json"),
+  "file.save":()=>saveFile(false),"file.saveas":()=>saveFile(true),
+  "edit.undo":undo,"edit.redo":redo,"edit.copy":copyPiece,"edit.paste":pastePiece,"edit.selectall":selectAllPoints,
+  "edit.delete":()=>{const p=activePattern(),pc=selPiece();
+    if(S.msel&&S.msel.length){const by={};S.msel.forEach(s=>(by[s.pc]=by[s.pc]||[]).push(s.i));let n=0;
+      for(const id in by){const q=p.pieces.find(x=>x.id===id);by[id].sort((a,b)=>b-a).forEach(i=>{if(q.points.length>3){q.points.splice(i,1);n++;}});q.notches=[];}
+      S.msel=[];S.sel.point=null;render();toast(`Deleted ${n} point(s)`);return;}
+    if(pc&&S.sel.point!=null){if(deletePoint(pc,S.sel.point)){S.sel.point=null;render();toast("Point deleted");}}
+    else if(pc){p.pieces=p.pieces.filter(x=>x.id!==pc.id);S.sel.piece=null;S.sel.point=null;render();toast(`Deleted "${pc.name}"`);}},
+  "piece.info":showPieceInfo,"piece.fliph":()=>flipPieces("h"),"piece.flipv":()=>flipPieces("v"),
+  "piece.rotcw":()=>rotatePieces(90),"piece.rotccw":()=>rotatePieces(-90),"piece.shrink":showScaleShrink,
+  "piece.tograin":()=>{const pcs=targetPieces();for(const pc of pcs){const a=grainAngle(pc.grain);const d=((90-a)%360+360)%360;const r=rad(-d),c=Math.cos(r),s=Math.sin(r);const bb=polyBBox(samplePiece(pc)),cx=(bb.x1+bb.x2)/2,cy=(bb.y1+bb.y2)/2;transformPieceXY(pc,q=>({x:cx+(q.x-cx)*c-(q.y-cy)*s,y:cy+(q.x-cx)*s+(q.y-cy)*c}));}render();},
+  "point.move":()=>{const pc=selPiece();if(!pc||S.sel.point==null)return toast("Select a point first");movePointDialog(pc,S.sel.point);},
+  "point.movearea":()=>setTool("movepoints"),"point.program":()=>setTool("program"),
+  "point.name":()=>{const pc=selPiece();if(!pc||S.sel.point==null)return toast("Select a point first");const pt=pc.points[S.sel.point];
+    promptDialog("Point name (add /m to measure the contour from here to the next grade point, /q1 to override count):",pt.name||"",v=>{pt.name=v.trim();render();});},
+  "report.chart":showMeasurementChart,"view.zoomall":zoomAll,"view.zoomsel":zoomSelected,
+  "tool.select":()=>setTool("select"),"tool.pen":()=>setTool("pen"),"tool.curvepen":()=>setTool("curvepen"),
+  "tool.shape":()=>{const order=["rect","ellipse","roundrect"];if(S.tool==="shape"){S.shapeKind=order[(order.indexOf(S.shapeKind)+1)%order.length];}setTool("shape");},
+  "tool.perp":()=>{if(S.tool==="perp"){S.perpBoth=!S.perpBoth;buildFloatTool();renderStats();}else setTool("perp");},
+  "tool.linemirror":()=>setTool("linemirror"),"tool.piecemirror":()=>setTool("piecemirror"),"tool.notch":()=>setTool("notch"),
+  "tool.grain":()=>setTool("grain"),"tool.smooth":()=>setTool("smooth"),"tool.measure":()=>setTool("measure"),
+  "tool.curve":()=>{S.curveMode=!S.curveMode;buildFloatTool();renderStats();},
+  "tool.draft":()=>setTool("draft"),"tool.addpoint":()=>setTool("addpoint"),"tool.seam":()=>setTool("seam"),"tool.seglen":()=>setTool("seglen"),
+  "tool.compare":()=>setTool("compare"),"tool.cut":()=>setTool("cut"),"tool.join":()=>setTool("join"),"tool.fullness":()=>setTool("fullness"),
+  "tool.dart":()=>setTool("dart"),"tool.roundcorner":()=>setTool("roundcorner"),"tool.parallel":()=>setTool("parallel"),"tool.drill":()=>setTool("drill"),
+  "point.align":alignPointsDialog,
+};
+/* key strings: "ctrl+shift+u", "shift+m", "home", "q" */
+const KEYMAPS={
+  prowd:{"file.new":"ctrl+n","file.open":"ctrl+o","file.save":"ctrl+s","file.saveas":"ctrl+shift+s","edit.undo":"ctrl+z","edit.redo":"ctrl+y","edit.copy":"ctrl+c","edit.paste":"ctrl+v","edit.selectall":"ctrl+a",
+    "piece.info":"ctrl+i","piece.fliph":"ctrl+l","piece.flipv":"shift+l","piece.rotcw":"0","piece.rotccw":"9","piece.shrink":"shift+enter","piece.tograin":"shift+g",
+    "point.move":"q","point.movearea":"shift+u","point.program":"shift+r","point.name":"f2","report.chart":"shift+m","view.zoomall":"home","view.zoomsel":"ctrl+home",
+    "tool.select":"v","tool.pen":"p","tool.curvepen":"u","tool.shape":"m","tool.perp":"t","tool.linemirror":"l","tool.piecemirror":"y","tool.notch":"n","tool.grain":"g","tool.smooth":"s","tool.measure":"k","tool.curve":"c",
+    "tool.draft":"d","tool.addpoint":"a","tool.seam":"e","tool.seglen":"ctrl+enter","tool.compare":"ctrl+m","tool.cut":"x","tool.join":"j","tool.fullness":"f",
+    "tool.dart":"ctrl+d","tool.roundcorner":"o","tool.parallel":"h","tool.drill":"b","point.align":"i"},
+  tuka:{"file.new":"ctrl+n","file.open":"ctrl+o","file.save":"ctrl+s","file.saveas":"ctrl+shift+s","edit.undo":"ctrl+z","edit.redo":"ctrl+y","edit.copy":"ctrl+c","edit.paste":"ctrl+v","edit.selectall":"ctrl+a",
+    "piece.info":"ctrl+i","piece.fliph":"ctrl+l","piece.flipv":"shift+l","piece.rotcw":"0","piece.rotccw":"9","piece.shrink":"shift+enter","piece.tograin":"g",
+    "point.move":"q","point.movearea":"ctrl+shift+u","point.program":"shift+o","point.name":"f2","report.chart":"shift+m","view.zoomall":"home","view.zoomsel":"ctrl+home",
+    "tool.select":"end","tool.pen":"ctrl+shift+p","tool.curvepen":"shift+d","tool.shape":"shift+b","tool.perp":"t","tool.linemirror":"ctrl+shift+l","tool.piecemirror":"shift+h","tool.notch":"n","tool.grain":"shift+g","tool.smooth":"shift+w","tool.measure":"m","tool.curve":"alt+c",
+    "tool.draft":"d","tool.addpoint":"a","tool.seam":"s","tool.seglen":"ctrl+enter","tool.compare":"ctrl+m","tool.cut":"x","tool.join":"j","tool.fullness":"u",
+    "tool.dart":"ctrl+d","tool.roundcorner":"shift+r","tool.parallel":"c","tool.drill":"b","point.align":"i"},
+};
+function keyFor(id){const k=(KEYMAPS[S.keymap]||KEYMAPS.prowd)[id];if(!k)return "";return k.split("+").map(s=>s.length===1?s.toUpperCase():s[0].toUpperCase()+s.slice(1)).join("+");}
+function keyString(e){const k=e.key.toLowerCase();const parts=[];if(e.ctrlKey||e.metaKey)parts.push("ctrl");if(e.shiftKey)parts.push("shift");if(e.altKey)parts.push("alt");
+  parts.push(k===" "?"space":k);return parts.join("+");}
+function showHotKeys(){
+  const m=KEYMAPS[S.keymap];const names={"file.new":"New pattern","file.open":"Open","file.save":"Save","file.saveas":"Save As","edit.undo":"Undo","edit.redo":"Redo","edit.copy":"Copy piece","edit.paste":"Paste piece","edit.selectall":"Select all points",
+    "piece.info":"Piece info","piece.fliph":"Flip horizontal","piece.flipv":"Flip vertical","piece.rotcw":"Rotate CW","piece.rotccw":"Rotate CCW","piece.shrink":"Scale & Shrink","piece.tograin":"Rotate to grain",
+    "point.move":"Move point (dialog)","point.movearea":"Move points by area","point.program":"Program points (alteration rule)","point.name":"Name point","report.chart":"Measurement Chart","view.zoomall":"Zoom all","view.zoomsel":"Zoom selected",
+    "tool.select":"Select tool","tool.pen":"Pen (internal lines)","tool.curvepen":"Curvature pen","tool.shape":"Shape","tool.perp":"Perpendicular","tool.linemirror":"Line mirror","tool.piecemirror":"Piece mirror","tool.notch":"Notch","tool.grain":"Grain","tool.smooth":"Smooth","tool.measure":"Measure","tool.curve":"Curve override",
+    "tool.draft":"Draft (piece / internal)","tool.addpoint":"Add point","tool.seam":"Seam tool","tool.seglen":"Segment length","tool.compare":"Compare length","tool.cut":"Cut piece","tool.join":"Join pieces",
+    "tool.fullness":"Fullness (slash & spread)","tool.dart":"Create dart","tool.roundcorner":"Round corner","tool.parallel":"Create parallel","tool.drill":"Drill hole","point.align":"Align points"};
+  dialog(`Hot keys — ${S.keymap==="tuka"?"TUKAdesign layout":"ProwdCAD layout"}`,`<table class="mchart">${Object.keys(names).map(id=>`<tr><td>${names[id]}</td><td class="num"><kbd>${keyFor(id)}</kbd></td></tr>`).join("")}
+    <tr><td>Rectangle select points</td><td class="num"><kbd>drag on empty canvas</kbd></td></tr><tr><td>Pan</td><td class="num"><kbd>Space+drag / middle</kbd></td></tr><tr><td>Zoom</td><td class="num"><kbd>wheel</kbd></td></tr></table>
+    <p class="hintline">Switch layouts in Tools › Keyboard.</p>`,[{label:"Close",primary:true}]);
 }
 function closeMenus(){$$(".menu-root.open").forEach(m=>m.classList.remove("open"));}
 function openMenu(label){$$(".menu-root").forEach(m=>{if(m.querySelector("button").textContent===label)m.classList.add("open");});}
@@ -557,8 +1951,8 @@ function promptDialog(message,defaultValue,onOk){
 
 function showAbout(){
   dialog("About ProwdCAD",`
-    <p style="font:600 15px var(--mono);color:var(--accent)">ProwdCAD <span style="color:var(--dim);font-weight:400">v1.10.0 — imports PLT/HPGL plotter files and SVG (plus DXF/AAMA/ASTM)</span></p>
-    <p style="margin-top:8px">Minimal 2D CAD for apparel pattern making &amp; marker making.<br>
+    <p style="font:600 15px var(--mono);color:var(--accent)">ProwdCAD <span style="color:var(--dim);font-weight:400">v2.1 PRO — Draft · per-segment seams · cut/join/spread/dart · Measurement Chart · made-to-measure alteration · Scale &amp; Shrink · auto-nest · PLT</span></p>
+    <p style="margin-top:8px">2D CAD for apparel pattern making, made-to-measure alteration &amp; marker making.<br>
     Single-pattern workflow: one base size in, graded sizes out as new standalone patterns.</p>
     <h4>Conventions</h4>
     <p>Internal units mm · AAMA/ASTM DXF layer conventions · true geometric seam-allowance offsets · 1:1 scale exports.</p>
@@ -585,6 +1979,19 @@ const HELP=[
  ["Marker modes","Marker = continuous fabric-width layout → Plot DXF at 1:1. A4 Tiles / US Letter / A0 = paged layouts → PDF at true scale with registration crosses, page numbers and a 10 mm glue overlap."],
  ["Shrinkage","Shrink X/Y % (marker sidebar) applies scale compensation 1/(1−s) to placed geometry and exports, at the marker stage only."],
  ["Import / Export","Import DXF / AAMA DXF / ASTM DXF (the exchange format every major apparel CAD — Gerber AccuMark, Lectra, Optitex, StyleCAD, CLO, PAD — can export), plus PLT/HPGL plotter files (40 units/mm, closed pen paths → pieces, open paths → internal lines) and SVG (1 unit = 1 mm assumed; closed paths/rects/circles/polygons → pieces, open paths/lines → internal lines; arcs approximated, transforms ignored — flatten in Illustrator first). Each import shows a report of what was recognised and skipped. Proprietary NATIVE files (.zip AccuMark, .pds Optitex, Lectra .mdl/.iba, .ai) can't be read directly — export DXF-AAMA/ASTM from that software instead. Export DXF flavours or PDF from Pattern Design; Plot DXF or tiled PDF from Marker Making. Native files: .wptn (pattern incl. grading rules), .wmrk (marker with embedded pattern)."],
+ ["PRO — Measurement Chart (Shift+M)","TUKAdesign-style. Name a grade point with /m — e.g. 03 Hip/m/q2 — and the contour from that point to the NEXT grade (non-curve) point is measured. Same names on different pieces add up (front rise on panel + waistband). Count = piece quantity incl. opposite copies unless /q overrides it. You can also use the Measure tool to save straight (D), X, Y or along-contour measurements between any two points (also across pieces). Type targets and tolerance in the chart or import them from an order Excel. Export CSV for the spec sheet."],
+ ["PRO — Move Points by area (Ctrl+Shift+U in TUKA layout)","Drag a rectangle round points (e.g. the hem ends of front and back legs), then type dX / dY. Internal line ends inside the rectangle move too. +X right, +Y down; −1 inch in Y shortens a leg from the hem by 1 inch. Single point: select it and press Q (Move Point)."],
+ ["PRO — Alteration rules & Auto-alter (made-to-measure)","Rules are Movement Programs: drag a rectangle with Program by area (Shift+R) and set how far those points move per +1 unit of a parameter (e.g. hem points +Y 1 for Inseam; side-seam points ±X 0.25 for Hip on a 4-panel jean). Give the parameter the SAME name as the chart measurement. Order › Import order Excel reads the Neems Pattern Sheet (Preshrink Target table, warp/weft shrinkage, fabric width) and sets chart targets. Auto-alter then solves every programmed measurement to its target (Newton solver — curves, ×2 counts and multi-part measurements all land on target) and creates a NEW pattern named after the order. Rows without a rule are only checked."],
+ ["PRO — Scale and Shrink (Shift+Enter)","Warp % is applied along each piece's grain line, weft % across it. ‘Proportional to 100%’ (TUKA): 10\" with 10% shrink → 11.111\" which washes back to exactly 10\". Result goes to a new pattern by default so the preshrink pattern stays."],
+ ["PRO — Order chain","Order › Run order chain: altered Preshrink pattern → Postshrink pattern (order shrinkage) → marker at the order's fabric width, auto-nested with grain along the fabric length. File › Export order bundle saves .wptn, AAMA DXF, chart CSV, marker .wmrk, PLT and plot DXF."],
+ ["PRO — DXF import from TUKAcad / Gerber / Lectra","AAMA/ASTM files with one BLOCK per piece are read with piece names (Piece Name: text), quantity, grain, notches, internals, drill holes, turn vs curve points and the sew line (seam allowance is derived from cut-to-sew distance). Export from TUKAcad: File › Export › DXF AAMA."],
+ ["PRO — Keyboard layouts","Tools › Keyboard switches between the ProwdCAD layout and a TUKAdesign layout (M measure, Shift+M chart, Q move point, Ctrl+Shift+U move points, Shift+Enter scale/shrink, Home zoom all, End select, Ctrl+L / Shift+L flip, 9/0 rotate). Help › Hot keys lists the active layout. Undo Ctrl+Z / Redo Ctrl+Y in both."],
+ ["PRO 2.1 — Draft (D)","Click points to draft a NEW PIECE; click the start point (or Enter / double-click) to close it. Start inside a piece and it becomes an internal line instead (start on an outline: the second click decides). Tab opens exact entry — length + angle (0° right, 90° up) or dX/dY. Ctrl = curve point, Shift = 0/45/90°, drag while clicking = bézier handles. Clicks snap to existing points and outlines."],
+ ["PRO 2.1 — Seam per segment & corners","Seam tool: click a segment, set its width and the corner type at each end — Miter, Square (right-angle extension), Mirror (fold next / previous — for hems: the side-seam allowance is reflected across the hem fold so it matches when turned up), Bevel. Seam › Global seam sets every piece. Cut lines, marker, DXF (layer 1 cut / 14 sew) and PDF all use these seams."],
+ ["PRO 2.1 — Notches & drills","Seam › Notch setup: Slit, V, T or Castle, depth and width. Notches sit on the cut line pointing inward. Click a point with the Notch tool to notch exactly there. Drill tool (B) adds drill holes — exported on DXF layer 13 and as crosses on PLT."],
+ ["PRO 2.1 — Add Point / Segment Length / Compare","Add Point inserts a grade point without changing the curve (bézier split); Shift-click for an exact distance from the previous grade point. Segment Length (Ctrl+Enter): click a segment, type the new length and choose the TUKA extend method — Curve (ends fixed), 1/2-Horizontal, 1/2-Vertical, 1/2-Diagonal; points in between move proportionally. Compare Length (Ctrl+M): click segments to add, Shift-click to subtract; the sidebar shows totals and the difference (e.g. back + yoke outseam vs front + pocket facing)."],
+ ["PRO 2.1 — Cut, Join, Fullness, Dart","Cut: two clicks on the outline split the piece (grades, notches, internals, seams kept; the new edge gets the piece seam). Join: click the edge on piece 1, then the matching edge on piece 2 — piece 2 is rotated into place and merged. Fullness: two clicks for the slash line, then opening at each end (0 at one end = pivot/flare, equal = parallel). Dart: click the edge where it opens, then the apex; set intake and pressing side — the dart cap is calculated, legs become internal lines with notches and a drill hole."],
+ ["PRO 2.1 — Round corner, Align, Parallel","Round Corner: click a corner, type the radius (true circular arc). Align Points (I): rectangle-select points, then align horizontally, vertically or onto the line first→last. Create Parallel: click a segment for an internal parallel line (topstitch, fold, facing line) at a set distance, optionally several."],
  ["Shortcuts","V select · P pen (internal lines) · U curvature pen (auto-smooth) · M rectangle/circle (again = swap) · T perpendicular (again = single/both) · L line mirror · Y piece mirror · N notch · G grain · C corner/curve override · R rotate (marker) · Enter finish line · Esc cancel · Del delete · dbl-click anchor = corner⇄smooth · right-click = piece menu · Space+drag / middle-drag pan · wheel zoom."],
 ];
 function showHelpIndex(){
@@ -629,6 +2036,7 @@ function el(html){const d=document.createElement("div");d.innerHTML=html;return 
 
 function buildDesignSidebar(sb){
   const p=activePattern();
+  if(p)buildComparePanel(sb);
   /* --- pattern panel --- */
   const pp=el(`<div class="panel"><h3>Pattern <button class="pact" id="np">+ new</button></h3></div>`);
   if(S.patterns.length){
@@ -655,9 +2063,9 @@ function buildDesignSidebar(sb){
   const dp=$("#delpat");if(dp)dp.onclick=()=>{confirmDialog(`Delete pattern "${p.name} — ${p.size}"?`,()=>{S.patterns=S.patterns.filter(x=>x.id!==p.id);S.activePatternId=S.patterns.length?S.patterns[0].id:null;render();toast("Pattern deleted");},"Delete");};
   if(!p)return;
 
-  /* --- measurements (movement programs) --- */
-  const mp=el(`<div class="panel"><h3>Measurements <button class="pact" id="addm">+ add</button></h3><div class="list" id="mlist"></div>
-    <p class="hintline">Base-size values. Movement Programs move points per unit of change in these.</p></div>`);
+  /* --- alteration parameters (movement programs) --- */
+  const mp=el(`<div class="panel"><h3>Alteration rules <button class="pact" id="addm">+ add</button></h3><div class="list" id="mlist"></div>
+    <p class="hintline">Parameters that move programmed points (Point › Program by area). Give a rule the same name as a chart measurement and Auto-alter drives it to the order target. The number is the parameter value — only its change matters.</p></div>`);
   sb.appendChild(mp);
   const ml=$("#mlist");
   if(!p.measurements.length)ml.innerHTML=`<div class="list-item" style="color:var(--dim);cursor:default">none defined</div>`;
@@ -673,6 +2081,13 @@ function buildDesignSidebar(sb){
   });
   $("#addm").onclick=()=>{p.measurements.push({id:uid(),name:"measure "+(p.measurements.length+1),base:0});render();};
 
+  /* --- order panel --- */
+  if(p.order){const o=p.order;const t=Object.values(targetsOf(p)).filter(x=>x.target!=null).length;
+    const op=el(`<div class="panel"><h3>Order</h3><div class="list"><div class="list-item" style="cursor:default;flex-direction:column;align-items:flex-start;gap:2px">
+      <span>${esc(o.baseName||"")}</span><span class="sub" style="margin:0">${t} targets · warp ${((o.warp||0)*100).toFixed(1)}% weft ${((o.weft||0)*100).toFixed(1)}% · fabric ${o.fabricWidth?fmtU(o.fabricWidth):"?"}</span></div></div>
+      <div style="display:flex;gap:6px;margin-top:6px"><button class="btn full primary" id="od-alter">Auto-alter</button><button class="btn full" id="od-chain">Full chain</button></div></div>`);
+    sb.appendChild(op);$("#od-alter").onclick=()=>runAutoAlter(p);$("#od-chain").onclick=runOrderChain;}
+  buildChartPanel(sb,p);
   /* --- pieces list --- */
   const plp=el(`<div class="panel"><h3>Pieces <span class="pact" style="cursor:default">${p.pieces.length}</span></h3><div class="list" id="plist"></div></div>`);
   sb.appendChild(plp);
@@ -715,7 +2130,9 @@ function buildDesignSidebar(sb){
       const pp2=el(`<div class="panel"><h3>Point ${S.sel.point+1} of ${pc.points.length}</h3>
         <div class="row"><label>X</label><input id="pt-x" type="number" step="any" value="${fmt(pt.x)}"><span style="color:var(--dim);font-size:10px">${S.units}</span></div>
         <div class="row"><label>Y</label><input id="pt-y" type="number" step="any" value="${fmt(pt.y)}"><span style="color:var(--dim);font-size:10px">${S.units}</span></div>
-        <div class="row"><label>Type</label><span style="font:11px var(--mono);color:${hasHandle(pt)?"var(--accent)":"var(--dim)"}">${hasHandle(pt)?(pt.hIn&&pt.hOut?"smooth (bézier)":"hybrid"):"corner"}</span></div>
+        <div class="row"><label>Name</label><input id="pt-name" type="text" value="${esc(pt.name||"")}" placeholder="e.g. 03 Hip/m/q2"></div>
+        <div class="row"><label>Type</label><span style="font:11px var(--mono);color:${hasHandle(pt)?"var(--accent)":"var(--dim)"}">${hasHandle(pt)?(pt.hIn&&pt.hOut?"smooth (bézier)":"hybrid"):"corner"}${pt.curve?" · curve":" · grade"}</span></div>
+        <div style="display:flex;gap:6px;margin-bottom:6px"><button class="btn sm" id="pt-move">Move…</button><button class="btn sm" id="pt-grade">${pt.curve?"Make grade pt":"Make curve pt"}</button></div>
         <button class="btn full sm" id="pt-toggle" style="margin-bottom:6px">${hasHandle(pt)?"Convert to corner":"Convert to smooth"}</button>
         <h3 style="margin-top:10px">Movement Program</h3>
         ${p.measurements.length?`<table class="gradetbl"><tr><th>measurement</th><th>Δx / unit</th><th>Δy / unit</th></tr>
@@ -723,13 +2140,16 @@ function buildDesignSidebar(sb){
             return `<tr><td style="color:var(--dim)">${m.name}</td>
               <td><input type="number" step="any" class="gr" data-m="${m.id}" data-a="dx" value="${g.dx||0}"></td>
               <td><input type="number" step="any" class="gr" data-m="${m.id}" data-a="dy" value="${g.dy||0}"></td></tr>`;}).join("")}
-        </table><p class="hintline">mm of point movement per +1 mm of measurement change (unit-free ratio).</p>`
+        </table><p class="hintline">Movement per +1 unit of the measurement (ratio). Set in bulk with Program by area (${keyFor("point.program")}).</p>`
         :`<p class="hintline">Define measurements above to program this point.</p>`}
       </div>`);
       sb.appendChild(pp2);
       $("#pt-x").onchange=e=>{const nx=toMM(e.target.value);moveHandlesWith(pt,nx-pt.x,0);pt.x=nx;syncTwin(pc,S.sel.point,twinIndex(pc,S.sel.point));render();};
       $("#pt-y").onchange=e=>{const ny=toMM(e.target.value);moveHandlesWith(pt,0,ny-pt.y);pt.y=ny;syncTwin(pc,S.sel.point,twinIndex(pc,S.sel.point));render();};
       $("#pt-toggle").onclick=()=>{toggleCorner(pc,S.sel.point);render();};
+      $("#pt-name").onchange=e=>{pt.name=e.target.value.trim();render();};
+      $("#pt-move").onclick=()=>movePointDialog(pc,S.sel.point);
+      $("#pt-grade").onclick=()=>{pt.curve=!pt.curve;if(!pt.curve){pt.hIn=null;pt.hOut=null;}render();};
       $$(".gr").forEach(i=>i.onchange=e=>{
         const m=e.target.dataset.m,a=e.target.dataset.a;
         pt.grade=pt.grade||{};pt.grade[m]=pt.grade[m]||{dx:0,dy:0};
@@ -843,13 +2263,28 @@ function toolIcon(name){
     grain:'<path d="M4 12h16M8 8.5L4.5 12 8 15.5M16 8.5l3.5 3.5L16 15.5"/>',
     smooth:'<path d="M3 17c3 0 4-9 9-9s6 9 9 9" /><path d="M3 20h18" stroke-dasharray="2 2"/>',
     curve:'<path d="M4 16C8 5 13 21 20 8"/>',
+    draft:'<path d="M4 19L9 6l7 4 4 9z"/><circle cx="4" cy="19" r="1.4"/><circle cx="9" cy="6" r="1.4"/><circle cx="16" cy="10" r="1.4"/>',
+    addpoint:'<path d="M3 17C8 8 14 8 21 14"/><circle cx="11" cy="10.4" r="2.2"/><path d="M17 3v5M14.5 5.5h5"/>',
+    seam:'<path d="M5 19V8l7-4 7 4v11z"/><path d="M2.5 21.5V6.5l9.5-5.5 9.5 5.5v15" stroke-dasharray="2 2"/>',
+    seglen:'<path d="M3 15h18M3 11v8M21 11v8M7 7h10M14 4l3 3-3 3"/>',
+    compare:'<path d="M4 8h10M4 16h16M16 5v6M13 8h6"/>',
+    cut:'<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5L20 17M8 15.5L20 7"/>',
+    join:'<path d="M3 6h7v12H3zM14 6h7v12h-7z"/><path d="M10 12h4" stroke-dasharray="1.5 1.5"/>',
+    fullness:'<path d="M4 20L8 4h8l4 16z"/><path d="M12 4v16M10 20l2-6 2 6" />',
+    dart:'<path d="M3 5h18M9 5l3 12 3-12"/><circle cx="12" cy="15" r=".9"/>',
+    roundcorner:'<path d="M5 20V12a7 7 0 0 1 7-7h8"/>',
+    parallel:'<path d="M3 8c5-4 13-4 18 0M3 13c5-4 13-4 18 0" /><path d="M3 13c5-4 13-4 18 0" stroke-dasharray="2 2" transform="translate(0 4)"/>',
+    drill:'<circle cx="12" cy="12" r="4"/><path d="M12 4v16M4 12h16"/>',
+    measure:'<path d="M3 17L17 3M3 17l2 2M17 3l2 2M7 13l1.5 1.5M10 10l1.5 1.5M13 7l1.5 1.5"/>',
+    movepoints:'<rect x="4" y="6" width="12" height="10" stroke-dasharray="2 2"/><path d="M14 18l4 2-1-4M8 11h4M10 9v4"/>',
+    program:'<rect x="4" y="6" width="12" height="10" stroke-dasharray="2 2"/><path d="M8 11l3-3 3 3M11 8v6"/><text x="15" y="20" font-size="7" fill="currentColor" stroke="none">Δ</text>',
   };
   return `<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round">${I[name]}</svg>`;
 }
 function buildFloatTool(){
   const ft=$("#floattool");
   if(S.workspace!=="design"||!S.view.patternTool){ft.style.display="none";return;}
-  ft.style.display="flex";ft.innerHTML="";
+  ft.style.display="grid";ft.innerHTML="";
   const simple=(id,ic,tip,badge)=>{
     const b=document.createElement("button");b.title=tip;
     b.innerHTML=toolIcon(ic)+(badge?`<span class="tbadge">${badge}</span>`:"");
@@ -857,7 +2292,8 @@ function buildFloatTool(){
     b.onclick=()=>{if(S.tool===id&&id==="perp"){S.perpBoth=!S.perpBoth;buildFloatTool();renderStats();return;}setTool(id);};
     ft.appendChild(b);return b;
   };
-  simple("select","select","Select (V) — right-click a piece for symmetric-edit options");
+  simple("select","select","Select — drag empty canvas to rectangle-select points; right-click a piece for options");
+  simple("draft","draft","Draft — click points to draft a new piece (start inside a piece = internal line). Tab = exact length/angle");
   simple("pen","pen","Pen (P) — Internal Polygon/Line. Click inside a pattern to start; click to add points (snaps to the pattern outline). Click the START point to close a polygon, or double-click to end an open line. Ctrl = curve point · Shift = 45° · Esc cancels.");
   simple("curvepen","curvepen","Curvature pen (U) — click to add auto-smooth points; click an edge to insert a point; click a point to select (Del removes); double-click toggles corner");
   /* --- shape flyout group (Illustrator-style) --- */
@@ -866,7 +2302,19 @@ function buildFloatTool(){
   simple("linemirror","linemirror","Line mirror (L) — piece selected, click 2 points → mirrored copy across that line");
   simple("piecemirror","piecemirror","Piece mirror (Y) — click 2 points on fold line → unfold or enable symmetric edit");
   ft.appendChild(el(`<div class="tsep"></div>`));
-  [["notch","notch","Notch (N) — click on an edge"],["grain","grain","Grain line (G) — drag inside a piece"],["smooth","smooth","Smooth (S) — click start then end corner point; click intermediate points to keep (red X); right-click to finish, Esc cancels."]].forEach(([id,ic,tip])=>{
+  [["addpoint","addpoint","Add Point — click an edge (Shift = exact distance, Ctrl = curve point)"],
+   ["seglen","seglen","Segment Length — click a segment, type the new length (TUKA extend methods)"],
+   ["seam","seam","Seam — click a segment: width + corner types (mirror for hems)"],
+   ["cut","cut","Cut piece — click two points on the outline"],
+   ["join","join","Join pieces — edge on piece 1, then matching edge on piece 2"],
+   ["fullness","fullness","Fullness / slash & spread — two clicks for the slash line"],
+   ["dart","dart","Create dart — click edge (centre), then apex"],
+   ["roundcorner","roundcorner","Round corner — click a corner point"],
+   ["parallel","parallel","Create parallel — internal line parallel to a segment"],
+   ["drill","drill","Drill hole — click inside a piece"],
+   ["compare","compare","Compare Length — click segments (Shift = minus)"],
+   ["notch","notch","Notch — click an edge or a point (type in Seam › Notch setup)"],["grain","grain","Grain line — drag inside a piece"],["smooth","smooth","Smooth — click start then end corner point; click intermediate points to keep (red X); right-click to finish, Esc cancels."],
+   ["measure","measure","Measure — click two points (snaps to anchors) · add to Measurement Chart"],["movepoints","movepoints","Move points by area — drag a rectangle, type dX/dY (TUKA Ctrl+Shift+U)"],["program","program","Program points by area — drag a rectangle, set the alteration rule (Δ per unit of a measurement)"]].forEach(([id,ic,tip])=>{
     const b=document.createElement("button");b.title=tip;b.innerHTML=toolIcon(ic);
     b.className=S.tool===id?"active":"";b.onclick=()=>setTool(id);ft.appendChild(b);
   });
@@ -904,8 +2352,8 @@ function buildShapeFlyout(ft){
 }
 function closeFly(){$$(".flymenu").forEach(m=>m.remove());}
 document.addEventListener("click",e=>{if(!e.target.closest||!e.target.closest(".flywrap"))closeFly();});
-function setTool(t){S.tool=t;if(t!=="pen"&&t!=="curvepen")cancelDraft();S.op=null;hideCtx();closeFly();buildFloatTool();updateCursor();renderStats();}
-function updateCursor(){$("#svg").style.cursor=["pen","curvepen","shape","perp","linemirror","piecemirror","notch","grain","smooth"].includes(S.tool)?"crosshair":"default";}
+function setTool(t){S.tool=t;status("");if(t!=="pen"&&t!=="curvepen")cancelDraft();S.op=null;hideCtx();closeFly();buildFloatTool();updateCursor();renderStats();}
+function updateCursor(){$("#svg").style.cursor=["pen","curvepen","shape","perp","linemirror","piecemirror","notch","grain","smooth","measure","movepoints","program","draft","addpoint","seam","seglen","compare","cut","join","fullness","dart","roundcorner","parallel","drill"].includes(S.tool)?"crosshair":"default";}
 
 /* =========================================================
    TABS & MODES (2)
@@ -948,6 +2396,7 @@ function render(){
   if(S.view.grid)drawGrid(svg,V);
   if(S.workspace==="design")renderDesign(svg);else renderMarker(svg);
   renderStats();
+  histCheckpoint();
 }
 function drawGrid(svg,V){
   const step=S.units==="inch"?25.4:10; // 1cm or 1in minor
@@ -986,23 +2435,25 @@ function renderDesign(svg){
     const isSel=pc.id===S.sel.piece;
     const labels=[];  // {x,y,text,size,color} collected, drawn last
     /* seam line (offset). is_cut aside, this is the seam-allowance boundary */
-    if(S.view.seam&&pc.seam>0){
-      const off=offsetPolygon(poly,pc.seam);
+    if(S.view.seam&&hasSeam(pc)){
+      const off=seamPolygon(pc);
       svgEl("path",{d:pathD(off),fill:"rgba(0,0,0,0.02)",stroke:st.seam.color,"stroke-width":st.seam.thickness*px,
         "stroke-dasharray":dashFor(st.seam.style,px)},g);
       if(st.seam.label.visible){const b=polyBBox(off);labels.push({x:b.x2,y:b.y1,text:st.seam.label.text||`${fmtU(pc.seam)} seam`,size:st.seam.label.fontSize,color:st.seam.color,anchor:"start"});}
     }
+    if(pc.sewLine&&pc.sewLine.length>2&&S.view.seam)svgEl("path",{d:pathD(pc.sewLine),fill:"none",stroke:st.seam.color,"stroke-width":st.seam.thickness*px,"stroke-dasharray":dashFor("dotted",px),opacity:.7},g);
     /* perimeter (drafted / sew line) */
     svgEl("path",{d:pathD(poly),fill:isSel?"rgba(61,155,255,0.06)":"rgba(0,0,0,0.012)",
       stroke:isSel?"#3d9bff":st.perimeter.color,"stroke-width":(isSel?1.8:st.perimeter.thickness)*px,
       "stroke-dasharray":dashFor(st.perimeter.style,px),"data-piece":pc.id},g);
     if(st.perimeter.label.visible){const b=polyBBox(poly);labels.push({x:(b.x1+b.x2)/2,y:b.y1-6*px,text:st.perimeter.label.text||pc.name,size:st.perimeter.label.fontSize,color:st.perimeter.color,anchor:"middle"});}
     /* notches */
-    for(const nt of pc.notches)drawNotch(g,pc,nt,"#c02020",1.4*px);
-    /* internal lines */
-    for(const il of (pc.internals||[]))
+    {const sgn=polyArea(poly)>0?1:-1;for(const nt of pc.notches)drawNotchTyped(g,pc,nt,"#c02020",1.4*px,sgn);}
+    /* internal lines + drill holes */
+    for(const il of (pc.internals||[])){
+      if(il.kind==="drill"){drawDrill(g,il,st.internal.color,px);continue;}
       svgEl("line",{x1:il.x1,y1:il.y1,x2:il.x2,y2:il.y2,stroke:st.internal.color,
-        "stroke-width":st.internal.thickness*px,"stroke-dasharray":dashFor(st.internal.style,px)},g);
+        "stroke-width":st.internal.thickness*px,"stroke-dasharray":dashFor(st.internal.style,px)},g);}
     if(st.internal.label.visible&&(pc.internals||[]).length){const il=pc.internals[0];
       labels.push({x:(il.x1+il.x2)/2,y:(il.y1+il.y2)/2,text:st.internal.label.text||"internal",size:st.internal.label.fontSize,color:st.internal.color,anchor:"middle"});}
     /* symmetry axis */
@@ -1024,6 +2475,11 @@ function renderDesign(svg){
     /* print-visible line labels */
     for(const lb of labels)
       svgEl("text",{x:lb.x,y:lb.y,"text-anchor":lb.anchor||"middle","font-size":lb.size*px*1.2,fill:lb.color,"font-family":"var(--sans)","font-weight":600},g).textContent=lb.text;
+    /* point names (measurement names) */
+    if(S.view.names!==false){pc.points.forEach((pt,i)=>{if(!pt.name)return;const nm=parseMeasName(pt.name);
+      svgEl("text",{x:pt.x+5*px,y:pt.y-5*px,"font-size":8*px*1.4,fill:nm&&nm.m?"#1f8f4e":"#555","font-family":"ui-monospace,Consolas,monospace"},g).textContent=pt.name;
+      if(nm&&nm.m){const run=contourRun(pc,i);const pts=[];for(const s2 of run.segs)for(let k=0;k<=SEG_STEPS;k++)pts.push(pointOnSegment(pc,s2,k/SEG_STEPS));
+        svgEl("path",{d:pathD(pts,false),fill:"none",stroke:"#1f8f4e","stroke-width":2.2*px,opacity:.55},g);}});}
     /* measurements */
     if(S.view.measurements){
       for(let i=0;i<pc.points.length;i++){
@@ -1093,6 +2549,20 @@ function renderDesign(svg){
     if(d.hover&&d.snap)
       svgEl("circle",{cx:d.hover.x,cy:d.hover.y,r:5*px,fill:"none",stroke:"#e0348d","stroke-width":1.6*px},g);
   }
+  /* rectangle select / move-points / program preview */
+  if(drag&&drag.type==="rectsel"){
+    const x1=Math.min(drag.start.x,drag.cur.x),y1=Math.min(drag.start.y,drag.cur.y),w2=Math.abs(drag.cur.x-drag.start.x),h2=Math.abs(drag.cur.y-drag.start.y);
+    const col=drag.mode==="program"?"#c136c1":drag.mode==="movepoints"?"#ffb454":"#3d9bff";
+    svgEl("rect",{x:x1,y:y1,width:w2,height:h2,fill:col.replace(")",",.08)").replace("#","rgba(")===col?"rgba(61,155,255,.08)":"rgba(255,180,84,.10)",stroke:col,"stroke-width":px,"stroke-dasharray":`${4*px} ${3*px}`},g);
+  }
+  /* multi-selected points */
+  if(p&&S.msel&&S.msel.length){for(const s of S.msel){const pc2=p.pieces.find(x=>x.id===s.pc);const pt=pc2&&pc2.points[s.i];if(!pt)continue;
+    svgEl("circle",{cx:pt.x,cy:pt.y,r:5*px,fill:"rgba(61,155,255,.35)",stroke:"#3d9bff","stroke-width":1.2*px},g);}}
+  /* measure preview */
+  if(S.op&&S.op.kind==="measure"&&S.op.a){const a=S.op.a,b=S.op.b||S.op.cur;
+    if(b){svgEl("line",{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:"#ff7a1a","stroke-width":1.2*px,"stroke-dasharray":`${5*px} ${3*px}`},g);
+      svgEl("circle",{cx:a.x,cy:a.y,r:4*px,fill:"#ff7a1a"},g);
+      svgEl("text",{x:(a.x+b.x)/2+6*px,y:(a.y+b.y)/2-6*px,"font-size":9*px*1.4,fill:"#ff7a1a","font-family":"ui-monospace,Consolas,monospace"},g).textContent=fmtU(Math.hypot(b.x-a.x,b.y-a.y));}}
   /* shape drag preview */
   if(drag&&drag.type==="shape"){
     let x1=Math.min(drag.start.x,drag.cur.x),y1=Math.min(drag.start.y,drag.cur.y),
@@ -1132,6 +2602,15 @@ function renderDesign(svg){
       }
     }
   }
+  /* two-click tool previews */
+  if(S.op&&(S.op.kind==="cut"||S.op.kind==="fullness"||S.op.kind==="dart")&&S.op.cur){
+    const a=S.op.kind==="dart"?S.op.c:S.op.a,b=S.op.cur,col=S.op.kind==="cut"?"#e0281e":S.op.kind==="dart"?"#1f8f4e":"#c136c1";
+    svgEl("line",{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:col,"stroke-width":1.4*px,"stroke-dasharray":`${6*px} ${3*px}`},g);
+    svgEl("circle",{cx:a.x,cy:a.y,r:4*px,fill:col},g);}
+  if(S.op&&S.op.kind==="join"&&S.op.a){const o=S.op.a;const pl=runPolyline(o.pc,{i0:o.i0,i1:o.i1,segs:runFromSeg(o.pc,o.i0).segs});
+    svgEl("path",{d:pathD(pl,false),fill:"none",stroke:"#ff7a1a","stroke-width":3*px,opacity:.8},g);}
+  if(S.tool==="compare"||(S.compare&&S.compare.length)){for(const x of compareRows()){const pl=runPolyline(x.pc,x.r);
+    svgEl("path",{d:pathD(pl,false),fill:"none",stroke:x.c.sign>0?"#1f8f4e":"#e0281e","stroke-width":3*px,opacity:.7},g);}}
   /* SMOOTH tool preview (red contour under old, X marks) */
   if(S.op&&S.op.kind==="smooth"){
     const o=S.op,pc=o.piece;
@@ -1160,7 +2639,7 @@ function shrinkScale(){const M=S.marker;return M?{x:1/Math.max(.01,1-M.shrinkX/1
 function placementPoly(pl,withBuffer){
   const M=S.marker,pc=M.pattern.pieces.find(x=>x.id===pl.pieceId);if(!pc)return[];
   let poly=samplePiece(pc);
-  if(pc.seam>0)poly=offsetPolygon(poly,pc.seam);       // cutting line is what occupies fabric
+  if(hasSeam(pc))poly=seamPolygon(pc);                   // cutting line is what occupies fabric
   if(withBuffer&&pc.buffer>0)poly=offsetPolygon(poly,pc.buffer);
   const sc=shrinkScale();
   poly=poly.map(p=>({x:p.x*sc.x,y:p.y*sc.y}));
@@ -1266,6 +2745,22 @@ function renderStats(){
       perp:` · <b>${S.perpBoth?"both sides":"single side"}</b> (T swaps) · click edge, click length`,
       linemirror:` · click 2 points → mirrored copy`,
       piecemirror:` · click 2 points on fold line → unfold / symmetric edit`,
+      measure:` · click 2 points (snaps to anchors) · dialog shows D / X / Y / contour · add to chart`,
+      movepoints:` · drag a rectangle around points → type dX / dY`,
+      program:` · drag a rectangle around points → set Δx/Δy per unit of a measurement`,
+      draft:` · click points · click start / Enter = close piece · start inside a piece = internal line · <kbd>Tab</kbd> exact length/angle · Ctrl curve · Shift 45°`,
+      addpoint:` · click edge = grade point · Ctrl = curve point · Shift = exact distance`,
+      seam:` · click a segment → width + corner types (mirror for hems)`,
+      seglen:` · click a segment → new length + extend method`,
+      compare:` · click segments to add · Shift-click = subtract · see sidebar`,
+      cut:` · click two points on the outline → split piece`,
+      join:` · click an edge on piece 1, then the matching edge on piece 2`,
+      fullness:` · click the two ends of the slash line → spread amounts`,
+      dart:` · click the edge (dart centre), then the apex`,
+      roundcorner:` · click a corner point → radius`,
+      parallel:` · click a segment → internal parallel line (topstitch, fold)`,
+      drill:` · click inside a piece`,
+      select:` · drag on empty canvas = rectangle-select points · <kbd>${keyFor("point.move")}</kbd> move point · <kbd>${keyFor("report.chart")}</kbd> chart`,
     };
     sbar.innerHTML=p?`<span>pattern <b>${p.name} — ${p.size}</b></span><span>pieces <b>${p.pieces.length}</b></span><span>measurements <b>${p.measurements.length}</b></span><span>seam &amp; grading in <b>${S.units}</b></span><span style="margin-left:auto">tool <b>${S.tool}</b>${hints[S.tool]||""}</span>`
       :`<span>no pattern loaded</span>`;
@@ -1365,6 +2860,7 @@ $("#svg").addEventListener("pointermove",e=>{
       render();return;
     }
     if(drag.type==="shape"){drag.cur=w;drag.square=e.shiftKey;render();return;}
+    if(drag.type==="rectsel"){drag.cur=w;render();return;}
     if(drag.type==="grain"){drag.cur=w;const pc=drag.piece;pc.grain={x1:drag.start.x,y1:drag.start.y,x2:w.x,y2:w.y};render();return;}
     if(drag.type==="placement"){
       const pl=S.marker.placements[drag.idx];
@@ -1384,6 +2880,14 @@ $("#svg").addEventListener("pointermove",e=>{
 $("#svg").addEventListener("pointerup",e=>{
   try{$("#svg").releasePointerCapture(e.pointerId);}catch(_){}
   if(drag){
+    if(drag.type==="rectsel"){const d=drag;drag=null;const p=activePattern();
+      const r={x1:d.start.x,y1:d.start.y,x2:d.cur.x,y2:d.cur.y};const tiny=Math.abs(r.x2-r.x1)<3*pxScale()&&Math.abs(r.y2-r.y1)<3*pxScale();
+      if(p&&!tiny){const sel=pointsInRect(p,r,null);
+        if(d.mode==="movepoints"){moveSelectionDialog(sel,"Move points and internals selected by a rectangular area");}
+        else if(d.mode==="program"){programDialog(sel);}
+        else{S.msel=sel.pts;if(sel.pts.length===1){S.sel.piece=sel.pts[0].pc;S.sel.point=sel.pts[0].i;S.msel=[];}else if(sel.pts.length){S.sel.piece=sel.pts[0].pc;}toast(sel.pts.length?`${sel.pts.length} point(s) selected`:"");}}
+      else if(tiny&&d.mode==="select"){S.sel.piece=null;S.sel.point=null;S.msel=[];}
+      render();return;}
     if(drag.type==="shape"){commitShape(drag);}
     if(drag.type==="placement"){
       if(drag.invalid){ const pl=S.marker.placements[drag.idx];pl.x=drag.origX;pl.y=drag.origY;
@@ -1402,7 +2906,7 @@ function autoHandle(pts,i,closed){
 }
 $("#svg").addEventListener("dblclick",e=>{
   if(S.workspace!=="design")return;
-  if((S.tool==="pen"||S.tool==="curvepen")&&S.draft){closeDraft();return;}
+  if((S.tool==="pen"||S.tool==="curvepen"||S.tool==="draft")&&S.draft){closeDraft();return;}
   if(S.tool==="select"){                            // double-click an anchor toggles corner ⇄ smooth
     const t=e.target;
     if(t.dataset&&(t.dataset.point!=null||t.dataset.hpoint!=null)){
@@ -1557,10 +3061,21 @@ function designPointerDown(e,w){
     if(!S.op){S.op={kind:"pmirror",piece:pc,p1:w,cur:w};render();return;}
     commitPieceMirror(w);return;
   }
-  if(S.tool==="notch"){
-    const hit=nearestEdge(w);if(hit){hit.piece.notches.push({seg:hit.seg,t:hit.t});S.sel.piece=hit.piece.id;render();}
-    return;
-  }
+  if(S.tool==="measure"){measureClick(w);return;}
+  if(S.tool==="draft"){draftClick(e,w);return;}
+  if(S.tool==="addpoint"){addPointClick(e,w);return;}
+  if(S.tool==="seam"){seamToolClick(w);return;}
+  if(S.tool==="seglen"){segLengthClick(w);return;}
+  if(S.tool==="compare"){compareClick(e,w);return;}
+  if(S.tool==="cut"){cutClick(w);return;}
+  if(S.tool==="join"){joinClick(w);return;}
+  if(S.tool==="fullness"){fullnessClick(w);return;}
+  if(S.tool==="dart"){dartClick(w);return;}
+  if(S.tool==="roundcorner"){roundCornerClick(w);return;}
+  if(S.tool==="parallel"){parallelClick(w);return;}
+  if(S.tool==="drill"){drillClick(w);return;}
+  if(S.tool==="movepoints"||S.tool==="program"){drag={type:"rectsel",start:w,cur:w,mode:S.tool};return;}
+  if(S.tool==="notch"){notchClick(w,e);return;}
   if(S.tool==="grain"){
     const pc=pieceAt(w)||selPiece();
     if(pc){S.sel.piece=pc.id;drag={type:"grain",piece:pc,start:w,cur:w};}
@@ -1610,8 +3125,9 @@ function designPointerDown(e,w){
     drag={type:"point",idx,ox:w.x-pt.x,oy:w.y-pt.y,twin:twinIndex(pc,idx)};render();return;
   }
   const pc=pieceAt(w);
-  if(pc){S.sel.piece=pc.id;S.sel.point=null;drag={type:"piece",last:w};render();return;}
-  S.sel.piece=null;S.sel.point=null;render();
+  if(pc){S.sel.piece=pc.id;S.sel.point=null;S.msel=[];drag={type:"piece",last:w};render();return;}
+  /* empty canvas: rubber-band select points (keeps the current piece selection if any) */
+  S.sel.point=null;drag={type:"rectsel",start:w,cur:w,mode:"select"};render();
 }
 /* Alt-click an anchor: smooth→corner (drop handles) or corner→smooth (auto handles) */
 function toggleCorner(pc,idx){
@@ -1841,7 +3357,7 @@ function commitSmooth(){
   S.op=null;setTool("select");S.sel.piece=pc.id;S.sel.point=null;render();
   toast(`Smoothed — ${interior.length} point${interior.length===1?"":"s"} kept`);
 }
-function closeDraft(){commitInternal(false);}   // Enter / double-click → open Internal Line
+function closeDraft(){if(S.draft&&(S.draft.kind==="piece"||S.draft.kind==="auto"))commitDraftPiece();else commitInternal(false);}   // Enter / double-click → open Internal Line
 function commitInternal(closed){
   const p=activePattern();
   if(!S.draft){return;}
@@ -1895,32 +3411,22 @@ function cancelDraft(){S.draft=null;penLast=null;}
 
 document.addEventListener("keydown",e=>{
   if(e.target.tagName==="INPUT"||e.target.tagName==="SELECT"||e.target.tagName==="TEXTAREA")return;
+  if($("#overlay").classList.contains("show")){if(e.key==="Escape")closeDialog();return;}
   if(e.code==="Space"){spaceDown=true;$("#svg").style.cursor="grab";e.preventDefault();return;}
-  const k=e.key.toLowerCase();
+  const ks=keyString(e),k=e.key.toLowerCase();
+  /* global */
+  const map=KEYMAPS[S.keymap]||KEYMAPS.prowd;
   if(S.workspace==="design"){
-    if(k==="v")setTool("select");
-    else if(k==="p")setTool("pen");
-    else if(k==="u")setTool("curvepen");
-    else if(k==="m"){const order=["rect","ellipse","roundrect"];if(S.tool==="shape"){S.shapeKind=order[(order.indexOf(S.shapeKind)+1)%order.length];}setTool("shape");buildFloatTool();renderStats();}
-    else if(k==="t"){if(S.tool==="perp"){S.perpBoth=!S.perpBoth;buildFloatTool();renderStats();}else setTool("perp");}
-    else if(k==="l")setTool("linemirror");
-    else if(k==="y")setTool("piecemirror");
-    else if(k==="n")setTool("notch");
-    else if(k==="g")setTool("grain");
-    else if(k==="s")setTool("smooth");
-    else if(k==="c"){S.curveMode=!S.curveMode;buildFloatTool();renderStats();}
-    else if(k==="enter"&&S.draft)closeDraft();
-    else if(k==="escape"){cancelDraft();S.op=null;hideCtx();render();}
-    else if(k==="delete"||k==="backspace"){
-      const p=activePattern(),pc=selPiece();
-      if(pc&&S.sel.point!=null){if(deletePoint(pc,S.sel.point)){S.sel.point=null;render();toast("Point deleted");}}
-      else if(pc){p.pieces=p.pieces.filter(x=>x.id!==pc.id);S.sel.piece=null;S.sel.point=null;render();toast(`Deleted "${pc.name}"`);}
-    }
+    if(k==="enter"&&S.draft&&!e.shiftKey&&!e.ctrlKey){closeDraft();e.preventDefault();return;}
+    if(k==="tab"&&S.draft){e.preventDefault();draftExactDialog();return;}
+    if(k==="escape"){cancelDraft();S.op=null;S.msel=[];hideCtx();status("");render();return;}
+    if(k==="delete"||k==="backspace"){CMD["edit.delete"]();e.preventDefault();return;}
+    for(const id in map){if(map[id]===ks){e.preventDefault();CMD[id]&&CMD[id]();return;}}
   }else{
     if(k==="r")rotateSelected();
-    else if(k==="delete"||k==="backspace"){
-      if(S.sel.placement!=null){S.marker.placements.splice(S.sel.placement,1);S.sel.placement=null;render();}
-    }
+    else if(k==="delete"||k==="backspace"){if(S.sel.placement!=null){S.marker.placements.splice(S.sel.placement,1);S.sel.placement=null;render();}}
+    else if(ks==="ctrl+z"){e.preventDefault();undo();}else if(ks==="ctrl+y"){e.preventDefault();redo();}
+    else if(ks==="home")zoomAll();else if(ks==="ctrl+s"){e.preventDefault();saveFile(false);}
   }
 });
 document.addEventListener("keyup",e=>{if(e.code==="Space"){spaceDown=false;updateCursor();}});
@@ -2004,17 +3510,19 @@ function saveFile(saveAs){
 function openFile(accept){
   const fi=$("#fileinput");fi.accept=accept;fi.value="";
   fi.onchange=()=>{const f=fi.files[0];if(!f)return;
+    if(/\.(xlsx|xlsm|xls)$/i.test(f.name)){importOrderFile(f);return;}
     const rd=new FileReader();
     rd.onload=()=>{
       const txt=rd.result;
-      if(/\.dxf$/i.test(f.name)){importDXF(txt,f.name);return;}
+      if(/\.dxf$/i.test(f.name)){importDXF2(txt,f.name);return;}
       if(/\.(plt|hpgl|hpg)$/i.test(f.name)){importHPGL(txt,f.name);return;}
       if(/\.svg$/i.test(f.name)||/^\s*<\?xml[^>]*>\s*<svg|^\s*<svg/i.test(txt)){importSVG(txt,f.name);return;}
       try{
         const j=JSON.parse(txt);
         if(j.type==="wptn"||(j.pieces&&j.measurements)){ // route → Pattern Design
           j.type="wptn";j.id=j.id||uid();
-          (j.pieces||[]).forEach(pc=>{pc.internals=pc.internals||[];pc.notches=pc.notches||[];pc.annotations=pc.annotations||[];pc.sym=pc.sym||null;normPieceStyles(pc);(pc.points||[]).forEach(pt=>{if(pt.hIn===undefined)pt.hIn=null;if(pt.hOut===undefined)pt.hOut=null;});});
+          (j.pieces||[]).forEach(pc=>{pc.internals=pc.internals||[];pc.notches=pc.notches||[];pc.annotations=pc.annotations||[];pc.sym=pc.sym||null;normPieceStyles(pc);(pc.points||[]).forEach(pt=>{if(pt.hIn===undefined)pt.hIn=null;if(pt.hOut===undefined)pt.hOut=null;if(!pt.id)pt.id=uid();if(pt.name==null)pt.name="";});});
+          j.poms=j.poms||[];j.targets=j.targets||{};
           S.patterns.push(j);S.activePatternId=j.id;S.workspace="design";
           S.fileName.design=f.name;S.sel={piece:null,point:null,placement:null};
           fitView("design");render();toast(`Opened pattern ${j.name} — ${j.size}`);
@@ -2057,30 +3565,31 @@ function dxfPolyline(lines,poly,layer,closed=true,color){
 function dxfLine(lines,x1,y1,x2,y2,layer,color){lines.push("0","LINE","8",layer);if(color!=null)lines.push("62",String(color));lines.push("10",x1.toFixed(3),"20",(-y1).toFixed(3),"11",x2.toFixed(3),"21",(-y2).toFixed(3));}
 function dxfPoint(lines,x,y,layer){lines.push("0","POINT","8",layer,"10",x.toFixed(3),"20",(-y).toFixed(3));}
 function dxfText(lines,x,y,h,txt,layer){lines.push("0","TEXT","8",layer,"10",x.toFixed(3),"20",(-y).toFixed(3),"40",h.toFixed(2),"1",txt);}
-function exportDXF(flavor){ // pattern design workspace
+function exportDXF(flavor,fname){ // pattern design workspace
   const p=activePattern();if(!p||!p.pieces.length)return toast("No pattern to export");
   const L=dxfHeader(flavor);
   const sewLayer=flavor==="astm"?"84":"14";
   for(const pc of p.pieces){
     normPieceStyles(pc);const st=pc.styles;
     const poly=samplePiece(pc);if(poly.length<3)continue;
-    const cut=pc.seam>0?offsetPolygon(poly,pc.seam):poly;
+    const cut=hasSeam(pc)?seamPolygon(pc):poly;
     dxfPolyline(L,cut,"1",true,aci(st.perimeter.color));         // piece boundary (cut)
-    if(flavor!=="dxf"&&pc.seam>0)dxfPolyline(L,poly,sewLayer,true,aci(st.seam.color));  // sew line
+    if(flavor!=="dxf"&&hasSeam(pc))dxfPolyline(L,poly,sewLayer,true,aci(st.seam.color));  // sew line
     if(flavor!=="dxf"){
       pc.points.forEach(pt=>dxfPoint(L,pt.x,pt.y,pt.curve?"3":"2"));
     }
-    pc.notches.forEach(nt=>{const q=pointOnSegment(pc,nt.seg,nt.t);dxfPoint(L,q.x,q.y,"4");});
-    (pc.internals||[]).forEach(il=>dxfLine(L,il.x1,il.y1,il.x2,il.y2,"8",aci(st.internal.color)));
+    {const sg=polyArea(poly)>0?1:-1,sv=S.view.seam;S.view.seam=true;
+     pc.notches.forEach(nt=>{const segs=notchGeom(pc,nt,sg);const a=segs[0][0],b=segs[0][1];dxfLine(L,a.x,a.y,b.x,b.y,"4");});S.view.seam=sv;}
+    (pc.internals||[]).forEach(il=>{if(il.kind==="drill")dxfPoint(L,il.x1,il.y1,"13");else dxfLine(L,il.x1,il.y1,il.x2,il.y2,"8",aci(st.internal.color));});
     if(pc.grain)dxfLine(L,pc.grain.x1,pc.grain.y1,pc.grain.x2,pc.grain.y2,"7",aci(st.grain.color));
     const c=polyCentroid(poly);
     dxfText(L,c.x,c.y,20,`${pc.name} / ${p.name} / size ${p.size} / qty ${pc.qty}`,"15");
   }
   L.push("0","ENDSEC","0","EOF");
-  download(`${p.name}-${p.size}-${flavor}.dxf`.replace(/\s+/g,"_"),L.join("\r\n"),"application/dxf");
+  download(fname||`${p.name}-${p.size}-${flavor}.dxf`.replace(/\s+/g,"_"),L.join("\r\n"),"application/dxf");
   toast(`Exported ${flavor.toUpperCase()} DXF (1:1, mm)`);
 }
-function exportPlotDXF(){ // marker mode: full layout at 1:1 on fabric width
+function exportPlotDXF(fname){ // marker mode: full layout at 1:1 on fabric width
   const M=S.marker;if(!M||!M.placements.length)return toast("Marker is empty");
   const L=dxfHeader("plot");
   dxfLine(L,0,0,markerLength(),0,"6");                       // selvedges on layer 6
@@ -2104,7 +3613,7 @@ function exportPlotDXF(){ // marker mode: full layout at 1:1 on fabric width
     }
   });
   L.push("0","ENDSEC","0","EOF");
-  download(`${M.pattern.name}-${M.pattern.size}-marker-plot.dxf`.replace(/\s+/g,"_"),L.join("\r\n"),"application/dxf");
+  download(fname||`${M.pattern.name}-${M.pattern.size}-marker-plot.dxf`.replace(/\s+/g,"_"),L.join("\r\n"),"application/dxf");
   toast("Exported Plot DXF (1:1 marker layout)");
 }
 
@@ -2445,7 +3954,7 @@ function drawPolyPDF(doc,poly,tx,ty,dashed){
 }
 function exportPatternPDF(){
   const p=activePattern();if(!p||!p.pieces.length)return toast("No pattern to export");
-  const all=[];p.pieces.forEach(pc=>{const poly=samplePiece(pc);all.push(...(pc.seam>0?offsetPolygon(poly,pc.seam):poly));});
+  const all=[];p.pieces.forEach(pc=>{const poly=samplePiece(pc);all.push(...(hasSeam(pc)?seamPolygon(pc):poly));});
   const bb=polyBBox(all);bb.x1-=5;bb.y1-=5;bb.w+=10;bb.h+=10;
   tiledPDF((doc,tx,ty)=>{
     const hex=h=>{h=h.replace("#","");return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];};
@@ -2453,17 +3962,18 @@ function exportPatternPDF(){
     for(const pc of p.pieces){
       normPieceStyles(pc);const st=pc.styles;const poly=samplePiece(pc);
       /* seam line */
-      if(pc.seam>0){const off=offsetPolygon(poly,pc.seam);doc.setDrawColor(...hex(st.seam.color));doc.setLineWidth(st.seam.thickness*0.35);dash(st.seam.style);drawPolyPDF(doc,off,tx,ty,false);}
+      if(hasSeam(pc)){const off=seamPolygon(pc);doc.setDrawColor(...hex(st.seam.color));doc.setLineWidth(st.seam.thickness*0.35);dash(st.seam.style);drawPolyPDF(doc,off,tx,ty,false);}
       /* perimeter */
       doc.setDrawColor(...hex(st.perimeter.color));doc.setLineWidth(st.perimeter.thickness*0.35);dash(st.perimeter.style);drawPolyPDF(doc,poly,tx,ty,false);
       doc.setLineDashPattern([],0);
       /* notches */
       doc.setDrawColor(0);doc.setLineWidth(0.35);
-      for(const nt of pc.notches){const q=pointOnSegment(pc,nt.seg,nt.t),tg=segTangent(pc,nt.seg,nt.t);
-        doc.line(tx(q.x-tg.y*8),ty(q.y+tg.x*8),tx(q.x+tg.y*8),ty(q.y-tg.x*8));}
+      {const sg=polyArea(poly)>0?1:-1,sv=S.view.seam;S.view.seam=true;
+       for(const nt of pc.notches)for(const [a,b] of notchGeom(pc,nt,sg))doc.line(tx(a.x),ty(a.y),tx(b.x),ty(b.y));S.view.seam=sv;}
       /* internal lines */
       doc.setDrawColor(...hex(st.internal.color));doc.setLineWidth(st.internal.thickness*0.35);dash(st.internal.style);
-      for(const il of (pc.internals||[]))doc.line(tx(il.x1),ty(il.y1),tx(il.x2),ty(il.y2));
+      for(const il of (pc.internals||[])){if(il.kind==="drill"){doc.circle(tx(il.x1),ty(il.y1),3.2);doc.line(tx(il.x1-5),ty(il.y1),tx(il.x1+5),ty(il.y1));doc.line(tx(il.x1),ty(il.y1-5),tx(il.x1),ty(il.y1+5));}
+        else doc.line(tx(il.x1),ty(il.y1),tx(il.x2),ty(il.y2));}
       doc.setLineDashPattern([],0);
       /* grain + arrows */
       if(pc.grain){doc.setDrawColor(...hex(st.grain.color));doc.setLineWidth(st.grain.thickness*0.35);
@@ -2564,7 +4074,7 @@ function loadDemo(){
 render();
 status("Ready — draft or import a base-size pattern, program grading, generate sizes, make markers.");
 /* debug/API handle (console): WP.S = state, WP.render(), WP.generateSize(...) */
-window.WP={S,render,activePattern,generateSize,loadPatternIntoMarker,markerUtilization,markerLength,samplePiece,sampleOpen,offsetPolygon,fitView,loadDemo,
+window.WP={seamPolygon,hasSeam,seamW,notchGeom,insertPointExact,setRunLength,runFromSeg,runLength,splitPieceAt,piecesFromParts,spreadPiece,createDart,roundCorner,reversePieceFull,nearestOnPiece,commitDraftPiece,cutClick,joinClick,compareRows,posAtArc,arcPos,S,render,activePattern,generateSize,measureRows,alterToTargets,makeShrunkPattern,parseOrderWorkbook,applyOrder,runAutoAlter,runOrderChain,autoNest,exportPLT,importDXF2,parseDXFFull,undo,redo,HIST,CMD,KEYMAPS,pointsInRect,movePointsBy,targetsOf,normMeas,showMeasurementChart,flipPieces,rotatePieces,loadPatternIntoMarker,markerUtilization,markerLength,samplePiece,sampleOpen,offsetPolygon,fitView,loadDemo,
   bez,segEval,setSmoothHandle,hasHandle,moveHandlesWith,autoHandle,toggleCorner,closeDraft,confirmDialog,promptDialog,insertPointOnEdge,nearestEdge,pointOnSegment,newPiece,newPoint,newPattern,
   reflectPoint,reflectVec,twinIndex,syncTwin,commitShape,commitPerp,commitLineMirror,commitPieceMirror,perpAnchor,setTool,newPiece,newPoint,polyBBox,polyArea,distToAxis,selPiece,
   nearestAnchor,deletePoint,arcsBetween,commitSmooth,roundRectPoints,buildFloatTool,

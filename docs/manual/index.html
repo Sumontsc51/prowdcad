@@ -1,0 +1,653 @@
+<title>ProwdCAD User Manual</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: drafting-paper header band, then a sticky chapter index beside one reading column. */
+:root{
+  --paper:#fbfbf8; --sheet:#ffffff; --ink:#1b2230; --muted:#5d6676; --rule:#dde2ea; --grid:rgba(78,161,255,.10);
+  --accent:#e2561c; --accent-soft:#fdebe2; --blue:#2f7fd6; --blue-soft:#e6f0fb; --code-bg:#f1f3f7;
+  --display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#11141b; --sheet:#171b24; --ink:#e7ebf2; --muted:#9aa4b5; --rule:#2a303d; --grid:rgba(78,161,255,.07);
+  --accent:#ff7a45; --accent-soft:#3a2219; --blue:#6fb0ff; --blue-soft:#1b2a40; --code-bg:#202633; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#11141b; --sheet:#171b24; --ink:#e7ebf2; --muted:#9aa4b5; --rule:#2a303d; --grid:rgba(78,161,255,.07);
+  --accent:#ff7a45; --accent-soft:#3a2219; --blue:#6fb0ff; --blue-soft:#1b2a40; --code-bg:#202633; color-scheme:dark}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{background:var(--paper);color:var(--ink);font:400 17px/1.6 var(--body);-webkit-font-smoothing:antialiased}
+.band{background-color:var(--sheet);background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px),linear-gradient(rgba(78,161,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(78,161,255,.05) 1px,transparent 1px);
+  background-size:50px 50px,50px 50px,10px 10px,10px 10px;border-bottom:1px solid var(--rule)}
+.wrap{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.hero{padding-block:44px 34px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:40px;align-items:center}
+.eyebrow{font:600 13px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+h1{font:700 clamp(44px,6vw,72px)/.95 var(--display);letter-spacing:-.01em;margin:14px 0 14px;text-wrap:balance}
+.lede{color:var(--muted);font-size:19px;max-width:34em;margin:0 0 18px}
+.facts{display:flex;flex-wrap:wrap;gap:8px;margin:0;padding:0;list-style:none}
+.facts li{font:600 13px/1 var(--mono);background:var(--sheet);border:1px solid var(--rule);padding:8px 10px;border-radius:6px}
+.video{background:#0e1117;border-radius:10px;overflow:hidden;box-shadow:0 18px 50px rgba(15,25,45,.22);border:1px solid var(--rule)}
+.video video{display:block;width:100%;height:auto;aspect-ratio:16/9;background:#0e1117}
+.chapters{display:flex;flex-wrap:wrap;gap:6px;padding:10px;background:#151a23;margin:0;list-style:none}
+.chapters button{font:600 12.5px/1 var(--body);color:#dbe3ef;background:#222a37;border:1px solid #2e3746;border-radius:5px;padding:7px 9px;cursor:pointer}
+.chapters button span{font-family:var(--mono);color:#ff8a5c;margin-right:6px}
+.chapters button:hover,.chapters button:focus-visible{background:#2c3646;outline:none;border-color:#ff8a5c}
+.layout{display:grid;grid-template-columns:240px minmax(0,1fr);gap:48px;padding-block:36px 80px}
+nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px);align-self:start;max-height:calc(100vh - 32px);overflow:auto;font-size:15px}
+.search{width:100%;font:400 15px var(--body);padding:9px 11px;border:1px solid var(--rule);border-radius:7px;background:var(--sheet);color:var(--ink);margin-bottom:14px}
+.search:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+nav.toc ol{list-style:none;margin:0;padding:0;counter-reset:ch}
+nav.toc li{counter-increment:ch}
+nav.toc a{display:flex;gap:10px;padding:6px 8px;border-radius:6px;color:var(--ink);text-decoration:none}
+nav.toc a::before{content:counter(ch,decimal-leading-zero);font:600 12px/1.9 var(--mono);color:var(--muted)}
+nav.toc a:hover,nav.toc a:focus-visible{background:var(--blue-soft);outline:none}
+nav.toc a.on{background:var(--accent-soft)} nav.toc a.on::before{color:var(--accent)}
+main{min-width:0}
+section{padding-top:8px;margin-bottom:46px;scroll-margin-top:16px}
+h2{font:700 38px/1.05 var(--display);margin:0 0 6px;letter-spacing:.005em;text-wrap:balance}
+h2 small{display:block;font:600 12px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin-bottom:10px}
+h3{font:700 23px/1.15 var(--display);margin:28px 0 8px;letter-spacing:.01em}
+p{margin:0 0 14px;max-width:68ch}
+section ul{margin:0 0 16px;padding-left:1.25em;max-width:68ch}
+section ul li{margin:0 0 6px}
+section ul li::marker{color:var(--accent)}
+.sub{color:var(--muted);font-size:18px;margin-bottom:20px}
+a{color:var(--blue)}
+kbd{font:600 12.5px/1 var(--mono);background:var(--sheet);border:1px solid var(--rule);border-bottom-width:2px;border-radius:5px;padding:3px 6px;white-space:nowrap}
+code{font:400 14px var(--mono);background:var(--code-bg);padding:2px 5px;border-radius:4px}
+.menu{font-weight:600}
+.tbl{overflow-x:auto;margin:10px 0 18px;border:1px solid var(--rule);border-radius:8px;background:var(--sheet)}
+table{border-collapse:collapse;width:100%;font-size:15.5px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font:600 12px/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:var(--code-bg)}
+tr:last-child td{border-bottom:0}
+td:first-child{white-space:nowrap}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:14px}
+.steps{list-style:none;padding:0;margin:8px 0 18px;counter-reset:s;display:grid;gap:10px;max-width:72ch}
+.steps li{counter-increment:s;display:grid;grid-template-columns:34px minmax(0,1fr);gap:12px;align-items:start}
+.steps li::before{content:counter(s);font:700 15px/32px var(--mono);text-align:center;width:32px;height:32px;border-radius:50%;background:var(--accent-soft);color:var(--accent)}
+.note{border-left:4px solid var(--blue);background:var(--blue-soft);padding:12px 16px;border-radius:0 8px 8px 0;margin:6px 0 18px;max-width:72ch}
+.note.warn{border-color:var(--accent);background:var(--accent-soft)}
+.note strong{display:block;font:700 13px/1.4 var(--mono);letter-spacing:.06em;text-transform:uppercase;margin-bottom:2px}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:10px 0 18px}
+.tile{background:var(--sheet);border:1px solid var(--rule);border-radius:8px;padding:14px 16px}
+.tile h4{margin:0 0 4px;font:700 19px/1.2 var(--display);letter-spacing:.01em}
+.tile p{margin:0;font-size:15.5px;color:var(--muted)}
+.tile kbd{float:right}
+.empty{display:none;color:var(--muted);padding:20px 0}
+footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;padding-block:20px}
+@media (max-width:900px){
+  .hero{grid-template-columns:1fr;gap:24px;padding-block:28px}
+  .layout{grid-template-columns:1fr;gap:20px}
+  nav.toc{position:static;max-height:none}
+  nav.toc ol{display:flex;flex-wrap:wrap;gap:4px}
+  nav.toc a{padding:5px 8px;border:1px solid var(--rule)}
+  .grid2{grid-template-columns:1fr}
+}
+</style>
+
+<header class="band">
+  <div class="wrap hero">
+    <div>
+      <div class="eyebrow">ProwdCAD v2 · Design workspace</div>
+      <h1>User Manual</h1>
+      <p class="lede">How to draft, seam, notch and grade patterns in ProwdCAD, and how to get them out as DXF, PDF or plotter files. Start with the T-shirt training video; come back to the chapters when you need a detail.</p>
+      <ul class="facts">
+        <li>Units: mm · cm · inch + fractions</li>
+        <li>Undo: 200 steps</li>
+        <li>Auto-backup: every 30 s</li>
+      </ul>
+    </div>
+    <figure class="video" style="margin:0">
+      <video id="vid" controls preload="metadata" poster="poster.jpg" playsinline>
+        <source src="tshirt-training.mp4" type="video/mp4">
+      </video>
+      <ol class="chapters" aria-label="Video chapters">
+        <li><button type="button" data-t="0"><span>0:00</span>Intro</button></li>
+        <li><button type="button" data-t="15.5"><span>0:15</span>New style</button></li>
+        <li><button type="button" data-t="25.3"><span>0:25</span>Draft front</button></li>
+        <li><button type="button" data-t="37.9"><span>0:37</span>CF fold</button></li>
+        <li><button type="button" data-t="46.7"><span>0:46</span>Seams</button></li>
+        <li><button type="button" data-t="55"><span>0:55</span>Notch</button></li>
+        <li><button type="button" data-t="61.4"><span>1:01</span>Grading</button></li>
+        <li><button type="button" data-t="94.1"><span>1:34</span>Back</button></li>
+        <li><button type="button" data-t="103.6"><span>1:43</span>Sleeve</button></li>
+        <li><button type="button" data-t="134.2"><span>2:14</span>Check &amp; PDF</button></li>
+      </ol>
+    </figure>
+  </div>
+</header>
+
+<div class="wrap layout">
+  <nav class="toc" aria-label="Chapters">
+    <label for="q" class="eyebrow" style="display:block;margin-bottom:8px">Search the manual</label>
+    <input id="q" class="search" type="search" placeholder="e.g. notch, grading, PDF" autocomplete="off">
+    <ol id="tocList">
+      <li><a href="#start">Getting started</a></li>
+      <li><a href="#screen">The screen</a></li>
+      <li><a href="#units">Units and typing values</a></li>
+      <li><a href="#tshirt">Tutorial: basic T-shirt</a></li>
+      <li><a href="#drawing">Drawing pieces</a></li>
+      <li><a href="#points">Points and segments</a></li>
+      <li><a href="#seams">Seams and the cut line</a></li>
+      <li><a href="#notches">Notches, drills, text</a></li>
+      <li><a href="#darts">Darts, pleats, fullness</a></li>
+      <li><a href="#cut">Cut and construct</a></li>
+      <li><a href="#grading">Grading</a></li>
+      <li><a href="#measure">Measure and check</a></li>
+      <li><a href="#files">Files: save, import, export</a></li>
+      <li><a href="#keys">Keyboard shortcuts</a></li>
+      <li><a href="#trouble">Troubleshooting</a></li>
+      <li><a href="#glossary">Glossary</a></li>
+    </ol>
+  </nav>
+
+  <main id="content">
+    <p class="empty" id="noHits">No chapter matches that search.</p>
+
+    <section id="start">
+      <h2><small>Chapter 1</small>Getting started</h2>
+      <p class="sub">ProwdCAD runs in Chrome or Edge. There is nothing to install.</p>
+      <ol class="steps">
+        <li><div>Open <code>prowdcad-v2.html</code> in Chrome or Edge. It works offline. Keep the file somewhere permanent, for example a <em>ProwdCAD</em> folder on your desktop.</div></li>
+        <li><div>The first time, ProwdCAD opens with a 400 × 600 mm practice block in sizes XS–XL. To start real work use <span class="menu">File ▸ New</span> (<kbd>Ctrl+Alt+N</kbd>).</div></li>
+        <li><div>In the <em>New style</em> dialog type the style name, the size range separated by commas (<code>S, M, L, XL, 2XL</code>) and the base size (<code>M</code>). Untick <em>Start with a rectangle block</em> if you want an empty sheet.</div></li>
+        <li><div>Save with <kbd>Ctrl+S</kbd>. A style is one <code>.prowd.json</code> file that holds every piece, size and grade rule.</div></li>
+      </ol>
+      <div class="note"><strong>Developers</strong>From the GitHub repo (branch <code>v2</code>): <code>npm install</code>, then <code>npm run dev</code>. <code>npm run build:single</code> rebuilds the one-file version.</div>
+    </section>
+
+    <section id="screen">
+      <h2><small>Chapter 2</small>The screen</h2>
+      <div class="tbl"><table>
+        <thead><tr><th>Area</th><th>What it is for</th></tr></thead>
+        <tbody>
+          <tr><td>Menu bar (top)</td><td>File, Edit, Piece, Point, Segment, Seam, Notch, Cut, Dart, Grade, Measure, View, Help. Every command shows its shortcut. A greyed item tells you what it needs when you hover it, for example "needs a selected point".</td></tr>
+          <tr><td>Tool-options strip (under the menus)</td><td>The active tool, its modes (Select: the selection filter; Move Point: Single / Smooth / Horizontal / Vertical / Along line / Group) and an amber badge <em>Editing size L grading</em> whenever an edit changes the grading of a size other than the base.</td></tr>
+          <tr><td>Tool palette (left)</td><td>Select, the Move tools, Pen, shapes, internal lines, notch/drill, measure, hand. A small triangle on a button means there are more tools behind it: right-click or long-press to open them.</td></tr>
+          <tr><td>Sheet (centre)</td><td>An endless white sheet in millimetres with rulers and a grid. Drag from a ruler to make a guide line. Wheel zooms at the cursor; hold Space and drag (or middle-drag) to pan.</td></tr>
+          <tr><td>Pieces / Sizes / Inspector (right)</td><td>The piece list, the size chips (click one to make it the active size) with <em>Nested view</em>, and the Inspector, which shows and edits whatever is selected.</td></tr>
+          <tr><td>Grading table (bottom)</td><td>Opens with <kbd>Ctrl+G</kbd>. One row per grade point, two columns (dX, dY) per size.</td></tr>
+          <tr><td>Status bar</td><td>Cursor position, display unit, active size, zoom, and the step prompt of the current tool: what to click next and what right-click, Enter and Esc do.</td></tr>
+        </tbody>
+      </table></div>
+      <h3>Select only selects</h3>
+      <p>The Select tool (<kbd>V</kbd>) never moves anything. It picks points, segments, internal lines, notches, drills, darts and pieces, and the selection <strong>stays</strong> while you run commands, undo, switch sizes or switch tools. You move things with the Move tools (Chapter 6), which take the current selection straight away.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>With Select</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>Click</td><td>Select that object (replaces the selection). <kbd>Shift</kbd>+click adds, <kbd>Ctrl</kbd>+click toggles.</td></tr>
+          <tr><td>Click on empty sheet, or <kbd>Esc</kbd></td><td>Clear the selection. An <kbd>Esc</kbd> that closes a menu or cancels a pick does not also clear it; press <kbd>Esc</kbd> once more.</td></tr>
+          <tr><td>Drag left → right</td><td><strong>Window</strong> box (blue): selects what is fully inside.</td></tr>
+          <tr><td>Drag right → left</td><td><strong>Crossing</strong> box (green, dashed): selects what the box touches. <kbd>Shift</kbd>+drag adds, <kbd>Ctrl</kbd>+drag toggles.</td></tr>
+          <tr><td>Several objects under the cursor</td><td>The status bar lists them; <kbd>Tab</kbd> steps through them. A point on the sew line wins over an internal point lying on top of it.</td></tr>
+          <tr><td>Double-click a piece</td><td>Select all of its points.</td></tr>
+          <tr><td>Filter keys <kbd>0</kbd>–<kbd>5</kbd></td><td><kbd>0</kbd> All · <kbd>1</kbd> Pieces · <kbd>2</kbd> Points · <kbd>3</kbd> Lines (sew segments) · <kbd>4</kbd> Internals (also darts, pleats, fullness) · <kbd>5</kbd> Marks (notches, drills, texts). The chips in the tool-options strip show the filter.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Every tool works the same way: <kbd>Enter</kbd> finishes, <kbd>Esc</kbd> cancels, <kbd>Backspace</kbd> removes the last point you placed. A quick tap of <kbd>Space</kbd> in a Move tool jumps back to Select with the selection kept; tap it again to return to the Move tool. <kbd>F1</kbd> lists every shortcut.</p>
+    </section>
+
+    <section id="units">
+      <h2><small>Chapter 3</small>Units and typing values</h2>
+      <p>ProwdCAD stores everything in millimetres and calculates in full precision. Choose what you see in the <em>Unit</em> box of the status bar: mm, cm or inch (inch can show fractions in 8ths, 16ths, 32nds or 64ths).</p>
+      <p>Every number box accepts decimals or fractions, and you may add a unit:</p>
+      <div class="tbl"><table>
+        <thead><tr><th>You type</th><th>With unit set to inch</th><th class="num">Stored as</th></tr></thead>
+        <tbody>
+          <tr><td><code>1.125</code></td><td>1 1/8 in</td><td class="num">28.575 mm</td></tr>
+          <tr><td><code>1 1/8</code> · <code>1.1/8</code> · <code>1-1/8</code> · <code>9/8</code></td><td>same as above</td><td class="num">28.575 mm</td></tr>
+          <tr><td><code>2cm</code></td><td>unit suffix wins</td><td class="num">20 mm</td></tr>
+          <tr><td><code>3 1/2"</code></td><td>inch mark accepted</td><td class="num">88.9 mm</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="tshirt">
+      <h2><small>Chapter 4</small>Tutorial: basic T-shirt</h2>
+      <p class="sub">The written version of the training video. Base size M, all values in mm.</p>
+      <h3>1 · New style</h3>
+      <p><span class="menu">File ▸ New</span>. Name <code>BASIC TEE</code>, sizes <code>S, M, L, XL, 2XL</code>, base <code>M</code>, no rectangle block.</p>
+      <h3>2 · Front half with the Pen tool</h3>
+      <p>Press <kbd>P</kbd>. Click each corner; hold <kbd>Ctrl</kbd> while clicking to place a curve point. Click the first point again to close, then name the piece <code>FRONT</code> with a 10 mm seam.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Point</th><th class="num">X</th><th class="num">Y</th><th>Click</th></tr></thead>
+        <tbody>
+          <tr><td>Centre-front hem (start)</td><td class="num">0</td><td class="num">0</td><td>click</td></tr>
+          <tr><td>Side hem</td><td class="num">260</td><td class="num">0</td><td>click</td></tr>
+          <tr><td>Underarm</td><td class="num">260</td><td class="num">465</td><td>click</td></tr>
+          <tr><td>Armhole curve</td><td class="num">222 / 205</td><td class="num">545 / 618</td><td><kbd>Ctrl</kbd>+click ×2</td></tr>
+          <tr><td>Shoulder point</td><td class="num">200</td><td class="num">680</td><td>click</td></tr>
+          <tr><td>Neck point (HPS)</td><td class="num">85</td><td class="num">712</td><td>click</td></tr>
+          <tr><td>Neck curve</td><td class="num">70 / 32</td><td class="num">664 / 625</td><td><kbd>Ctrl</kbd>+click ×2</td></tr>
+          <tr><td>Centre-front neck</td><td class="num">0</td><td class="num">622</td><td>click, then click the start point</td></tr>
+        </tbody>
+      </table></div>
+      <p>Need an exact point? Right-click while drawing and type the length and angle, or dX and dY, of the next point.</p>
+      <h3>3 · Centre-front fold</h3>
+      <p><span class="menu">Cut ▸ Half piece ▸ Set mirror axis</span>, click the centre-front hem, then the centre-front neck, then OK. You now edit one half and the other half follows. The fold edge gets no seam; PDF, plot and marker output open the piece to full width.</p>
+      <h3>4 · Hem allowance</h3>
+      <p>Press <kbd>S</kbd> (Seam tool), click the centre-front hem and then the side hem, type <code>25</code>. The cut line updates at once.</p>
+      <h3>5 · Armhole notch</h3>
+      <p>Press <kbd>N</kbd> and click the armhole. Leave the placement on <em>From previous point</em> and press OK. A single notch marks the front.</p>
+      <h3>6 · Grade the front</h3>
+      <ol class="steps">
+        <li><div>Open the grading table (<kbd>Ctrl+G</kbd>) and select the underarm point. Each size is a row.</div></li>
+        <li><div>In the <strong>L</strong> row type dX <code>12.5</code> and dY <code>6</code> (the step from M into L), and in the <strong>S</strong> row <code>-12.5</code> and <code>-6</code> (the step from M into S). The typed cells get a dot.</div></li>
+        <li><div>Leave <em>Smart fill</em> on <em>Equal steps</em> and press <strong>Fill</strong>: XL and 2XL get the same step.</div></li>
+        <li><div>With the underarm still selected: <span class="menu">Grade ▸ Clipboard ▸ Copy grade</span>. Select the side hem and use <span class="menu">Paste X only</span>.</div></li>
+        <li><div>Shoulder point: dX <code>9</code>, dY <code>12</code>, Equal X and Y. Copy it, select the neck point and the centre-front neck (<kbd>Shift</kbd>+click), then <span class="menu">Paste Y only</span>.</div></li>
+        <li><div>Tick <em>Nested view</em> to see S–2XL together. Curve points follow by themselves.</div></li>
+      </ol>
+      <h3>7 · Back</h3>
+      <p>Select the front, <kbd>Ctrl+D</kbd> to duplicate it (grading included), rename it <code>BACK</code> in the Inspector and set Position X to <code>620</code>. Select the centre-back neck point and use <span class="menu">Point ▸ Move proportional</span> with dY <code>55</code>; the neck curve blends with the move.</p>
+      <h3>8 · Sleeve</h3>
+      <p>Draw it whole with the Pen tool (hem 330, bicep 384, cap height 140, five curve points over the cap) and give the hem 25 mm. Grade the right underarm dX <code>8</code>, dY <code>4</code>, Equal X/Y, copy it, select the left underarm and use <span class="menu">Grade ▸ Clipboard ▸ Smart paste</span>. Smart paste turns +8 into −8 for the mirror side. Add a notch at the top of the cap.</p>
+      <h3>9 · Check and output</h3>
+      <p>Select a piece and press <kbd>Ctrl+I</kbd> for sew length, cut length and area in every size. Then <span class="menu">File ▸ Export ▸ PDF</span> (<kbd>Ctrl+P</kbd>) with <em>Pieces: All pieces</em> and <em>Sizes: All sizes</em>. For this style that gives 32 A4 pages at 1:1.</p>
+    </section>
+
+    <section id="drawing">
+      <h2><small>Chapter 5</small>Drawing pieces</h2>
+      <p>A piece has a <strong>sew line</strong> and a <strong>cut line</strong>. You draw and edit the sew line; the cut line is calculated from it and the seam allowances, so it is always correct after an edit.</p>
+      <div class="grid2">
+        <div class="tile"><kbd>P</kbd><h4>Pen: new piece</h4><p>Click = corner, click-drag = smooth point with handles, <kbd>Ctrl</kbd>+click = curve point, <kbd>Shift</kbd> = horizontal/vertical/45°. Click the start point or press Enter to close.</p></div>
+        <div class="tile"><kbd>R</kbd><h4>Rectangle, circle, polygon</h4><p>Drag to draw, or click once for a dialog with exact sizes. A circle can be set by diameter or by perimeter.</p></div>
+        <div class="tile"><kbd>I</kbd><h4>Internal line</h4><p>Start inside a piece. Double-click or Enter ends a line, clicking the start closes a shape. Right-click gives an exact length and mirror options. An end you put on the outline is <strong>locked</strong> to it (see below).</p></div>
+        <div class="tile"><kbd>Shift+T</kbd><h4>Trace</h4><p>Click around existing lines and points to make a new piece from them.</p></div>
+      </div>
+      <p><strong>Snapping.</strong> While you draw or move, the cursor snaps to, in this order: a point, the <em>intersection</em> of two lines, the <em>midpoint</em> of a segment, the <em>perpendicular</em> foot from where the move started, a guide, and the grid (<span class="menu">View ▸ Snap</span>; <kbd>Ctrl+Shift+'</kbd> toggles grid snap). The Move tools show a small label (<code>pt</code>, <code>int</code>, <code>mid</code>, <code>perp</code>) next to the target. Hold <kbd>Alt</kbd> to switch snapping off for one drag.</p>
+      <p><strong>Grade points and curve points.</strong> Grade points (squares) are corners and carry grading. Curve points (circles) shape the curve between them. A curve point without grading of its own <em>follows</em> its neighbouring grade points in the other sizes, so it moves when they move. To keep it where it is, select it and use <span class="menu">Point ▸ Pin curve point (keep position)</span>: it then gets its own grading and shows a dot in the middle. <span class="menu">Point ▸ Unpin</span> makes it follow again. Use as few curve points as give the shape you want.</p>
+      <h3 id="lock">Internal lines locked to the outline</h3>
+      <p>An internal line can be <strong>locked</strong> to a segment of the sew line, so it keeps its place when that segment moves, changes length, gets new points or is graded. The lock is worked out again after every edit, in every size; nothing has to be updated by hand. A locked line shows a small padlock (its tooltip says what it is locked to), and each attached end a dashed ring.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Lock</th><th>What stays fixed</th><th>Use it for</th></tr></thead>
+        <tbody>
+          <tr><td>Endpoints on segment</td><td>Each end that lies on the outline stays on its segment: at the same <em>proportion</em> of the segment (default), or at the same distance from the segment's start or end. The points in between keep their own position.</td><td>Yoke and style lines, princess lines, pocket openings that start on a seam.</td></tr>
+          <tr><td>Parallel to segment</td><td>The whole line is the exact offset of the segment (positive = inside), from one position along it to another. It is re-drawn when the segment changes shape.</td><td>Topstitching, facing lines, placement lines.</td></tr>
+          <tr><td>Follow point</td><td>The line (open or closed) moves with one sew point, in every size.</td><td>Patch pockets, labels, appliqué shapes.</td></tr>
+        </tbody>
+      </table></div>
+      <ol class="steps">
+        <li><div><strong>While drawing:</strong> with the Internal line tool (<kbd>I</kbd>), an end you snap onto the outline is locked to its segment automatically (option <em>Lock ends to outline</em> in the strip under the menus, also in <span class="menu">Edit ▸ Preferences</span>; on by default, like attach in CLO / AccuMark).</div></li>
+        <li><div><strong>Later:</strong> select the line and set <em>Lock</em> in the Inspector, or right-click it ▸ <em>Lock internal to segment…</em> (<span class="menu">Segment ▸ Lock internal to segment…</span>). ProwdCAD uses the segment under each end (Endpoints), under the line (Parallel) or the nearest grade point (Follow); <em>Pick segment…</em> / <em>Pick point…</em> lets you click another one. The Inspector also sets how a position is kept (<em>Proportional</em>, <em>Distance from segment start</em>, <em>Distance from segment end</em>) and, for Parallel, the offset and the From / To range.</div></li>
+        <li><div><strong>Unlock:</strong> right-click the line ▸ <em>Unlock internal line</em>, or <em>Unlock</em> in the Inspector. The line keeps its shape and its points move freely again.</div></li>
+      </ol>
+      <div class="note"><strong>Moving locked lines</strong>A locked point cannot be moved on its own (Move Point says why); move the outline instead, or unlock. The free middle points of an <em>Endpoints</em> line still move, and Move Line moves a <em>Follow</em> line as a whole (it then follows the point from its new place). A point connection (<span class="menu">Piece ▸ Connections</span>) wins over the lock for that point. If a segment end point is deleted, its lock is removed and the line stays where it is.</div>
+    </section>
+
+    <section id="points">
+      <h2><small>Chapter 6</small>Points and segments</h2>
+      <p>Select what you want to change (Chapter 2), then press a Move key. The Move tool takes the selection straight away; or start the tool first and click the point, line or piece. Each move is <strong>one undo step</strong>, and the moved object stays selected so you can move it again.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Key</th><th>Tool</th><th>What moves</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>G</kbd></td><td>Move Point</td><td><strong>Single</strong> (default): exactly the point you grab, with its own handles. Nothing else is stored differently. Other modes (<kbd>Tab</kbd> cycles, or <span class="menu">Point ▸ Modify Points</span>): <em>Smooth</em> (the curve points between the two tacks blend; drag a tack to another point to change the range), <em>Horizontal</em>, <em>Vertical</em>, <em>Along line</em> (slides on its own line), <em>Group</em> (every selected point by the same amount).</td></tr>
+          <tr><td><kbd>Shift+G</kbd></td><td>Move Line</td><td>A sew segment (grade point to grade point) or a whole internal line: both ends and the curve points between them by the same amount. <em>Parallel</em> mode moves it straight out or in.</td></tr>
+          <tr><td><kbd>Ctrl+Shift+G</kbd></td><td>Move / Rotate / Flip Piece</td><td>The piece's place on the sheet (exports keep the drawn geometry). While dragging: <kbd>R</kbd> / <kbd>Shift+R</kbd> ±90°, <kbd>Q</kbd> <kbd>W</kbd> ±1°, <kbd>A</kbd> <kbd>S</kbd> ±10°, <kbd>X</kbd> <kbd>Y</kbd> flip. In Rotate mode with a piece selected, just type the angle.</td></tr>
+          <tr><td><kbd>Shift+C</kbd></td><td>Curve / Handle</td><td>Drag a handle to bend a curve (<kbd>Alt</kbd> breaks the pair); click a handle and type its length and angle; <kbd>Shift</kbd>+click a point = corner ⇄ smooth.</td></tr>
+        </tbody>
+      </table></div>
+      <h3>Moving a point</h3>
+      <ol class="steps">
+        <li><div><strong>Drag it</strong>: press on the point and drag. Or <strong>click it, then click the new spot</strong> (AccuMark style). Clicking the picked-up point again on the same spot puts it back.</div></li>
+        <li><div><strong>Type it</strong>: with a point picked, type a number (or right-click). The <em>input box</em> opens next to the cursor with <em>dX dY</em>, <em>Distance ∠</em> and <em>Absolute X Y</em>. Fractions and units work: <code>1 1/8</code>, <code>2cm</code>. <kbd>Tab</kbd> = next field, <kbd>Enter</kbd> or right-click = OK, <kbd>Esc</kbd> = cancel. <kbd>Enter</kbd> with nothing typed repeats the last move. Note: <code>12,5</code> in the first field means dX 12, dY 5; the box says so. For a decimal type <code>12.5</code>.</div></li>
+        <li><div><kbd>Shift</kbd> = horizontal / vertical / 45°, <kbd>Alt</kbd> = no snap, arrow keys nudge (<kbd>Shift</kbd> = ×10), <kbd>Backspace</kbd> undoes the pick, <kbd>Esc</kbd> when idle goes back to Select.</div></li>
+      </ol>
+      <div class="note"><strong>"The other points moved"</strong>Move Point · Single never changes another point's stored position. Two things can still look like it: (1) an internal point tied to the moved point by a <em>point connection</em> (Piece ▸ Connections) follows it and is marked "connected"; (2) curve points without their own grading follow their neighbours in the other sizes. While you drag a grade point, ProwdCAD draws the old curve dashed, rings the curve points that follow (labelled "follows") and says so in the status bar. To fix them in place, move them with Move Point ▸ Single, or select them and use <span class="menu">Point ▸ Pin curve point</span>.</div>
+      <p>On a size other than the base (amber badge) a move changes only that size's grading; the base and the other sizes stay where they are. The Inspector X / Y boxes do the same thing as Move Point, connections included.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Command</th><th>Where</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td>Move XY</td><td>Point · <kbd>Alt+M</kbd></td><td>Move by dX/dY or to an absolute position.</td></tr>
+          <tr><td>Move proportional</td><td>Point</td><td>Move a point and blend the curve points around it.</td></tr>
+          <tr><td>Pin / Unpin curve point</td><td>Point · right-click a point</td><td>Give a curve point its own grading so it keeps its position in every size, or let it follow its neighbours again.</td></tr>
+          <tr><td>Cut Point tool</td><td><kbd>X</kbd> · Point ▸ Cut Point tool</td><td>Hover a line to see the lengths to both ends; click to add a point; right-click for an exact length, a ratio or N equal parts. See <em>Cut Point</em> below.</td></tr>
+          <tr><td>Add point</td><td>Point · <kbd>Alt+A</kbd></td><td>At a distance from the previous or next point, or at a percentage.</td></tr>
+          <tr><td>Set angle / Round corner</td><td>Point</td><td>Force a corner angle, or fillet it with a radius.</td></tr>
+          <tr><td>Points cleanup</td><td>Point</td><td>Remove extra points from imported files without changing the shape.</td></tr>
+          <tr><td>Segment length</td><td>Segment · <kbd>Alt+L</kbd></td><td>Set an exact length, choosing how the end moves (curve blend, half horizontal, half vertical, half diagonal).</td></tr>
+          <tr><td>Copy / paste segment</td><td>Segment</td><td>Reuse a curve shape on another piece.</td></tr>
+          <tr><td>Smooth</td><td><kbd>Shift+M</kbd></td><td>Click the first and last point of a wobbly run; ProwdCAD proposes a fair curve. Click points to keep them, right-click to apply.</td></tr>
+        </tbody>
+      </table></div>
+      <h3 id="cutpoint">Cut Point</h3>
+      <p>The Cut Point tool (<kbd>X</kbd>, its own palette button) adds points to a sew line or an internal line without changing its shape, like CLO's <em>Add Point / Split Line</em>.</p>
+      <ol class="steps">
+        <li><div><strong>Hover a line.</strong> A dot slides along it. The segment under the cursor (grade point to grade point) is drawn in two colours: blue from the segment start (marked <em>start</em>), orange to its end, each with its length. Next to the dot and in the status bar you see the distance from the start, the distance to the end and the percentage. Hold <kbd>Shift</kbd> to round to 5 mm (1/8" in inches).</div></li>
+        <li><div><strong>Click</strong> to add a grade point there. <kbd>Ctrl</kbd>+click adds a curve point. The new point is selected, so you can move it straight away.</div></li>
+        <li><div><strong>Exact values:</strong> right-click the line, or just type a number while hovering. The input box offers <em>From start</em>, <em>From end</em>, <em>Ratio %</em>, <em>Divide</em> (N equal parts adds N − 1 points) and <em>Every</em> (a point every X from the start). The points appear on the line while you type; <kbd>Enter</kbd> or right-click = OK, <kbd>Esc</kbd> = cancel. Fractions work: <code>1 1/8</code>.</div></li>
+      </ol>
+      <p>Options in the strip under the menus: <strong>Curve point</strong>, <strong>Notch</strong> (a notch on every new point) and <strong>Zero grade</strong>. By default the new points grade proportionally between their neighbours. On a graded size (amber badge) the lengths are measured on that size and the point is placed at the same ratio of the base line. Each insertion is one undo step.</p>
+    </section>
+
+    <section id="seams">
+      <h2><small>Chapter 7</small>Seams and the cut line</h2>
+      <p>Each piece has a default seam set when you create it. To change part of the outline press <kbd>S</kbd>, click the first point of the run and then the last point, and type the value. Positive values go outward, negative inward. Double-click a piece to set the whole piece.</p>
+      <h3>Corners</h3>
+      <p>Right-click a corner point and choose <em>Corner type</em>:</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Type</th><th>Use it for</th></tr></thead>
+        <tbody>
+          <tr><td>Miter</td><td>The default: the two seam edges meet.</td></tr>
+          <tr><td>Boxed</td><td>Square corners, e.g. a seam that is pressed open at a hem.</td></tr>
+          <tr><td>Turn-back</td><td>Hems and facings that fold back: the corner is mirrored so it lies flat when folded.</td></tr>
+          <tr><td>Angled</td><td>A straight chamfer across the corner.</td></tr>
+          <tr><td>Manual</td><td><span class="menu">Seam ▸ Manual seam angle</span>: click two points to trim the corner by hand.</td></tr>
+        </tbody>
+      </table></div>
+      <p><strong>Lock grading</strong> (Inspector, piece) copies the base size's corner shape to every size, so a hem corner looks identical from S to 2XL. The copy is refreshed after every edit of the sew line, its seams or its sizes.</p>
+      <h3>Seams follow your edits</h3>
+      <p>The seam allowance belongs to the <em>segment</em> (grade point to grade point), and the cut line is calculated again after every change, in every size. When you change the segments themselves, the seams go with them:</p>
+      <ul>
+        <li><strong>Adding a point</strong> on a segment (Cut Point, Add point, Divide, notch <em>Add points</em>, a curve point made a grade point) splits it into two segments that both keep its seam. Corner types stay on the original corners.</li>
+        <li><strong>Removing a grade point</strong> (Delete, grade → curve, Points cleanup) joins two segments; the joined segment keeps the seam of the <em>first</em> one, as in AccuMark.</li>
+        <li><strong>Moving, re-shaping or setting the length</strong> of a segment never changes its seam.</li>
+        <li><strong>New edges</strong> from Slash, Cut along internal, Cut parallel strip and Fold get the seam you type in the dialog (or the piece default; a fold edge gets 0). Shapers, Round corner, Swap and Join keep the seam of the segment they replace. Darts, pleats and slash &amp; spread keep the seam of the segment they open.</li>
+      </ul>
+    </section>
+
+    <section id="notches">
+      <h2><small>Chapter 8</small>Notches, drills, text</h2>
+      <p>Press <kbd>N</kbd> and click a sew line or internal line. Choose how the notch is placed:</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Placement</th><th>Behaviour when the seam changes</th></tr></thead>
+        <tbody>
+          <tr><td>On point</td><td>Moves with that grade point.</td></tr>
+          <tr><td>From previous / from next</td><td>Keeps its distance from that point. Set a different distance per size in the notch grid.</td></tr>
+          <tr><td>Percent of segment</td><td>Stays at the same percentage, e.g. 30% stays 30% when the seam gets longer.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Notch types: slit, T, V, U and castle, each with depth, width and a cut or draw setting (<span class="menu">Notch ▸ Notch setup</span>). Click an existing notch to open the <strong>notch grid</strong>, where you can type per-size distances, fill all sizes, extend an increment, or paste a column from Excel.</p>
+      <p>Press <kbd>D</kbd> for drill holes, buttons and buttonholes; <span class="menu">Notch ▸ Multi buttons</span> spaces buttons evenly between two points. Press <kbd>T</kbd> for text. <span class="menu">Notch ▸ Binding generator</span> (<kbd>Ctrl+Alt+B</kbd>) builds a bias binding strip from seams you click across several pieces, notches included.</p>
+    </section>
+
+    <section id="darts">
+      <h2><small>Chapter 9</small>Darts, pleats, fullness</h2>
+      <p>These stay editable after you create them: you can close, reopen, move or delete them without losing the original outline. All three tools work the same way: the status bar tells you the next click, you see the finished result <strong>before</strong> you click (cut line and dart cap included), right-click or type a number for exact values, <kbd>Esc</kbd> cancels, <kbd>Backspace</kbd> goes back one click, and each object is one undo step. Right-click an existing dart, pleat or slash line for its menu.</p>
+      <div class="grid2">
+        <div class="tile"><kbd>Shift+D</kbd><h4>Dart</h4><p>Click leg A, click leg B on the sew line, then click the apex inside the piece. Legs are made equal automatically.</p></div>
+        <div class="tile"><kbd>Shift+L</kbd><h4>Pleat</h4><p>Click the start and end of the first pleat line, move to where the last pleat goes, click. Knife, box or inverted box; tapered depths.</p></div>
+        <div class="tile"><kbd>Shift+U</kbd><h4>Slash &amp; spread</h4><p>Click the slash point on the hem, then the hinge, move the cursor to open the slash, click. One slash or several, rotate or parallel.</p></div>
+        <div class="tile"><kbd>X</kbd><h4>Cut Point</h4><p>Add points to a line at an exact length, a ratio or in equal parts. See chapter 6.</p></div>
+      </div>
+      <h3>Dart</h3>
+      <ol class="steps">
+        <li><div><strong>Leg A:</strong> press <kbd>Shift+D</kbd> and click the sew line where the first leg goes.</div></li>
+        <li><div><strong>Leg B:</strong> move along the line; the opening is highlighted with its width. Click the second leg (<kbd>Shift</kbd> rounds the width), or type the width.</div></li>
+        <li><div><strong>Apex:</strong> move inside the piece. You see the dart, its depth and both leg lengths; <span style="color:#1e8449">✓ equal</span> means the legs match. <kbd>Shift</kbd> keeps the apex on the centre line. Click to finish, or right-click for exact <em>Width · Depth</em>, <em>Width · Leg length</em> or <em>Width · Angle</em>.</div></li>
+      </ol>
+      <p><strong>Equal legs</strong> (on by default, in the strip) slides both legs along the seam until they are the same length, as AccuMark's Fix Dart does. <strong>Fold to leg B</strong> sets which way the intake is pressed; the dart cap on the cut line follows it.</p>
+      <p>To reshape a dart, press on its apex and drag, with Move Point (<kbd>G</kbd>) or the Dart tool. On the base size the legs stay equal; on another size only that size's apex moves. Right-click a dart for <em>Edit dart</em> (width, depth, fold, drill in one dialog), <em>Flip fold</em>, close / reopen, cutting dart, <em>Pivot transfer</em> (move the dart around the apex; 100% moves all of it, 50% splits it in two), rotate around a centre, multi darts, copy / paste and remove. Pivot transfer, rotate and multi darts show the result while you type the amount. The Inspector lists width, depth and both legs for every size.</p>
+      <h3>Pleat</h3>
+      <ol class="steps">
+        <li><div>Choose <strong>Knife</strong>, <strong>Box</strong> or <strong>Inverted box</strong> in the strip. <em>Open now</em> and <em>Notches</em> are on by default.</div></li>
+        <li><div>Click the <strong>start</strong> of the first pleat line (e.g. on the waist), then its <strong>end</strong> (e.g. on the hem). <kbd>Alt</kbd>+click the end to add only the pleat line and set the values later in the Inspector.</div></li>
+        <li><div>Move the cursor to the side the pleats go. The distance sets where the <strong>last</strong> pleat line lies; the pleats are spaced evenly up to it. <kbd>+</kbd> / <kbd>−</kbd> change the number of pleats, <kbd>F</kbd> flips the fold, <kbd>L</kbd> lets you click a separate last line instead (for flared panels). Click to create.</div></li>
+        <li><div>Right-click for exact values: number of pleats, depth at start, depth at end (different values make a tapered pleat) and the interval between pleats.</div></li>
+      </ol>
+      <p>A knife pleat uses 2 × depth of fabric, a box or inverted box pleat 4 × depth. Blue arrows on the pattern show the fold direction: knife pleats point the way the fold is pressed, box pleats point away from the centre, inverted box pleats point toward it. Right-click a pleat for <em>Edit pleat</em>, open / close and delete.</p>
+      <h3>Slash &amp; spread (fullness)</h3>
+      <ol class="steps">
+        <li><div>Choose <strong>Rotate</strong> (the slash opens like a fan around the hinge) or <strong>Parallel</strong> (the side moves straight across) in the strip, or press <kbd>Tab</kbd>.</div></li>
+        <li><div>Click the <strong>slash point</strong> on the edge that opens (e.g. the hem), then the <strong>hinge</strong>: on the sew line (e.g. the waist), or inside the piece to rotate around that point.</div></li>
+        <li><div>For several slashes press <kbd>+</kbd>, then click the <strong>last</strong> slash point and the <strong>last</strong> hinge. The slashes are spread evenly between the first and the last.</div></li>
+        <li><div>Move the cursor to the side that should move. Its distance from the slash line is the opening, shown next to the cursor (<kbd>Shift</kbd> rounds it). Click to apply, or right-click for a <em>Uniform</em> opening, <em>First → last</em> openings, or an opening at the hinge as well.</div></li>
+      </ol>
+      <p>Right-click a slash line for <em>Edit openings</em> (the change is shown before OK) or <em>Delete</em>, which puts the outline back exactly. The Inspector lets you type the opening of each slash. <span class="menu">Dart ▸ Fullness ▸ Multi fullness</span> still spreads several slashes along two whole segments.</p>
+      <div class="tile" style="margin-top:12px"><kbd>W</kbd><h4>Walk</h4><p>Walk one seam along another to check that they match and to drop matching notches. See chapter 12.</p></div>
+    </section>
+
+    <section id="cut">
+      <h2><small>Chapter 10</small>Cut and construct</h2>
+      <div class="tbl"><table>
+        <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td>Slash <kbd>K</kbd></td><td>Click across a piece, press Enter. Choose whether the new points are graded or zero-graded and what seam the new edges get. <code>FRONT</code> becomes <code>FRONT_1</code> and <code>FRONT_2</code>.</td></tr>
+          <tr><td>Cut along internal</td><td>Split a piece along an internal line, e.g. a yoke line.</td></tr>
+          <tr><td>Cut parallel strip</td><td>One step to make a waistband or facing from an edge.</td></tr>
+          <tr><td>Parallel internal line <kbd>Alt+Shift+P</kbd></td><td>An internal line at a distance from a sew segment or another line. From a sew segment it is locked parallel to it by default, so it follows the segment from then on (see <a href="#lock">locked internal lines</a>).</td></tr>
+          <tr><td>Join pieces <kbd>Alt+J</kbd></td><td>Click a seam on each piece to join them into one.</td></tr>
+          <tr><td>Fold in / out</td><td>Fold part of a piece behind a line, or mirror it back out. Also a quick symmetry check.</td></tr>
+          <tr><td>Half piece</td><td>Edit one half of a symmetric piece; the other half mirrors live.</td></tr>
+          <tr><td>Shapers</td><td>Turn a segment into an arc, wave, scallop or ruffle, or make a full or partial circle skirt.</td></tr>
+          <tr><td>Build piece <kbd>Alt+B</kbd></td><td>Click inside an area bounded by lines to make it a piece.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="grading">
+      <h2><small>Chapter 11</small>Grading</h2>
+      <p>The grading table (<kbd>Ctrl+G</kbd>) has <strong>one row per size</strong>, so it works the same for 4 sizes or 80: the header stays put while you scroll, the base size is marked ★ and the active size is highlighted (click a size name to make it active). The columns are the selected points, a dX / dY pair for each. With nothing selected you get every grade point of the selected piece. With one point you also get its X / Y position in every size and the other view (see below).</p>
+      <p>Two views, named for what a cell means:</p>
+      <ul>
+        <li><strong>Step into this size</strong> (incremental): the change from the size next to it toward the base. Sizes smaller than the base carry their own step, usually negative, the way an AccuMark rule table shows them.</li>
+        <li><strong>Total from base size</strong> (cumulative): how far the size is from the base ★.</li>
+      </ul>
+      <div class="tbl"><table>
+        <thead><tr><th>Size</th><th class="num">Step into this size, dX</th><th class="num">Total from base size, dX</th></tr></thead>
+        <tbody>
+          <tr><td>S</td><td class="num">−12.5</td><td class="num">−12.5</td></tr>
+          <tr><td>M ★</td><td class="num">0</td><td class="num">0</td></tr>
+          <tr><td>L</td><td class="num">12.5</td><td class="num">12.5</td></tr>
+          <tr><td>XL</td><td class="num">12.5</td><td class="num">25</td></tr>
+          <tr><td>2XL</td><td class="num">12.5</td><td class="num">37.5</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note"><strong>Which sizes does my edit move?</strong>When a cell has focus, the rows it will move are tinted and the line above the table names them. A <em>step</em> edit moves that size and every size further from the base (changing L moves L, XL and 2XL). A <em>total</em> edit changes that size only. The button <em>Edit L only</em> next to the warning switches to the total view for that cell. Moving a point on the sheet with the L size active also changes L only.</div>
+      <p><strong>Typing.</strong> Arrow keys move between cells (← and → once the caret is at the edge of the text). <kbd>Enter</kbd> saves and goes down one size (<kbd>Shift+Enter</kbd> up), <kbd>Tab</kbd> goes to the next cell, <kbd>Esc</kbd> undoes your typing. Decimals and fractions both work (<code>1 1/8</code>, <code>9/8</code>). To bring values in from Excel, copy a column (or a block of dX and dY columns), click the first size's cell and press <kbd>Ctrl+V</kbd>. The values fill consecutive size rows, the base row is skipped, and the paste is one undo step.</p>
+      <h3>Smart fill and size breaks</h3>
+      <p>Type values in only a few rows, for example the first step and the last size. Typed cells get a dot. Then pick a method and press <strong>Fill</strong>:</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Method</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td>Equal steps</td><td>The same step for every size on that side of the base. One typed total at the last size is spread evenly.</td></tr>
+          <tr><td>Interpolate</td><td>Straight lines between the typed totals; between typed steps, the step itself ramps (a grade that grows with the size).</td></tr>
+          <tr><td>Repeat step</td><td>Each typed step repeats outward until the next typed one.</td></tr>
+          <tr><td>Split by break</td><td>The change up to each size break is shared evenly by the sizes in between, as in an AccuMark rule table. Click the ◆ next to a size to make it a break.</td></tr>
+        </tbody>
+      </table></div>
+      <p>A side of the base where you typed nothing keeps its values. Next to the table, the <strong>nest preview</strong> draws the point's path through every size and redraws as you type, before you press <kbd>Enter</kbd>.</p>
+      <h3>Grade rules</h3>
+      <p><span class="menu">Grade ▸ Grade rules (rule library)…</span> (<kbd>Shift+Alt+R</kbd>) works like an AccuMark rule table, with a few short cuts:</p>
+      <ol class="steps">
+        <li><div><strong>+ Library</strong> makes a rule table for the active size line. <strong>+ Rule</strong>, <em>From point</em> or <em>From contour</em> fills it with numbered rules.</div></li>
+        <li><div>Rules are chips (<code>#12 Side hem</code>). Click a chip to edit it: same rows-per-size table, views, Smart fill and breaks as above. Every point linked to the rule follows each edit (Modify Rule / Edit Rule Delta).</div></li>
+        <li><div>To apply a rule, drag its chip onto a point, double-click it to apply it to the selected points, or select points on the sheet and just type the rule number (<kbd>1</kbd> <kbd>2</kbd> <kbd>Enter</kbd>).</div></li>
+        <li><div><em>Copy rule</em> (Copy Table Rule, optionally flipped in X or Y), <em>Rename</em>, <em>Delete</em> (linked points keep their values), <em>Detach</em>.</div></li>
+      </ol>
+      <p><span class="menu">Grade ▸ Rule badges on grade points</span> (<kbd>Shift+Alt+B</kbd>, or <strong>#</strong> in the grading table) puts a tag next to every grade point: <strong style="color:#1c7ed6">blue 12</strong> = follows rule 12, <strong style="color:#e67700">amber 12*</strong> = linked but edited by hand, <strong style="color:#2b8a3e">green g</strong> = its own grading, no rule, <strong style="color:#868e96">grey 0</strong> = not graded. Editing a linked point in the grading table keeps the link, so you can see it is now "edited".</p>
+      <h3>Grade by measurement</h3>
+      <p>Make the grading fit a spec chart instead of working out each step yourself. <span class="menu">Grade ▸ Grade by measurement…</span>, or <em>Grade to spec…</em> in the Measure window:</p>
+      <ol class="steps">
+        <li><div><strong>Measurement:</strong> one you made with the Measure tool, e.g. front hem + side seam to the underarm (open, or kept with OK).</div></li>
+        <li><div><strong>Points that move:</strong> select them (e.g. side-seam hem and underarm) and click <em>Use selection</em>. Choose the direction (X, Y or an angle). A weight per point of <code>−1</code> moves it the opposite way, <code>0.5</code> half as far.</div></li>
+        <li><div><strong>Spec:</strong> paste the spec-chart column into the <em>Spec</em> cells (one row per size). <em>Spec = the measurement</em> or <em>change from the base size</em>. Use a <em>factor</em> of <code>0.5</code> when the pattern is half of the body measurement.</div></li>
+        <li><div><strong>Preview</strong> solves without changing anything. <strong>Apply</strong> writes it as one undo step. The table shows now / after / residual per size: green means it hits the spec within 0.01 mm. On curves the residual shows what is left. The base size is never changed: if its residual is not 0, the base pattern itself is off spec.</div></li>
+      </ol>
+      <h3>Power tools</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Command</th><th>Shortcut</th><th>Use</th></tr></thead>
+        <tbody>
+          <tr><td>Copy / Paste grade</td><td><kbd>Ctrl+Alt+C</kbd> / <kbd>Ctrl+Alt+V</kbd></td><td>Repeat grading on other points.</td></tr>
+          <tr><td>Paste X only / Y only</td><td><kbd>Ctrl+Alt+X</kbd> / <kbd>Ctrl+Alt+Y</kbd></td><td>Take only the width or only the length.</td></tr>
+          <tr><td>Smart paste</td><td><kbd>Ctrl+Alt+M</kbd></td><td>Flips X for the other side of a symmetric piece.</td></tr>
+          <tr><td>Paste around</td><td>Grade ▸ Clipboard</td><td>Average grading across a selected run of points.</td></tr>
+          <tr><td>Equal X / Equal Y</td><td>Grade ▸ Edit</td><td>Copy the first step to every size.</td></tr>
+          <tr><td>Stack point / along line</td><td>Grade ▸ Edit</td><td>Change where the nest is stacked, e.g. at the centre-front neck.</td></tr>
+          <tr><td>Angle grading</td><td>Grade ▸ Edit</td><td>Grade along a turned axis, for curved waistbands and bras.</td></tr>
+          <tr><td>Grade parallel</td><td>Grade ▸ Edit</td><td>Keep a segment parallel in every size.</td></tr>
+          <tr><td>Grade proportionally</td><td>Grade ▸ Edit</td><td>Spread grading evenly between two points, e.g. buttons down a centre front.</td></tr>
+          <tr><td>Graded nest from pieces</td><td>Grade</td><td>Select separately drafted sizes smallest to largest and turn them into one graded piece.</td></tr>
+        </tbody>
+      </table></div>
+      <p><strong>Sizes panel.</strong> Insert or append sizes; inserting a half size between two sizes splits their step in half automatically. <em>Axis 2</em> adds a second size dimension, for example Short / Regular / Long.</p>
+      <p><strong>Movement programs</strong> move points by a set amount per millimetre of a body measurement, e.g. front side seam 0.5 mm per +1 mm chest, the basis for made-to-measure.</p>
+    </section>
+
+    <section id="measure">
+      <h2><small>Chapter 12</small>Measure and check</h2>
+      <h3>Measure Line: add up lines in every size</h3>
+      <p>Press <kbd>M</kbd>. As in AccuMark <em>Measure ▸ Line Length</em>, every line you click is added up: L1 + L2 + L3 = total, in every size at once. A <em>line</em> is one piece of a seam or internal line between two grade points (points made with Cut Point count).</p>
+      <ol class="steps">
+        <li><div>Move over the pattern: the line under the cursor lights up and shows its length. Click it. It is labelled <strong>L1</strong> on the sheet and the <strong>Measure</strong> window opens at the right.</div></li>
+        <li><div>Click more lines: L2, L3, … The window has <strong>one row per size</strong> (it scrolls for 80 sizes) with a column per line, the total Σ, and Δ, the change from the previous size.</div></li>
+        <li><div>Click a picked line again to take it out. <kbd>Backspace</kbd> removes the last one. <kbd>Shift</kbd>+click takes every line from the last one up to the clicked one. Hold <kbd>Alt</kbd> to measure the <em>cut line</em> instead of the sew line (labelled ✂), or switch <em>Cut line</em> on in the tool strip.</div></li>
+        <li><div><kbd>Enter</kbd> or right-click = <strong>OK</strong>: the measurement goes into the list in the window, where you can rename it ("Front armhole"), reopen it, copy it for Excel (<em>Copy</em>, one row per size) or use it for <em>Grade to spec</em>. <kbd>Esc</kbd> cancels.</div></li>
+      </ol>
+      <p><strong>Compare.</strong> Click a line on <em>another</em> piece while a measurement is open (or <kbd>Ctrl</kbd>+click to force a new group on the same piece): a second group B starts. The window then shows Σ A, Σ B and the difference B − A in every size (the button flips it to A − B). Type a <em>target ease</em> and a tolerance: each size turns green if it is within tolerance, red if not. Example: A = front armhole + back armhole, B = sleeve cap, target ease 15 ± 3 mm. Name a group by typing in its chip.</p>
+      <p>The <em>Measure</em> box in the window switches between length along the line, straight distance, dX only and dY only. In nested view (<kbd>Alt+N</kbd>) you can click the outline of any size shown. Each row always uses that size's own pattern.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Tool</th><th>What you get</th></tr></thead>
+        <tbody>
+          <tr><td>Measure <kbd>M</kbd> ▸ Distance (<kbd>Tab</kbd>)</td><td>Point to point: click two points for length, dX, dY and angle, plus a table with a row per size. <kbd>Ctrl</kbd>+click three points for an angle. <kbd>Alt</kbd>+click a point for its position in every size.</td></tr>
+          <tr><td>Piece info <kbd>Ctrl+I</kbd></td><td>Sew length, cut length and area of the selected piece in every size.</td></tr>
+          <tr><td>Compare length <kbd>Ctrl+Shift+L</kbd></td><td>Add (+) and subtract (−) seams across pieces, e.g. sleeve cap − front armhole − back armhole = ease, per size. <em>Edit segment to target</em> fixes it on the spot.</td></tr>
+          <tr><td>Walk <kbd>W</kbd></td><td>Click the start on the moving piece, then on the fixed piece. Arrow keys or the wheel walk the seam; <kbd>N</kbd> drops a matching notch pair. A walk ratio of 2 gathers 2:1 onto a band.</td></tr>
+          <tr><td>Walking check</td><td>Report of seam pairs: length difference against your ease tolerance, and notches without a partner.</td></tr>
+          <tr><td>Scale &amp; shrink</td><td><span class="menu">Piece ▸ Scale &amp; shrink</span>. Use <em>proportional to 100%</em> for fabric shrinkage: a 10% shrink gives 11.111% growth so the washed piece hits spec.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="files">
+      <h2><small>Chapter 13</small>Files: save, import, export</h2>
+      <div class="tbl"><table>
+        <thead><tr><th>Format</th><th>Menu</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>ProwdCAD style <code>.prowd.json</code></td><td>File ▸ Save / Open</td><td>Everything in one file. Older ProwdCAD files are converted when opened.</td></tr>
+          <tr><td>DXF AAMA / ASTM + <code>.rul</code></td><td>File ▸ Import / Export</td><td>For Gerber, Lectra, Optitex, TUKAcad and others. Grading travels in the <code>.rul</code> file; import both together. An import report lists anything that needed attention.</td></tr>
+          <tr><td>Tiled PDF</td><td>File ▸ Export ▸ PDF · <kbd>Ctrl+P</kbd></td><td>A4, Letter, A0 and more at exactly 1:1, with registration crosses, glue overlap, page labels and a 100 mm check square.</td></tr>
+          <tr><td>SVG</td><td>File ▸ Import / Export</td><td>1:1 in millimetres. Import asks for the DPI when the file has none.</td></tr>
+          <tr><td>PLT / HPGL</td><td>File ▸ Import / Export</td><td>For plotters and cutters, with a device profile (units, frame width, notch style).</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note"><strong>Check your print</strong>After printing a PDF, measure the 100 mm square on page A1. If it is not exactly 100 mm, set the printer to "Actual size" or 100%, not "Fit to page".</div>
+    </section>
+
+    <section id="keys">
+      <h2><small>Chapter 14</small>Keyboard shortcuts</h2>
+      <p>All shortcuts can be changed in <span class="menu">Edit ▸ Keyboard shortcuts</span>. <kbd>F1</kbd> shows the complete list.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>V</kbd> <kbd>G</kbd> <kbd>Shift+G</kbd> <kbd>Ctrl+Shift+G</kbd> <kbd>Shift+C</kbd></td><td>Select · Move Point · Move Line · Move / Rotate / Flip Piece · Curve / Handle</td></tr>
+          <tr><td><kbd>0</kbd> <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd></td><td>Selection filter (in Select): All · Pieces · Points · Lines · Internals · Marks</td></tr>
+          <tr><td><kbd>Tab</kbd></td><td>Select: next object under the cursor · Move tools: next mode</td></tr>
+          <tr><td><kbd>Space</kbd> tap / hold</td><td>Tap: Move tool ⇄ Select (selection kept) · hold and drag: pan</td></tr>
+          <tr><td>Arrow keys (<kbd>Shift</kbd> = ×10)</td><td>Nudge, in a Move tool only (Select never moves anything)</td></tr>
+          <tr><td><kbd>P</kbd> <kbd>I</kbd> <kbd>R</kbd> <kbd>C</kbd></td><td>Pen · Internal line · Rectangle · Circle</td></tr>
+          <tr><td><kbd>S</kbd> <kbd>N</kbd> <kbd>D</kbd> <kbd>T</kbd></td><td>Seam · Notch · Drill · Text</td></tr>
+          <tr><td><kbd>X</kbd></td><td>Cut Point (add points at an exact length, a ratio or in equal parts)</td></tr>
+          <tr><td><kbd>Shift+D</kbd> <kbd>Shift+L</kbd> <kbd>Shift+U</kbd></td><td>Dart · Pleat · Slash &amp; spread</td></tr>
+          <tr><td>In Dart / Pleat / Slash &amp; spread</td><td>Right-click or type a number = exact values · <kbd>Shift</kbd> = round values · <kbd>+</kbd> <kbd>−</kbd> = number of pleats or slashes · <kbd>F</kbd> = flip pleat fold · <kbd>L</kbd> = pleats up to a last line · <kbd>Tab</kbd> = rotate / parallel · <kbd>Backspace</kbd> = back one click</td></tr>
+          <tr><td><kbd>K</kbd> <kbd>W</kbd> <kbd>M</kbd> <kbd>H</kbd> <kbd>Z</kbd></td><td>Slash · Walk · Measure · Hand · Zoom</td></tr>
+          <tr><td>In Measure (Line)</td><td>Click = add a line (again = remove) · <kbd>Shift</kbd>+click = extend the run · <kbd>Alt</kbd>+click = cut line · <kbd>Ctrl</kbd>+click or another piece = compare · <kbd>Backspace</kbd> = last line off · <kbd>Enter</kbd> / right-click = OK · <kbd>Esc</kbd> = cancel · <kbd>Tab</kbd> = Distance mode</td></tr>
+          <tr><td><kbd>Shift+Alt+L</kbd></td><td>Measure Line (opens the Measure window)</td></tr>
+          <tr><td>In a size table (grading, rules, Measure)</td><td>Arrows = move cell · <kbd>Enter</kbd> = save and next size · <kbd>Tab</kbd> = next cell · <kbd>Ctrl+V</kbd> = paste an Excel column into consecutive sizes · <kbd>Esc</kbd> = undo typing</td></tr>
+          <tr><td><kbd>Shift+Alt+B</kbd> · digits + <kbd>Enter</kbd></td><td>Rule badges on / off · with points selected and the rule window open (or badges on): apply rule #n</td></tr>
+          <tr><td><kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd></td><td>Undo / redo</td></tr>
+          <tr><td><kbd>Ctrl+S</kbd> <kbd>Ctrl+O</kbd> <kbd>Ctrl+Alt+N</kbd></td><td>Save · Open · New</td></tr>
+          <tr><td><kbd>Ctrl+Alt+I</kbd> <kbd>Ctrl+Shift+E</kbd> <kbd>Ctrl+P</kbd></td><td>Import · Export DXF · Export PDF</td></tr>
+          <tr><td><kbd>Ctrl+D</kbd> <kbd>Ctrl+L</kbd> <kbd>Alt+R</kbd></td><td>Duplicate piece · Lock piece · Rotate 90°</td></tr>
+          <tr><td><kbd>Ctrl+G</kbd> <kbd>Alt+N</kbd> <kbd>Alt+T</kbd></td><td>Grading table · Nested view · Point tracking</td></tr>
+          <tr><td><kbd>Ctrl+[</kbd> <kbd>Ctrl+]</kbd> <kbd>Ctrl+B</kbd></td><td>Previous size · Next size · Base size</td></tr>
+          <tr><td><kbd>Shift+Alt+N</kbd> <kbd>Shift+Alt+R</kbd></td><td>Notch grid · Grade rules</td></tr>
+          <tr><td><kbd>Ctrl+I</kbd> <kbd>Ctrl+Shift+L</kbd></td><td>Piece info · Compare length</td></tr>
+          <tr><td><kbd>Ctrl+0</kbd> or <kbd>F</kbd> · <kbd>Ctrl+Alt+0</kbd></td><td>Fit everything on screen · 100 %</td></tr>
+          <tr><td><kbd>Ctrl+'</kbd> · <kbd>Ctrl+Shift+'</kbd></td><td>Grid on/off · Snap to grid on/off</td></tr>
+        </tbody>
+      </table></div>
+      <p>Chrome and Edge keep a few keys for themselves (<kbd>Ctrl+Shift+N</kbd>, <kbd>Ctrl+Shift+I</kbd>, <kbd>Ctrl+Shift+R</kbd>, <kbd>Ctrl+1</kbd>), so ProwdCAD's own keys for those commands are the browser-safe ones in the table; the old ones still work where the browser lets them through.</p>
+      <h3>AccuMark keys</h3>
+      <p>If your hands know Gerber AccuMark, choose <span class="menu">Edit ▸ Keyboard preset ▸ AccuMark keys</span> (or the <em>Preset</em> box in <span class="menu">Edit ▸ Keyboard shortcuts</span>). <span class="menu">Keyboard preset ▸ ProwdCAD (default)</span> switches back.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>AccuMark key</th><th>ProwdCAD tool</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>Alt+F12</kbd> · <kbd>Alt+F11</kbd> · <kbd>Alt+F2</kbd></td><td>Move Single Point · Move Smooth · Move Points (group)</td></tr>
+          <tr><td><kbd>Alt+F3</kbd> · <kbd>Alt+F1</kbd></td><td>Align 2 points · Delete point</td></tr>
+          <tr><td><kbd>Ctrl+F2</kbd> · <kbd>Ctrl+F11</kbd> · <kbd>Ctrl+F10</kbd></td><td>Move Line · Move Parallel · Split (divide internal)</td></tr>
+          <tr><td><kbd>Alt+S</kbd></td><td>Swap line (internal ⇄ perimeter); Seam of segment moves to <kbd>Shift+Alt+S</kbd></td></tr>
+          <tr><td><kbd>Shift+F2</kbd> · <kbd>Shift+F9</kbd> · <kbd>Shift+F10</kbd></td><td>Move Piece · Flip Piece · Rotate Piece</td></tr>
+          <tr><td><kbd>Shift+W</kbd> · <kbd>Ctrl+A</kbd> · <kbd>Ctrl+D</kbd></td><td>Walk pieces · Select all · Clear selection (Duplicate moves to <kbd>Ctrl+Shift+D</kbd>)</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="trouble">
+      <h2><small>Chapter 15</small>Troubleshooting</h2>
+      <h3>The browser closed and I had not saved</h3>
+      <p>Open ProwdCAD again in the same browser. It offers to restore the last auto-backup (made every 30 seconds). Choose <em>Restore</em>.</p>
+      <h3>Dragging a point does nothing, it draws a box</h3>
+      <p>That is the Select tool: it only selects (a drag is a selection box). Press <kbd>G</kbd> for Move Point, <kbd>Shift+G</kbd> for Move Line or <kbd>Ctrl+Shift+G</kbd> for a piece. If you really want to drag points in Select, turn on <span class="menu">Edit ▸ Allow drag-move in Select</span>; it moves only what you grab.</p>
+      <h3>I moved one point and the points next to it moved</h3>
+      <p>Their stored positions did not change. Curve points without their own grading follow their neighbouring grade points in the other sizes (the hollow circles; Nested view shows it best), and the curve through a moved point re-shapes. While you drag, the old curve is drawn dashed and those points are marked "follows". Pin them with <span class="menu">Point ▸ Pin curve point</span>, or move them yourself with Move Point ▸ Single. An internal point marked "connected" follows on purpose (Piece ▸ Connections).</p>
+      <h3>I cannot move a point of an internal line</h3>
+      <p>The line is locked to the outline (padlock on the line, dashed ring on the end). Move the outline and the line follows, or right-click the line ▸ <em>Unlock internal line</em>. To draw lines that are not locked, switch off <em>Lock ends to outline</em> in the Internal line tool's strip.</p>
+      <h3>Move Point grabs the wrong one of two points on top of each other</h3>
+      <p>The selected point wins, then the sew-line point. Select the one you want first (in Select, click and press <kbd>Tab</kbd> until the status bar names it), then press <kbd>G</kbd>.</p>
+      <h3>My exported PDF or DXF has only one piece</h3>
+      <p>When a piece is selected, the export dialog's <em>Pieces</em> box starts on <em>Selected</em> (the hint under it names the pieces); otherwise on <em>All pieces</em>. It is never carried over from your last export. Click an empty spot on the sheet first, or set <em>Pieces</em> to <em>All pieces</em>.</p>
+      <h3>A menu item is grey</h3>
+      <p>Hover it: the tooltip says what it needs, for example a selected point. Select that first.</p>
+      <h3>I typed the value the box shows and nothing changed</h3>
+      <p>In inch-fraction mode values are shown rounded to 1/16" (a dotted underline marks a rounded value; the tooltip shows the exact one). Typing the shown value, for example <code>3/8</code>, now sets exactly 3/8". If nothing happens, check the cursor is not still in another box.</p>
+      <h3>A shortcut does nothing</h3>
+      <p>The cursor is probably still in a number box. Press <kbd>Esc</kbd> or click the sheet, then try again. Keys such as <kbd>Ctrl+Shift+N</kbd> are kept by the browser; use the key listed in Chapter 14.</p>
+      <h3>Esc did not clear my selection</h3>
+      <p>An <kbd>Esc</kbd> that closes a menu, or that comes right after another <kbd>Esc</kbd> that cancelled something, keeps the selection. Press <kbd>Esc</kbd> again.</p>
+      <h3>A size looks wrong but the base size is fine</h3>
+      <p>Open the grading table, switch to <em>Total from base size</em>, and check that size's row. Remember that a <em>step</em> edit of L also moves every size further from the base (the tinted rows); use the total view, or <em>Edit L only</em>, to change one size. Rule badges (<kbd>Shift+Alt+B</kbd>) show an amber <code>*</code> where a point linked to a rule was edited by hand.</p>
+      <h3>An imported DXF has no seam allowance</h3>
+      <p>When the file only has a cut line, ProwdCAD treats it as the sew line with no seam and says so in the import report. Use <span class="menu">Seam ▸ Internal → seam</span> if the file carried the sew line as an internal line.</p>
+    </section>
+
+    <section id="glossary">
+      <h2><small>Chapter 16</small>Glossary</h2>
+      <div class="tbl"><table>
+        <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>Sew line</td><td>The stitching line. You draw and edit this one.</td></tr>
+          <tr><td>Cut line</td><td>The outer edge, calculated from the sew line plus seam allowances.</td></tr>
+          <tr><td>Grade point</td><td>A corner or key point that carries grading. Drawn as a square.</td></tr>
+          <tr><td>Curve point</td><td>A point that shapes a curve and follows its neighbours' grading. Drawn as a circle.</td></tr>
+          <tr><td>Start point</td><td>Point 1 of a piece. Also where a cutter starts.</td></tr>
+          <tr><td>Base size</td><td>The size you draft in (★). Other sizes are steps from it.</td></tr>
+          <tr><td>Nest</td><td>All sizes of a piece drawn on top of each other.</td></tr>
+          <tr><td>Rule table / rule</td><td>A numbered set of grading steps per size (AccuMark rule table). Points linked to a rule follow it; rule badges show the number.</td></tr>
+          <tr><td>Size break</td><td>A size where a grading step changes; between breaks the change is shared evenly (Smart fill ▸ Split by break).</td></tr>
+          <tr><td>Half piece</td><td>A symmetric piece stored as one half and opened at output.</td></tr>
+          <tr><td>Walk</td><td>Rolling one seam along another to compare lengths and set notches.</td></tr>
+          <tr><td>Locked internal</td><td>An internal line tied to a sew segment or point; it follows every change of the outline in every size.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+  </main>
+</div>
+<footer><div class="wrap">ProwdCAD v2 · ProwdStudio · This manual covers the design workspace (Phase 1). The marker module comes in a later release.</div></footer>
+
+<script>
+(() => {
+  const vid = document.getElementById('vid');
+  document.querySelectorAll('.chapters button').forEach(b => b.addEventListener('click', () => {
+    try { vid.currentTime = parseFloat(b.dataset.t); vid.play().catch(() => {}); } catch (e) {}
+  }));
+  const links = [...document.querySelectorAll('nav.toc a')];
+  const secs = links.map(a => document.querySelector(a.getAttribute('href')));
+  const io = 'IntersectionObserver' in window ? new IntersectionObserver(es => {
+    es.forEach(e => { if (e.isIntersecting) { const i = secs.indexOf(e.target); links.forEach((l, j) => l.classList.toggle('on', j === i)); } });
+  }, { rootMargin: '-10% 0px -75% 0px' }) : null;
+  if (io) secs.forEach(s => s && io.observe(s));
+  const q = document.getElementById('q'), none = document.getElementById('noHits');
+  q.addEventListener('input', () => {
+    const t = q.value.trim().toLowerCase(); let hits = 0;
+    secs.forEach((s, i) => { const show = !t || s.textContent.toLowerCase().includes(t); s.hidden = !show; links[i].parentElement.hidden = !show; if (show) hits++; });
+    none.style.display = hits ? 'none' : 'block';
+  });
+})();
+</script>

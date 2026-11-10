@@ -1,0 +1,8 @@
+{
+  "name": "@prowdcad/kernel",
+  "version": "2.0.0-p1",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": { "test": "vitest run", "typecheck": "tsc --noEmit -p ." }
+}

@@ -1,0 +1,776 @@
+{
+  "at": "2026-11-10T05:23:38.299Z",
+  "url": "http://localhost:5289/",
+  "total": 192,
+  "failed": 0,
+  "results": [
+    {
+      "id": "select.neverEdits · click grade point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · click segment",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · click piece interior",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · shift-click point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · ctrl-click point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · alt-click point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · double-click point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · double-click piece",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · drag from a point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · drag from a curve point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · drag from a piece interior",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · drag from a segment",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · drag BACK piece",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · window box",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · crossing box",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · click empty",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · arrow keys",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · digits / Tab",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · shift-drag point",
+      "ok": true
+    },
+    {
+      "id": "select.neverEdits · revision unchanged",
+      "ok": true
+    },
+    {
+      "id": "select.click selects the point",
+      "ok": true
+    },
+    {
+      "id": "select.click selects the segment",
+      "ok": true
+    },
+    {
+      "id": "select.window box selects points",
+      "ok": true
+    },
+    {
+      "id": "select.click empty clears",
+      "ok": true
+    },
+    {
+      "id": "select.prompt shown",
+      "ok": true
+    },
+    {
+      "id": "single.base · 5 points boxed",
+      "ok": true
+    },
+    {
+      "id": "single.base · tool = Move Point",
+      "ok": true
+    },
+    {
+      "id": "single.base · prompt",
+      "ok": true
+    },
+    {
+      "id": "single.base · exactly one anchor changed",
+      "ok": true
+    },
+    {
+      "id": "single.base · only x / y of that anchor changed",
+      "ok": true
+    },
+    {
+      "id": "single.base · selection kept (5 points)",
+      "ok": true
+    },
+    {
+      "id": "single.base · undo restores",
+      "ok": true
+    },
+    {
+      "id": "single.base · selection kept after undo",
+      "ok": true
+    },
+    {
+      "id": "single.base · click-click moves only B",
+      "ok": true
+    },
+    {
+      "id": "single.base · connection shown in prompt",
+      "ok": true
+    },
+    {
+      "id": "single.base · connected internal point follows H (only exception)",
+      "ok": true
+    },
+    {
+      "id": "single.graded · active L",
+      "ok": true
+    },
+    {
+      "id": "single.graded · amber badge",
+      "ok": true
+    },
+    {
+      "id": "single.graded · exactly one anchor changed",
+      "ok": true
+    },
+    {
+      "id": "single.graded · base x / y unchanged (grading only)",
+      "ok": true
+    },
+    {
+      "id": "single.graded · size S position unchanged",
+      "ok": true
+    },
+    {
+      "id": "single.graded · size M position unchanged",
+      "ok": true
+    },
+    {
+      "id": "single.graded · size XL position unchanged",
+      "ok": true
+    },
+    {
+      "id": "single.graded · size L moved by the drag",
+      "ok": true
+    },
+    {
+      "id": "smooth.base · prompt mentions tacks",
+      "ok": true
+    },
+    {
+      "id": "smooth.base · only C, D, E (between grade points B and F) changed",
+      "ok": true
+    },
+    {
+      "id": "smooth.graded · only points between the tacks changed",
+      "ok": true
+    },
+    {
+      "id": "smooth.graded · other sizes unchanged",
+      "ok": true
+    },
+    {
+      "id": "line.base · tool = Move Line",
+      "ok": true
+    },
+    {
+      "id": "line.base · only B..F changed",
+      "ok": true
+    },
+    {
+      "id": "line.base · same delta for every point",
+      "ok": true
+    },
+    {
+      "id": "line.base · segment stays selected",
+      "ok": true
+    },
+    {
+      "id": "line.internal · only the internal line moved",
+      "ok": true
+    },
+    {
+      "id": "persist · 2 points selected",
+      "ok": true
+    },
+    {
+      "id": "persist · after Copy grade",
+      "ok": true
+    },
+    {
+      "id": "persist · after a seam command",
+      "ok": true
+    },
+    {
+      "id": "persist · after undo",
+      "ok": true
+    },
+    {
+      "id": "persist · after redo",
+      "ok": true
+    },
+    {
+      "id": "persist · after size switch",
+      "ok": true
+    },
+    {
+      "id": "persist · after tool switches",
+      "ok": true
+    },
+    {
+      "id": "persist · segment after tool + size switch",
+      "ok": true
+    },
+    {
+      "id": "persist · Esc clears",
+      "ok": true
+    },
+    {
+      "id": "input · digit opens the input box",
+      "ok": true
+    },
+    {
+      "id": "input · dX = 1 1/8\" lands exactly (28.575 mm)",
+      "ok": true
+    },
+    {
+      "id": "input · dY = -2\" lands exactly (-50.8 mm)",
+      "ok": true
+    },
+    {
+      "id": "input · one anchor changed",
+      "ok": true
+    },
+    {
+      "id": "input · right-click opens the input box",
+      "ok": true
+    },
+    {
+      "id": "input · absolute X = 3 1/4\" (82.55 mm)",
+      "ok": true
+    },
+    {
+      "id": "input · absolute Y = 1/2\" (12.7 mm)",
+      "ok": true
+    },
+    {
+      "id": "input · box closed after OK",
+      "ok": true
+    },
+    {
+      "id": "input · \"12,5\" = dX 12, dY 5",
+      "ok": true
+    },
+    {
+      "id": "input · Enter repeats the last delta",
+      "ok": true
+    },
+    {
+      "id": "nudge · arrows in Select do nothing",
+      "ok": true
+    },
+    {
+      "id": "nudge · Move Point arrows move only B (1, 10)",
+      "ok": true
+    },
+    {
+      "id": "piece · flip H sets layout.flipX",
+      "ok": true
+    },
+    {
+      "id": "piece · flip keeps the authored geometry",
+      "ok": true
+    },
+    {
+      "id": "piece · drag moves the piece",
+      "ok": true
+    },
+    {
+      "id": "piece · one undo step",
+      "ok": true
+    },
+    {
+      "id": "modes · Esc idle → Select",
+      "ok": true
+    },
+    {
+      "id": "modes · selection kept on leaving the tool",
+      "ok": true
+    },
+    {
+      "id": "modes · prompt says Group",
+      "ok": true
+    },
+    {
+      "id": "group · only the 2 selected points moved",
+      "ok": true
+    },
+    {
+      "id": "along · only G changed position / grading",
+      "ok": true
+    },
+    {
+      "id": "horizontal · only X changed, only B",
+      "ok": true
+    },
+    {
+      "id": "curve · tool active",
+      "ok": true
+    },
+    {
+      "id": "curve · Shift+click changes only that point",
+      "ok": true
+    },
+    {
+      "id": "curve · handles shown",
+      "ok": true
+    },
+    {
+      "id": "curve · handle drag changes only that point",
+      "ok": true
+    },
+    {
+      "id": "prompt · select",
+      "ok": true
+    },
+    {
+      "id": "prompt · movePoint",
+      "ok": true
+    },
+    {
+      "id": "prompt · moveLine",
+      "ok": true
+    },
+    {
+      "id": "prompt · movePiece",
+      "ok": true
+    },
+    {
+      "id": "prompt · curve",
+      "ok": true
+    },
+    {
+      "id": "fixpass · Rotate Piece prompt names the selected piece",
+      "ok": true
+    },
+    {
+      "id": "fixpass · typing with the piece selected opens the input box",
+      "ok": true
+    },
+    {
+      "id": "fixpass · BACK rotated 90°",
+      "ok": true
+    },
+    {
+      "id": "fixpass · click then press-drag moves only B",
+      "ok": true
+    },
+    {
+      "id": "fixpass · … in one undo step",
+      "ok": true
+    },
+    {
+      "id": "fixpass · Space tap → Select",
+      "ok": true
+    },
+    {
+      "id": "fixpass · selection kept",
+      "ok": true
+    },
+    {
+      "id": "fixpass · Space tap again → Move Point",
+      "ok": true
+    },
+    {
+      "id": "fixpass · pinned curve point C keeps every size when B moves",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · X selects the Cut Point tool",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · hover readout: start 60 · end 140 (Shift = round)",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · hover draws the split preview",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · click inserts one grade point at 60",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · every other anchor unchanged",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · one undo step",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · the new point is selected",
+      "ok": true
+    },
+    {
+      "id": "cutpoint.hoverClick · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "cutpoint.hoverClick · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · typed 50 from start → x = 50 exactly",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · 30 from the end → x = 170",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · 1 1/8\" from start → x = 428.575",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · ratio 25 % → x = 450",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · Notch option on",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · divide preview shows the 3 points before OK",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · divide 4 → y 75 / 150 / 225",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · a notch on every new point",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · divide = one undo step",
+      "ok": true
+    },
+    {
+      "id": "cutpoint.divide · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "cutpoint.divide · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · amber badge on a graded size",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · graded: midpoint at 100 (M), 105 (L), 110 (XL) — auto grading",
+      "ok": true
+    },
+    {
+      "id": "cutpoint · Ctrl+click on an internal line adds a curve point",
+      "ok": true
+    },
+    {
+      "id": "dart · prompt asks for leg B",
+      "ok": true
+    },
+    {
+      "id": "dart · leg B hover shows the width (Shift = round)",
+      "ok": true
+    },
+    {
+      "id": "dart · apex step shows width / depth / legs ✓",
+      "ok": true
+    },
+    {
+      "id": "dart · live ghost before the click (document unchanged)",
+      "ok": true
+    },
+    {
+      "id": "dart · dart cap previewed on the cut line",
+      "ok": true
+    },
+    {
+      "id": "dart · created by clicks: width 40, depth 150 exact (Shift), legs equal",
+      "ok": true
+    },
+    {
+      "id": "dart · one undo step",
+      "ok": true
+    },
+    {
+      "id": "dart · selected after creation",
+      "ok": true
+    },
+    {
+      "id": "dart.clicks · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "dart.clicks · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "dart · typed width 30 / depth 120 exact",
+      "ok": true
+    },
+    {
+      "id": "dart · width 20 at 10° → depth 114.301",
+      "ok": true
+    },
+    {
+      "id": "dart · typed width 24 at the leg-B step",
+      "ok": true
+    },
+    {
+      "id": "dart · graded: created in the base (width 20 / depth 100 in M)",
+      "ok": true
+    },
+    {
+      "id": "dart · graded: legs follow the hem grading in L / XL",
+      "ok": true
+    },
+    {
+      "id": "dart · graded: apex grades with the opening (mean of the legs)",
+      "ok": true
+    },
+    {
+      "id": "dart · Inspector per-size table",
+      "ok": true
+    },
+    {
+      "id": "dart · Move Point drags the apex",
+      "ok": true
+    },
+    {
+      "id": "dart · Fix Dart keeps the legs equal after the drag",
+      "ok": true
+    },
+    {
+      "id": "dart · apex drag = one undo step",
+      "ok": true
+    },
+    {
+      "id": "dart.apexDrag · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "dart.apexDrag · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "dart · Multi darts shows a live ghost of 3 darts before OK",
+      "ok": true
+    },
+    {
+      "id": "dart · Multi darts created",
+      "ok": true
+    },
+    {
+      "id": "pleat · layout prompt: 3 knife · interval 40",
+      "ok": true
+    },
+    {
+      "id": "pleat · live ghost (3 open pleats) before the click",
+      "ok": true
+    },
+    {
+      "id": "pleat · fold-direction arrows drawn",
+      "ok": true
+    },
+    {
+      "id": "pleat · 3 pleats created and open",
+      "ok": true
+    },
+    {
+      "id": "pleat · BACK grows by 3 × 2 × 20 = 120",
+      "ok": true
+    },
+    {
+      "id": "pleat · auto notches",
+      "ok": true
+    },
+    {
+      "id": "pleat · one undo step",
+      "ok": true
+    },
+    {
+      "id": "pleat.count · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "pleat.count · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "pleat · 2 inverted box pleats, tapered 40 → 20 fabric each",
+      "ok": true
+    },
+    {
+      "id": "pleat · between lines: 3 pleats evenly from the first to the last line",
+      "ok": true
+    },
+    {
+      "id": "fullness · readout: opening 30 (Shift = round)",
+      "ok": true
+    },
+    {
+      "id": "fullness · live ghost before the click",
+      "ok": true
+    },
+    {
+      "id": "fullness · hinged spread with opening 30 exactly",
+      "ok": true
+    },
+    {
+      "id": "fullness · one undo step",
+      "ok": true
+    },
+    {
+      "id": "fullness.interactive · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "fullness.interactive · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "fullness · 3 slashes → asks for the last slash",
+      "ok": true
+    },
+    {
+      "id": "fullness · typed first → last 10 / 20 / 30",
+      "ok": true
+    },
+    {
+      "id": "fullness · edit openings in place",
+      "ok": true
+    },
+    {
+      "id": "fullness · delete restores the sew line exactly",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · both ends drawn on the outline are locked, proportional 40 % / 50 % (one undo step)",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · padlock drawn on the line",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · end stays at 40 % of the moved hem (base)",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · end stays at 40 % of the moved hem (L)",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · end stays at 40 % of the moved hem (XL)",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · move B · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · move B · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · locked end is not moved by Move Point (message shown)",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · Unlock removes the lock",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · after Unlock the end moves",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · auto-lock off → free line",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · internal selected",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · locked parallel to the segment under the line (H → A)",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · lock · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · lock · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · exact offset (0.01 mm) in every size",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · Inspector shows the lock (offset row)",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · the segment moved",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · still exact after Move Line of the segment",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · its points refuse Move Point",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · Inspector Unlock",
+      "ok": true
+    },
+    {
+      "id": "no page errors",
+      "ok": true
+    }
+  ]
+}
