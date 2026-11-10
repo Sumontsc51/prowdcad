@@ -408,6 +408,7 @@ const cases = [
   ...[['mm', 'mm', 16], ['cm', 'cm', 16], ['in', 'in', 0], ['in8', 'in', 8], ['in16', 'in', 16], ['in32', 'in', 32]].map(([k, u, d]) => ({ id: 'view.unit.' + k, change: false, sel: h => h.ev(() => { window.__e2e.settings.unit = 'cm'; if (true) window.__e2e.settings.fracDen = 64; }), expect: async h => { const s = await h.ev(() => [window.__e2e.settings.unit, window.__e2e.settings.fracDen]); return req(s[0] === u && (u !== 'in' || s[1] === d), 'unit ' + s); } })),
 
   // ═════════ Help ═════════
+  { id: 'help.find', change: false, drive: OK() },
   { id: 'help.keys', change: false, drive: OK() },
   { id: 'help.ops', change: false, drive: async h => { await h.waitDialog(); h._m = await h.dlg().locator('.dlg-msg').textContent(); await h.ok(); }, expect: h => req(/ 0 placeholder/.test(h._m || ''), 'placeholders remain: ' + (h._m || '').slice(0, 120)) },
   { id: 'help.about', change: false, drive: OK() },
