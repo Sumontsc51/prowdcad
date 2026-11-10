@@ -67,7 +67,9 @@ export function candidatesAt(app: App, w: Vec, filter: SelFilter = settings.selF
     if (ok.has('point') && (selPieces.has(p.id) || settings.showAllAnchors || allCurve)) {
       contours.forEach((c, ci) => {
         const rc = rcs[ci]; if (!rc) return;
+        const generated = c.lock?.kind === 'parallel'; // a locked parallel line: its interior points are generated
         c.points.forEach((a, i) => {
+          if (generated && i > 0 && i < c.points.length - 1) return;
           // curve points of an unselected piece are not drawn, but a click right on one takes it
           // directly (AccuMark / TUKAcad): tighter radius so the segment stays easy to pick
           const curveHidden = a.kind !== 'grade' && !selPieces.has(p.id) && !allCurve;

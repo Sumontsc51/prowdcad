@@ -13,7 +13,9 @@ import { lengthInput, numberInput, selectInput } from './widgets';
 import { ops } from '../ops-bridge';
 import { reportError } from '../commands';
 import { showDialog } from '../ui/dialog';
-import { fmt, unitLabel } from '../units-ui';
+import { unitLabel } from '../units-ui';
+import { sizeGrid, keepScroll, type SGState } from './sizegrid';
+const NG = { scroll: { scrollTop: 0 } as SGState };
 
 let state: { pieceId: Id; notchId: Id | null } | null = null;
 let unsub: (() => void) | null = null;
@@ -26,7 +28,7 @@ export function openNotchGrid(app: App, pieceId: Id, notchId: Id | null = null) 
   const render = () => {
     if (!state || !win.isOpen()) return;
     if (win.el.contains(document.activeElement) && document.activeElement?.tagName === 'INPUT') return;
-    clear(win.body); clear(win.foot);
+    keepScroll(win.body, NG.scroll); clear(win.body); clear(win.foot);
     const piece = app.doc.style.pieces.find(p => p.id === state!.pieceId);
     if (!piece) { win.body.append(h('div.empty', {}, 'Piece no longer exists.')); return; }
     win.setTitle(`Notches — ${piece.name}`);
@@ -56,14 +58,18 @@ export function openNotchGrid(app: App, pieceId: Id, notchId: Id | null = null) 
     if (n.placement.kind === 'fromPrev' || n.placement.kind === 'fromNext') {
       let grid: { sizeId: string; name: string; value: number }[] = [];
       try { grid = ops.notchDistanceGrid(app.doc, piece, n.id); } catch (err) { reportError(err, 'Notch grid'); }
-      const t = h('table.fw-table');
-      t.append(h('tr', {}, h('th', {}, 'Size'), h('th', {}, `Distance ${n.placement.kind === 'fromPrev' ? 'from previous' : 'from next'} (${unitLabel()})`), h('th', {}, 'Δ')));
-      grid.forEach((g, i) => {
-        t.append(h('tr' + (g.sizeId === app.activeSize ? '.cur' : ''), {}, h('td', {}, g.name + (g.sizeId === app.sizeLine().baseSizeId ? ' ★' : '')),
-          h('td', {}, lengthInput(g.value, v => tx('Notch distance', () => ops.setNotchDistance(app.doc, piece, n.id, g.sizeId, v)), { min: 0 })),
-          h('td.dim', {}, i ? fmt(g.value - grid[i - 1].value) : '')));
+      // rows = sizes (shared size grid: arrows / Enter / Tab, paste an Excel column into consecutive sizes)
+      const line = app.sizeLine();
+      const rows = grid.map(g => ({ id: g.sizeId, name: g.name, base: g.sizeId === line.baseSizeId, active: g.sizeId === app.activeSize }));
+      const sg = sizeGrid({
+        rows, state: NG.scroll, cls: 'ngtab', maxHeight: 360,
+        cols: [
+          { key: 'dist', head: `Distance ${n.placement.kind === 'fromPrev' ? 'from previous' : 'from next'} (${unitLabel()})`, edit: true, attrs: { 'data-col': 'dist' }, get: r => grid[r].value },
+          { key: 'inc', head: 'Δ prev', get: r => (r ? grid[r].value - grid[r - 1].value : null) },
+        ],
+        onCommit: cells => { tx('Notch distance', () => app.doc.transact(cells.length > 1 ? 'Paste notch distances' : 'Notch distance', () => { for (const c of cells) if (c.v >= 0) ops.setNotchDistance(app.doc, piece, n.id, grid[c.r].sizeId, c.v); })); try { grid.splice(0, grid.length, ...ops.notchDistanceGrid(app.doc, app.doc.piece(piece.id), n.id)); } catch { /* */ } },
       });
-      win.body.append(t);
+      win.body.append(sg.el);
       win.foot.append(
         h('button.btn.sm', { onclick: async () => {
           const r = await showDialog({ title: 'Fill all sizes', fields: [{ kind: 'length', key: 'v', label: 'Distance', value: grid.find(g => g.sizeId === app.activeSize)?.value ?? 0, min: 0 }] });

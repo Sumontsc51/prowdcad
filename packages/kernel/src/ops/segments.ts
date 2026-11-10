@@ -39,6 +39,8 @@ export function splitOpenAt(c: Contour, line: SizeLine, cuts: number[]): Anchor[
 /** Make a new open internal contour like `proto` with the given anchors. */
 export function internalLike(proto: Contour, points: Anchor[]): Contour {
   const c: Contour = { ...jsonClone(proto), id: newId('c'), points, closed: false };
+  // a part of a split / trimmed line is a new line: the parent's lock does not describe it
+  delete c.lock;
   return c;
 }
 

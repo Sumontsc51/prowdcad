@@ -223,3 +223,214 @@ export function loadSizesFromLibrary(doc: Document, libraryId: Id, opt: { pieceI
     return table.id;
   });
 }
+
+// ───────────────────────── Gerber-style rule tables (rows = sizes) ─────────────────────────
+//
+// Two plain-language views of one column of values (one axis of one point or rule), both keyed by
+// size index along the size line (base index b):
+//   total[i] — "Total from base size": absolute offset from the base size (total[b] = 0)
+//   step[i]  — "Step into this size": total[i] − total[neighbour toward the base] (step[b] = 0).
+// The step view is the AccuMark convention (smaller sizes carry their own, usually negative, step
+// away from the base), so editing a step moves that size AND every size further from the base,
+// never the sizes between it and the base. The kernel's storage convention (inc[i] = abs[i] −
+// abs[i−1]) is converted with absoluteToIncremental / incrementalToAbsolute.
+
+/** Outward steps from totals. */
+export function outwardSteps(total: number[], baseIndex: number): number[] {
+  return total.map((v, i) => (i === baseIndex ? 0 : i > baseIndex ? v - total[i - 1] : v - total[i + 1]));
+}
+/** Totals from outward steps (step at the base ignored). */
+export function totalsFromSteps(step: number[], baseIndex: number): number[] {
+  const t = step.map(() => 0);
+  for (let i = baseIndex + 1; i < step.length; i++) t[i] = t[i - 1] + step[i];
+  for (let i = baseIndex - 1; i >= 0; i--) t[i] = t[i + 1] + step[i];
+  return t;
+}
+/** Indices of the sizes whose position changes when the cell of size `i` is edited in a view. */
+export function affectedSizes(n: number, baseIndex: number, i: number, view: 'step' | 'total'): number[] {
+  if (i === baseIndex || i < 0 || i >= n) return [];
+  if (view === 'total') return [i];
+  const out: number[] = [];
+  if (i > baseIndex) for (let k = i; k < n; k++) out.push(k); else for (let k = i; k >= 0; k--) out.push(k);
+  return out;
+}
+
+export type FillMethod = 'linear' | 'interpolate' | 'repeat' | 'breaks';
+/** A typed cell: size index and value in the view the user typed it in. */
+export interface FillAnchor { i: number; v: number }
+
+/**
+ * Smart fill of one column (UI: type a few size rows, press Fill). Works per side of the base; a side
+ * without anchors keeps `current`. Returns totals (and steps).
+ * - linear: equal steps. Step view: the mean of the typed steps; total view: least-squares slope
+ *   through the base (one typed total at the last size = that total spread evenly).
+ * - interpolate: total view: piecewise linear through the typed totals (ends continue the last
+ *   step); step view: the step ramps linearly between typed steps, constant beyond the last one.
+ * - repeat: each typed step repeats outward until the next typed one (sizes before the first typed
+ *   one, toward the base, take the first). Total view: the step implied at each typed row repeats.
+ * - breaks: AccuMark size breaks. The value at a break (typed, else current) is reached at that size
+ *   and the change since the previous break (toward the base) is split evenly over the sizes in
+ *   between; beyond the outermost break the last per-size step continues. Typed rows act as breaks
+ *   too. Step view: a typed value at a break is the change over its range.
+ */
+export function smartFill(current: number[], baseIndex: number, anchors: FillAnchor[], view: 'step' | 'total', method: FillMethod, breaks: number[] = []): { totals: number[]; steps: number[] } {
+  const n = current.length, b = baseIndex;
+  const out = current.slice(); out[b] = 0;
+  for (const side of [1, -1] as const) {
+    const idx: number[] = []; for (let i = b + side; i >= 0 && i < n; i += side) idx.push(i); // outward order
+    if (!idx.length) continue;
+    const anc = new Map<number, number>();
+    for (const a of anchors) if (idx.includes(a.i) && Number.isFinite(a.v)) anc.set(a.i, a.v);
+    if (!anc.size) continue;
+    const d = (i: number) => Math.abs(i - b);
+    const setTotals = (tot: (i: number) => number) => { for (const i of idx) out[i] = tot(i); };
+    const fromSteps = (st: Map<number, number>) => { let acc = 0; for (const i of idx) { acc += st.get(i) ?? 0; out[i] = acc; } };
+    if (method === 'linear') {
+      if (view === 'step') { const k = [...anc.values()].reduce((a, v) => a + v, 0) / anc.size; setTotals(i => k * d(i)); }
+      else { let num = 0, den = 0; for (const [i, v] of anc) { num += d(i) * v; den += d(i) * d(i); } const k = den ? num / den : 0; setTotals(i => k * d(i)); }
+    } else if (method === 'interpolate') {
+      const keys = idx.filter(i => anc.has(i));
+      if (view === 'total') {
+        const px = [0, ...keys.map(d)], py = [0, ...keys.map(i => anc.get(i)!)];
+        setTotals(i => {
+          const x = d(i);
+          let k = px.findIndex(v => v >= x); if (k < 0) k = px.length - 1; if (k === 0) k = 1;
+          const x0 = px[k - 1], x1 = px[k], y0 = py[k - 1], y1 = py[k];
+          return x1 === x0 ? y1 : y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+        });
+      } else {
+        const st = new Map<number, number>();
+        for (const i of idx) {
+          const x = d(i);
+          const lo = [...keys].reverse().find(k => d(k) <= x), hi = keys.find(k => d(k) >= x);
+          if (lo === undefined) st.set(i, anc.get(hi!)!);
+          else if (hi === undefined) st.set(i, anc.get(lo)!);
+          else st.set(i, d(hi) === d(lo) ? anc.get(lo)! : anc.get(lo)! + (anc.get(hi)! - anc.get(lo)!) * (x - d(lo)) / (d(hi) - d(lo)));
+        }
+        fromSteps(st);
+      }
+    } else if (method === 'repeat') {
+      let typedSteps = new Map<number, number>();
+      if (view === 'step') typedSteps = anc;
+      else { // implied step at each typed total row (its neighbour toward the base taken from the current values / earlier anchors)
+        const tmp = current.slice(); tmp[b] = 0; for (const [i, v] of anc) tmp[i] = v;
+        for (const i of anc.keys()) typedSteps.set(i, tmp[i] - tmp[i - side]);
+      }
+      const first = idx.find(i => typedSteps.has(i))!;
+      const st = new Map<number, number>(); let last = typedSteps.get(first)!;
+      for (const i of idx) { if (typedSteps.has(i)) last = typedSteps.get(i)!; st.set(i, last); }
+      fromSteps(st);
+    } else { // breaks
+      const brk = new Set<number>([...breaks.filter(i => idx.includes(i)), ...anc.keys()]);
+      const order = idx.filter(i => brk.has(i));
+      const val = new Map<number, number>(); // total at each break
+      let prevTotal = 0;
+      for (const i of order) {
+        let v: number;
+        if (anc.has(i)) v = view === 'total' ? anc.get(i)! : prevTotal + anc.get(i)!;
+        else v = view === 'total' ? current[i] : prevTotal + (current[i] - (order.indexOf(i) > 0 ? current[order[order.indexOf(i) - 1]] : 0));
+        val.set(i, v); prevTotal = v;
+      }
+      let px = 0, py = 0, lastStep = 0;
+      for (const i of order) { const x = d(i), y = val.get(i)!; lastStep = x > px ? (y - py) / (x - px) : 0; for (const j of idx) if (d(j) > px && d(j) <= x) out[j] = py + (y - py) * (d(j) - px) / (x - px); px = x; py = y; }
+      for (const j of idx) if (d(j) > px) out[j] = py + lastStep * (d(j) - px);
+    }
+  }
+  return { totals: out, steps: outwardSteps(out, b) };
+}
+
+// ───────────────────────── size breaks (stored with the style) ─────────────────────────
+
+type MetaWithBreaks = { sizeBreaks?: Record<Id, SizeId[]> };
+/** Break sizes of a size line (AccuMark "Next Size Breaks" / Edit Size Breaks), in line order. Stored in style.meta.sizeBreaks. */
+export function sizeBreaks(doc: Document, lineId: Id): SizeId[] {
+  return ((doc.style.meta as MetaWithBreaks).sizeBreaks?.[lineId] ?? []).slice();
+}
+export function setSizeBreaks(doc: Document, lineId: Id, sizeIds: SizeId[]): void {
+  doc.transact('Size breaks', style => {
+    const m = style.meta as MetaWithBreaks;
+    m.sizeBreaks ??= {};
+    if (sizeIds.length) m.sizeBreaks[lineId] = [...new Set(sizeIds)]; else delete m.sizeBreaks[lineId];
+  });
+}
+
+// ───────────────────────── rule editing (Create / Modify Rule, Copy Table Rule) ─────────────────────────
+
+function ruleIn(doc: Document, libraryId: Id, ruleId: Id): { lib: RuleLibrary; rule: GradeRule } {
+  const lib = library(doc, libraryId);
+  const rule = lib.rules.find(r => r.id === ruleId);
+  if (!rule) throw new Error('No rule ' + ruleId);
+  return { lib, rule };
+}
+
+/**
+ * Modify Rule / Edit Rule Delta: replace a rule's values (library size ids; incremental by default,
+ * view:'absolute' = offsets from the library base) and re-apply it to every linked point.
+ * Returns the number of linked points refreshed.
+ */
+export function setRuleValues(doc: Document, libraryId: Id, ruleId: Id, values: Record<SizeId, GradeInc>, opt: { view?: 'incremental' | 'absolute'; refresh?: boolean } = {}): number {
+  return doc.transact('Modify rule', () => {
+    const { lib, rule } = ruleIn(doc, libraryId, ruleId);
+    const line = lib.sizeLine;
+    let inc: GradeRec;
+    if (opt.view === 'absolute') {
+      const w: Record<SizeId, { x: number; y: number }> = {};
+      for (const s of line.sizes) w[s.id] = { x: gi(values, s.id).dx, y: gi(values, s.id).dy };
+      inc = incFromWorldAbs(w, line);
+    } else { inc = {}; for (const s of line.sizes) inc[s.id] = { ...gi(values, s.id) }; inc[line.sizes[0].id] = Z(); }
+    rule.inc = inc;
+    return opt.refresh === false ? 0 : refreshRuleLinks(doc, rule.id);
+  });
+}
+
+/** Copy Table Rule: duplicate a rule under a new number (optionally flipped in X / Y). */
+export function copyRule(doc: Document, libraryId: Id, ruleId: Id, opt: { number?: number; name?: string; flipX?: boolean; flipY?: boolean } = {}): GradeRule {
+  return doc.transact('Copy rule', () => {
+    const { lib, rule } = ruleIn(doc, libraryId, ruleId);
+    const number = opt.number ?? nextNumber(lib);
+    if (lib.rules.some(r => r.number === number)) throw new Error('Rule number exists: ' + number);
+    const inc: GradeRec = {};
+    for (const [k, v] of Object.entries(rule.inc)) inc[k] = { dx: opt.flipX ? -v.dx : v.dx, dy: opt.flipY ? -v.dy : v.dy };
+    const copy: GradeRule = { id: newId('r'), number, name: opt.name ?? String(number), inc, sizeLineId: rule.sizeLineId, ...(rule.description ? { description: rule.description } : {}) };
+    lib.rules.push(copy);
+    return copy;
+  });
+}
+
+/** Rename / renumber a rule. */
+export function renameRule(doc: Document, libraryId: Id, ruleId: Id, opt: { name?: string; number?: number }): void {
+  doc.transact('Rename rule', () => {
+    const { lib, rule } = ruleIn(doc, libraryId, ruleId);
+    if (opt.number !== undefined && opt.number !== rule.number) {
+      if (lib.rules.some(r => r.number === opt.number)) throw new Error('Rule number exists: ' + opt.number);
+      rule.number = opt.number;
+    }
+    if (opt.name !== undefined) rule.name = opt.name;
+  });
+}
+
+/** Delete a rule. Linked points keep their values; their link is removed. Returns the number of points detached. */
+export function deleteRule(doc: Document, libraryId: Id, ruleId: Id): number {
+  return doc.transact('Delete rule', style => {
+    const { lib } = ruleIn(doc, libraryId, ruleId);
+    lib.rules = lib.rules.filter(r => r.id !== ruleId);
+    let n = 0;
+    for (const p of style.pieces) for (const ref of gradedRefs(p, 1)) if (ref.anchor?.ruleId === ruleId) { delete ref.anchor.ruleId; n++; }
+    return n;
+  });
+}
+
+export type GradeStatus = 'rule' | 'edited' | 'graded' | 'ungraded';
+/**
+ * Grading status of a point for the rule badges: 'rule' = linked to a rule and equal to it,
+ * 'edited' = linked but its values differ (locally edited), 'graded' = own non-zero grading, no rule,
+ * 'ungraded' = no grading at all (every size on the base position).
+ */
+export function gradeStatus(doc: Document, pieceId: Id, anchorId: Id): GradeStatus {
+  const piece = doc.piece(pieceId);
+  const ref = findRef(piece, anchorId);
+  if (ref.anchor?.ruleId) return ruleName(doc, pieceId, anchorId).endsWith('*') ? 'edited' : 'rule';
+  const line = doc.sizeLine(piece);
+  const w = refWorldAbs(ref, line);
+  return line.sizes.some(s => Math.hypot(w[s.id].x, w[s.id].y) > 1e-9) ? 'graded' : 'ungraded';
+}

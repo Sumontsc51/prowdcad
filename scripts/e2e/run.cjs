@@ -3,7 +3,7 @@
 //   npm run e2e                      → starts Vite (apps/web) on :5199, runs every suite
 //   E2E_URL=http://localhost:5173/ npm run e2e    → use an already running dev server
 //   E2E_ONLY='^seam\.' npm run e2e   → only cases whose id matches the regex
-//   E2E_SUITES=commands,tools npm run e2e   (commands, tools, hotkeys, special, single)
+//   E2E_SUITES=commands,tools npm run e2e   (commands, tools, hotkeys, special, mgrade, single)
 // Output: scripts/e2e/out/results.json (+ shots/ for failures). Exit code 1 when any case fails.
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -17,7 +17,7 @@ const ROOT = path.resolve(__dirname, '../..');
 const OUT = path.join(__dirname, 'out');
 const PORT = 5199;
 const ONLY = process.env.E2E_ONLY ? new RegExp(process.env.E2E_ONLY) : null;
-const SUITES = (process.env.E2E_SUITES || 'commands,tools,hotkeys,special,single').split(',');
+const SUITES = (process.env.E2E_SUITES || 'commands,tools,hotkeys,special,mgrade,single').split(',');
 
 function ping(url) { return new Promise(res => { http.get(url, r => { r.resume(); res(r.statusCode === 200); }).on('error', () => res(false)); }); }
 /**
@@ -110,6 +110,8 @@ async function writeFixtureFiles(h) {
       await runList(cases, 'command');
     }
     if (SUITES.includes('tools')) { const { cases } = require('./suites/tools.cjs'); await runList(cases, 'tool'); }
+    // Measure Line (AccuMark) + rows = sizes grading table + Grade Rules + grade by measurement
+    if (SUITES.includes('mgrade')) { const { cases } = require('./suites/measure-grade.cjs'); await runList(cases, 'mgrade'); }
     if (SUITES.includes('hotkeys') && !ONLY) { const { hotkeys } = require('./suites/hotkeys.cjs'); results.hotkeys = await hotkeys(h, fixtures, registry); }
     if (SUITES.includes('special')) { const S = require('./suites/special.cjs'); results.special = await S.run(h, fixtures, results, ONLY); }
   } catch (e) {
@@ -122,7 +124,7 @@ async function writeFixtureFiles(h) {
   if (SUITES.includes('single') && !ONLY) { const { single } = require('./suites/single.cjs'); results.single = await single(ROOT, results.registry || []).catch(e => ({ error: String(e) })); }
   results.finishedAt = new Date().toISOString();
   const by = {};
-  for (const r of results.cases) { const k = r.kind === 'tool' ? 'Tools' : (r.menu || '(hotkey only)').split('/')[0]; by[k] ??= { pass: 0, fail: 0, skip: 0 }; by[k][r.status]++; }
+  for (const r of results.cases) { const k = r.kind === 'tool' ? 'Tools' : r.kind === 'mgrade' ? 'Measure+Grade' : (r.menu || '(hotkey only)').split('/')[0]; by[k] ??= { pass: 0, fail: 0, skip: 0 }; by[k][r.status]++; }
   results.summary = by;
   fs.writeFileSync(path.join(OUT, process.env.E2E_OUT || 'results.json'), JSON.stringify(results, null, 1));
   console.log('\nSummary by menu:'); for (const [k, v] of Object.entries(by)) console.log(`  ${k.padEnd(16)} pass ${v.pass}  fail ${v.fail}  skip ${v.skip}`);

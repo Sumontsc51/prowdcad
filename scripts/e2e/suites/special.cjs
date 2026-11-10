@@ -98,20 +98,20 @@ async function units(h, fixtures) {
   await T('Inspector: edit Y only, X keeps its exact value (no fraction rounding)', async () => { await unit('in16'); await h.selectA('FRONT', 'AH1'); await typeInto(h, inspInput(h, /^Y/), '22'); const st = await h.state(); const a = an(st, 'FRONT', 'AH1'); return { got: `AH1 x ${a.x} (was 222), y ${a.y} (want 558.8)`, pass: near(a.x, 222, 1e-4) && near(a.y, 558.8, 1e-3) }; });
   await T('Grading table cell: type "3/8" where 10 mm is displayed as "3/8" (in16, incremental L dX of UA)', async () => {
     await unit('in16'); await h.selectA('FRONT', 'UA'); await h.key('Control+g'); await h.settle(100);
-    const cell = h.page.locator('table.gr tr.sel input.num').nth(2 * 2); // sizes S,M,L → L dX = index 4
+    const cell = h.page.locator('.sg-wrap.gr input[data-size="L"][data-axis="dx"]'); // rows = sizes
     const shown = await cell.inputValue();
     await typeInto(h, cell, '3/8'); const st = await h.state(); const g = abs(st, 'FRONT', 'UA');
     return { got: `cell showed "${shown}" for 10 mm; after typing 3/8 + Enter: UA abs L dx ${g.L.dx} mm (want 9.525)`, pass: near(g.L.dx, 9.525, 1e-3) };
   });
   await T('Grading table cell "1/2" (in16, incremental L dX of UA) — XL follows', async () => {
     await unit('in16'); await h.selectA('FRONT', 'UA'); await h.key('Control+g'); await h.settle(100);
-    const cell = h.page.locator('table.gr tr.sel input.num').nth(2 * 2);
+    const cell = h.page.locator('.sg-wrap.gr input[data-size="L"][data-axis="dx"]');
     await typeInto(h, cell, '1/2'); const st = await h.state(); const g = abs(st, 'FRONT', 'UA');
     return { got: `UA abs L dx ${g.L.dx} mm, XL dx ${g.XL.dx} mm`, pass: near(g.L.dx, 12.7, 1e-3), note: 'incremental edit of L shifts XL too (incremental convention)' };
   });
   await T('Grading table absolute view cell "1/2" (in16, L dY of UA)', async () => {
-    await unit('in16'); await h.selectA('FRONT', 'UA'); await h.key('Control+g'); await h.page.locator('.gr-bar button', { hasText: 'Absolute' }).click(); await h.settle(80);
-    const cell = h.page.locator('table.gr tr.sel input.num').nth(2 * 2 + 1);
+    await unit('in16'); await h.selectA('FRONT', 'UA'); await h.key('Control+g'); await h.page.locator('.gr-bar button[data-view="total"]').click(); await h.settle(80);
+    const cell = h.page.locator('.sg-wrap.gr input[data-size="L"][data-axis="dy"]');
     await typeInto(h, cell, '1/2'); const st = await h.state(); const g = abs(st, 'FRONT', 'UA');
     return { got: `UA abs L dy ${g.L.dy}, XL dy ${g.XL.dy}`, pass: near(g.L.dy, 12.7, 1e-3) && near(g.XL.dy, 10, 1e-3) };
   });
@@ -415,11 +415,11 @@ async function fixes(h, fixtures) {
   await T('Grading table: the Incremental note warns that larger sizes follow; Absolute edit of L leaves XL', async () => {
     await h.selectA('FRONT', 'UA'); await h.key('Control+g'); await h.settle(80);
     const note = await h.page.locator('.gr-note').textContent();
-    await typeInto(h, h.page.locator('table.gr tr.sel input.num').nth(4), '12'); const st1 = await h.ev(() => window.__e2e.app.statusMsg);
-    await h.page.locator('.gr-bar button', { hasText: 'Absolute' }).click(); await h.settle(60);
+    await typeInto(h, h.page.locator('.sg-wrap.gr input[data-size="L"][data-axis="dx"]'), '12'); const st1 = await h.ev(() => window.__e2e.app.statusMsg);
+    await h.page.locator('.gr-bar button[data-view="total"]').click(); await h.settle(60);
     const note2 = await h.page.locator('.gr-note').textContent();
     const xl0 = abs(await h.state(), 'FRONT', 'UA').XL.dx;
-    await typeInto(h, h.page.locator('table.gr tr.sel input.num').nth(4), '15'); const g = abs(await h.state(), 'FRONT', 'UA');
+    await typeInto(h, h.page.locator('.sg-wrap.gr input[data-size="L"][data-axis="dx"]'), '15'); const g = abs(await h.state(), 'FRONT', 'UA');
     return { got: `note "${note}" · status "${st1}" · abs note "${note2}" · L ${g.L.dx} XL ${xl0}→${g.XL.dx}`, pass: /XL follows L/.test(note) && /moved sizes L, XL/.test(st1) && /that size only/.test(note2) && near(g.L.dx, 15, 1e-9) && near(g.XL.dx, xl0, 1e-9) };
   });
   // Esc: closing a menu never clears the selection; a second Esc right after a cancel keeps it too

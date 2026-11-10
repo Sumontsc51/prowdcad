@@ -1,7 +1,7 @@
 {
-  "at": "2026-11-08T05:16:41.161Z",
+  "at": "2026-11-10T05:23:38.299Z",
   "url": "http://localhost:5289/",
-  "total": 171,
+  "total": 192,
   "failed": 0,
   "results": [
     {
@@ -682,6 +682,90 @@
     },
     {
       "id": "fullness · delete restores the sew line exactly",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · both ends drawn on the outline are locked, proportional 40 % / 50 % (one undo step)",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · padlock drawn on the line",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · end stays at 40 % of the moved hem (base)",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · end stays at 40 % of the moved hem (L)",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · end stays at 40 % of the moved hem (XL)",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · move B · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · move B · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · locked end is not moved by Move Point (message shown)",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · Unlock removes the lock",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · after Unlock the end moves",
+      "ok": true
+    },
+    {
+      "id": "lock.autoDraw · auto-lock off → free line",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · internal selected",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · locked parallel to the segment under the line (H → A)",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · lock · one Ctrl+Z restores the document exactly",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · lock · Ctrl+Y re-applies it exactly",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · exact offset (0.01 mm) in every size",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · Inspector shows the lock (offset row)",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · the segment moved",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · still exact after Move Line of the segment",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · its points refuse Move Point",
+      "ok": true
+    },
+    {
+      "id": "lock.parallel · Inspector Unlock",
       "ok": true
     },
     {

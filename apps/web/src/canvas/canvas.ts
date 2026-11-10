@@ -7,6 +7,7 @@
 import type { App } from '../app';
 import type { Hit, Ptr } from '../tools/tool';
 import { renderGrid, renderWorld, renderOverlay, renderRuler } from './render';
+import { extraOverlays } from './overlays';
 import { settings, saveSettings } from '../settings';
 import { allPiecesBox } from '../geometry';
 import { PX_PER_MM_100 } from './view';
@@ -72,7 +73,7 @@ export class Canvas {
     this.gGrid.innerHTML = renderGrid(app);
     this.gWorld.setAttribute('transform', app.view.matrix());
     this.gWorld.innerHTML = renderWorld(app);
-    this.gOverlay.innerHTML = renderOverlay(app);
+    this.gOverlay.innerHTML = renderOverlay(app) + extraOverlays(app);
     if (settings.showRulers) {
       this.rulerX.innerHTML = renderRuler(app, 'x', app.view.W, RULER);
       this.rulerY.innerHTML = renderRuler(app, 'y', app.view.H, RULER);

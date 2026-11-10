@@ -53,6 +53,9 @@ h2{font:700 38px/1.05 var(--display);margin:0 0 6px;letter-spacing:.005em;text-w
 h2 small{display:block;font:600 12px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin-bottom:10px}
 h3{font:700 23px/1.15 var(--display);margin:28px 0 8px;letter-spacing:.01em}
 p{margin:0 0 14px;max-width:68ch}
+section ul{margin:0 0 16px;padding-left:1.25em;max-width:68ch}
+section ul li{margin:0 0 6px}
+section ul li::marker{color:var(--accent)}
 .sub{color:var(--muted);font-size:18px;margin-bottom:20px}
 a{color:var(--blue)}
 kbd{font:600 12.5px/1 var(--mono);background:var(--sheet);border:1px solid var(--rule);border-bottom-width:2px;border-radius:5px;padding:3px 6px;white-space:nowrap}
@@ -255,11 +258,27 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <div class="grid2">
         <div class="tile"><kbd>P</kbd><h4>Pen: new piece</h4><p>Click = corner, click-drag = smooth point with handles, <kbd>Ctrl</kbd>+click = curve point, <kbd>Shift</kbd> = horizontal/vertical/45°. Click the start point or press Enter to close.</p></div>
         <div class="tile"><kbd>R</kbd><h4>Rectangle, circle, polygon</h4><p>Drag to draw, or click once for a dialog with exact sizes. A circle can be set by diameter or by perimeter.</p></div>
-        <div class="tile"><kbd>I</kbd><h4>Internal line</h4><p>Start inside a piece. Double-click or Enter ends a line, clicking the start closes a shape. Right-click gives an exact length and mirror options.</p></div>
+        <div class="tile"><kbd>I</kbd><h4>Internal line</h4><p>Start inside a piece. Double-click or Enter ends a line, clicking the start closes a shape. Right-click gives an exact length and mirror options. An end you put on the outline is <strong>locked</strong> to it (see below).</p></div>
         <div class="tile"><kbd>Shift+T</kbd><h4>Trace</h4><p>Click around existing lines and points to make a new piece from them.</p></div>
       </div>
       <p><strong>Snapping.</strong> While you draw or move, the cursor snaps to, in this order: a point, the <em>intersection</em> of two lines, the <em>midpoint</em> of a segment, the <em>perpendicular</em> foot from where the move started, a guide, and the grid (<span class="menu">View ▸ Snap</span>; <kbd>Ctrl+Shift+'</kbd> toggles grid snap). The Move tools show a small label (<code>pt</code>, <code>int</code>, <code>mid</code>, <code>perp</code>) next to the target. Hold <kbd>Alt</kbd> to switch snapping off for one drag.</p>
       <p><strong>Grade points and curve points.</strong> Grade points (squares) are corners and carry grading. Curve points (circles) shape the curve between them. A curve point without grading of its own <em>follows</em> its neighbouring grade points in the other sizes, so it moves when they move. To keep it where it is, select it and use <span class="menu">Point ▸ Pin curve point (keep position)</span>: it then gets its own grading and shows a dot in the middle. <span class="menu">Point ▸ Unpin</span> makes it follow again. Use as few curve points as give the shape you want.</p>
+      <h3 id="lock">Internal lines locked to the outline</h3>
+      <p>An internal line can be <strong>locked</strong> to a segment of the sew line, so it keeps its place when that segment moves, changes length, gets new points or is graded. The lock is worked out again after every edit, in every size; nothing has to be updated by hand. A locked line shows a small padlock (its tooltip says what it is locked to), and each attached end a dashed ring.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Lock</th><th>What stays fixed</th><th>Use it for</th></tr></thead>
+        <tbody>
+          <tr><td>Endpoints on segment</td><td>Each end that lies on the outline stays on its segment: at the same <em>proportion</em> of the segment (default), or at the same distance from the segment's start or end. The points in between keep their own position.</td><td>Yoke and style lines, princess lines, pocket openings that start on a seam.</td></tr>
+          <tr><td>Parallel to segment</td><td>The whole line is the exact offset of the segment (positive = inside), from one position along it to another. It is re-drawn when the segment changes shape.</td><td>Topstitching, facing lines, placement lines.</td></tr>
+          <tr><td>Follow point</td><td>The line (open or closed) moves with one sew point, in every size.</td><td>Patch pockets, labels, appliqué shapes.</td></tr>
+        </tbody>
+      </table></div>
+      <ol class="steps">
+        <li><div><strong>While drawing:</strong> with the Internal line tool (<kbd>I</kbd>), an end you snap onto the outline is locked to its segment automatically (option <em>Lock ends to outline</em> in the strip under the menus, also in <span class="menu">Edit ▸ Preferences</span>; on by default, like attach in CLO / AccuMark).</div></li>
+        <li><div><strong>Later:</strong> select the line and set <em>Lock</em> in the Inspector, or right-click it ▸ <em>Lock internal to segment…</em> (<span class="menu">Segment ▸ Lock internal to segment…</span>). ProwdCAD uses the segment under each end (Endpoints), under the line (Parallel) or the nearest grade point (Follow); <em>Pick segment…</em> / <em>Pick point…</em> lets you click another one. The Inspector also sets how a position is kept (<em>Proportional</em>, <em>Distance from segment start</em>, <em>Distance from segment end</em>) and, for Parallel, the offset and the From / To range.</div></li>
+        <li><div><strong>Unlock:</strong> right-click the line ▸ <em>Unlock internal line</em>, or <em>Unlock</em> in the Inspector. The line keeps its shape and its points move freely again.</div></li>
+      </ol>
+      <div class="note"><strong>Moving locked lines</strong>A locked point cannot be moved on its own (Move Point says why); move the outline instead, or unlock. The free middle points of an <em>Endpoints</em> line still move, and Move Line moves a <em>Follow</em> line as a whole (it then follows the point from its new place). A point connection (<span class="menu">Piece ▸ Connections</span>) wins over the lock for that point. If a segment end point is deleted, its lock is removed and the line stays where it is.</div>
     </section>
 
     <section id="points">
@@ -322,7 +341,15 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
           <tr><td>Manual</td><td><span class="menu">Seam ▸ Manual seam angle</span>: click two points to trim the corner by hand.</td></tr>
         </tbody>
       </table></div>
-      <p><strong>Lock grading</strong> (Inspector, piece) copies the base size's corner shape to every size, so a hem corner looks identical from S to 2XL.</p>
+      <p><strong>Lock grading</strong> (Inspector, piece) copies the base size's corner shape to every size, so a hem corner looks identical from S to 2XL. The copy is refreshed after every edit of the sew line, its seams or its sizes.</p>
+      <h3>Seams follow your edits</h3>
+      <p>The seam allowance belongs to the <em>segment</em> (grade point to grade point), and the cut line is calculated again after every change, in every size. When you change the segments themselves, the seams go with them:</p>
+      <ul>
+        <li><strong>Adding a point</strong> on a segment (Cut Point, Add point, Divide, notch <em>Add points</em>, a curve point made a grade point) splits it into two segments that both keep its seam. Corner types stay on the original corners.</li>
+        <li><strong>Removing a grade point</strong> (Delete, grade → curve, Points cleanup) joins two segments; the joined segment keeps the seam of the <em>first</em> one, as in AccuMark.</li>
+        <li><strong>Moving, re-shaping or setting the length</strong> of a segment never changes its seam.</li>
+        <li><strong>New edges</strong> from Slash, Cut along internal, Cut parallel strip and Fold get the seam you type in the dialog (or the piece default; a fold edge gets 0). Shapers, Round corner, Swap and Join keep the seam of the segment they replace. Darts, pleats and slash &amp; spread keep the seam of the segment they open.</li>
+      </ul>
     </section>
 
     <section id="notches">
@@ -384,6 +411,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
           <tr><td>Slash <kbd>K</kbd></td><td>Click across a piece, press Enter. Choose whether the new points are graded or zero-graded and what seam the new edges get. <code>FRONT</code> becomes <code>FRONT_1</code> and <code>FRONT_2</code>.</td></tr>
           <tr><td>Cut along internal</td><td>Split a piece along an internal line, e.g. a yoke line.</td></tr>
           <tr><td>Cut parallel strip</td><td>One step to make a waistband or facing from an edge.</td></tr>
+          <tr><td>Parallel internal line <kbd>Alt+Shift+P</kbd></td><td>An internal line at a distance from a sew segment or another line. From a sew segment it is locked parallel to it by default, so it follows the segment from then on (see <a href="#lock">locked internal lines</a>).</td></tr>
           <tr><td>Join pieces <kbd>Alt+J</kbd></td><td>Click a seam on each piece to join them into one.</td></tr>
           <tr><td>Fold in / out</td><td>Fold part of a piece behind a line, or mirror it back out. Also a quick symmetry check.</td></tr>
           <tr><td>Half piece</td><td>Edit one half of a symmetric piece; the other half mirrors live.</td></tr>
@@ -507,6 +535,8 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <p>That is the Select tool: it only selects (a drag is a selection box). Press <kbd>G</kbd> for Move Point, <kbd>Shift+G</kbd> for Move Line or <kbd>Ctrl+Shift+G</kbd> for a piece. If you really want to drag points in Select, turn on <span class="menu">Edit ▸ Allow drag-move in Select</span>; it moves only what you grab.</p>
       <h3>I moved one point and the points next to it moved</h3>
       <p>Their stored positions did not change. Curve points without their own grading follow their neighbouring grade points in the other sizes (the hollow circles; Nested view shows it best), and the curve through a moved point re-shapes. While you drag, the old curve is drawn dashed and those points are marked "follows". Pin them with <span class="menu">Point ▸ Pin curve point</span>, or move them yourself with Move Point ▸ Single. An internal point marked "connected" follows on purpose (Piece ▸ Connections).</p>
+      <h3>I cannot move a point of an internal line</h3>
+      <p>The line is locked to the outline (padlock on the line, dashed ring on the end). Move the outline and the line follows, or right-click the line ▸ <em>Unlock internal line</em>. To draw lines that are not locked, switch off <em>Lock ends to outline</em> in the Internal line tool's strip.</p>
       <h3>Move Point grabs the wrong one of two points on top of each other</h3>
       <p>The selected point wins, then the sew-line point. Select the one you want first (in Select, click and press <kbd>Tab</kbd> until the status bar names it), then press <kbd>G</kbd>.</p>
       <h3>My exported PDF or DXF has only one piece</h3>
@@ -539,6 +569,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
           <tr><td>Nest</td><td>All sizes of a piece drawn on top of each other.</td></tr>
           <tr><td>Half piece</td><td>A symmetric piece stored as one half and opened at output.</td></tr>
           <tr><td>Walk</td><td>Rolling one seam along another to compare lengths and set notches.</td></tr>
+          <tr><td>Locked internal</td><td>An internal line tied to a sew segment or point; it follows every change of the outline in every size.</td></tr>
         </tbody>
       </table></div>
     </section>

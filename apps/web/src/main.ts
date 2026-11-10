@@ -15,6 +15,8 @@ import { mountMenubar, openContextMenu, closeMenus } from './ui/menu';
 import { mountStatusbar } from './ui/statusbar';
 import { mountDocks } from './panels/dock';
 import { trackingKey } from './panels/grading';
+import { ruleDigitKey } from './panels/rules';
+import './canvas/badges';
 import { registerAll } from './actions/register';
 import { setCommandContext, commandForEvent, runCommand, onCommandsChanged } from './commands';
 import { startAutoBackup, offerRecovery } from './actions/file';
@@ -95,7 +97,7 @@ canvas.onContext = p => {
     const k = sub.item.k;
     openContextMenu(e.clientX, e.clientY, k === 'segment'
       ? ['move.line', 'move.lineParallel', 'move.curve', '-', 'seg.length', 'seg.rotate', 'point.add', 'point.cutTool', 'point.splineSupport', '-', 'seam.segment', 'seg.copy', 'seg.paste', '-', 'grade.pasteAround']
-      : k === 'internal' ? ['move.line', 'move.lineParallel', 'move.curve', 'point.cutTool', '-', 'seg.swap', 'seg.dashed', 'seg.trim', '-', 'edit.delete']
+      : k === 'internal' ? ['move.line', 'move.lineParallel', 'move.curve', 'point.cutTool', '-', 'internal.lock', 'internal.unlock', '-', 'seg.swap', 'seg.dashed', 'seg.trim', '-', 'edit.delete']
         : ['edit.delete']);
   } else if (h.kind === 'piece' && h.pieceId) {
     if (!app.sel.pieces.includes(h.pieceId)) app.selectPiece(h.pieceId);
@@ -125,6 +127,8 @@ window.addEventListener('keydown', e => {
   // Esc on an open menu only closes the menu (it never also clears the selection)
   if (e.key === 'Escape' && closeMenus()) { e.preventDefault(); escConsumedAt = performance.now(); return; }
   // Space tap (press + release < 220 ms, no pan): Move / Modify tool ⇄ Select, selection kept (handled on keyup)
+  // 0) Grade Rules: with points selected (window open / badges on), digits = apply rule #n
+  if (ruleDigitKey(app, e)) { e.preventDefault(); return; }
   // 1) active tool (drafts: Enter / Esc / Backspace)
   if (app.tool?.key?.(app, e)) { e.preventDefault(); if (e.key === 'Escape') escConsumedAt = performance.now(); return; }
   // 2) grading point tracking (arrow keys)

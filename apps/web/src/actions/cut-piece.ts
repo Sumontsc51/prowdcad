@@ -86,9 +86,10 @@ export function registerCutPiece(app: App) {
       { kind: 'radio', key: 'side', label: 'Side', value: '1', options: [{ value: '1', label: isSew ? 'Inside the piece' : 'Left of travel' }, { value: '-1', label: isSew ? 'Outside' : 'Right of travel' }] },
       { kind: 'checkbox', key: 'ext', label: 'Extend / trim ends to the perimeter', value: true },
       { kind: 'checkbox', key: 'dash', label: 'Dashed', value: false },
+      ...(isSew ? [{ kind: 'checkbox' as const, key: 'lock', label: 'Lock parallel to the segment (follows it in every size)', value: true, hint: 'Ignored with “Extend / trim ends”' }] : []),
     ] });
     if (!r) return;
-    ops.createParallelInternal(app.doc, h.piece.id, isSew ? { from: h.from!, to: h.to! } : { internalId: h.contour.id }, r.d as number, Number(r.side) as 1 | -1, { extendToContour: !!r.ext, style: r.dash ? 'dashed' : 'solid' });
+    ops.createParallelInternal(app.doc, h.piece.id, isSew ? { from: h.from!, to: h.to! } : { internalId: h.contour.id }, r.d as number, Number(r.side) as 1 | -1, { extendToContour: !!r.ext, style: r.dash ? 'dashed' : 'solid', lock: isSew && !!r.lock && !r.ext });
   } });
   registerCommand({ id: 'cut.extendParallel', title: 'Extend / shrink parallel…', menu: 'Cut', group: 1, run: async () => {
     const run = await runOrPick(app, 'Click the sew segment to move parallel', 'sew');

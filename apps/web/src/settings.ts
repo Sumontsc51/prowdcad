@@ -44,6 +44,8 @@ export interface Settings {
   showCutCorners: boolean;
   /** rule names next to grade points */
   showRuleNames: boolean;
+  /** rule-number badges on every grade point (colour = rule / edited / graded / ungraded) */
+  ruleBadges: boolean;
   /** reference blocks (dashed) */
   showReference: boolean;
   /** Select tool: what a click / box can select */
@@ -60,6 +62,8 @@ export interface Settings {
   last: Record<string, Record<string, string | number | boolean>>;
   /** per-tool remembered options (Cut Point / Dart / Pleat / Slash & spread), keyed by tool id */
   toolState: Record<string, Record<string, string | number | boolean>>;
+  /** Internal line tool: an open line drawn with an end on the outline is locked to it (Endpoints attached) */
+  autoLockInternal: boolean;
 }
 
 const KEY = 'prowdcad.web.settings';
@@ -71,10 +75,11 @@ export const DEFAULT_SETTINGS: Settings = {
   gridMm: 10, nudgeMm: 1, polygonSides: 6, roundRadiusMm: 20,
   panels: { pieces: true, sizes: true, inspector: true, grading: false },
   guides: [],
-  showCutCorners: false, showRuleNames: false, showReference: true,
+  showCutCorners: false, showRuleNames: false, ruleBadges: false, showReference: true,
   selFilter: 'all', selectDragMove: false, pickRadiusPx: 8, movePointMode: 'single', moveLineMode: 'translate', pieceToolMode: 'move',
   last: {},
   toolState: {},
+  autoLockInternal: true,
 };
 
 function load(): Settings {

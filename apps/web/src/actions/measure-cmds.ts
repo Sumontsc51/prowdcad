@@ -18,6 +18,9 @@ import { resolveFor } from '../geometry';
 import { totalLength, perimeter, area } from '@prowdcad/kernel';
 import { reportError } from '../commands';
 import { Cancelled, runOrPick } from '../selection';
+import { renderMeasureWindow, setMeasureHooks } from '../panels/measure-table';
+import { openGradeFit } from '../panels/grade-fit';
+import { settings, saveSettings } from '../settings';
 
 export const LENGTH_METHODS: { value: LengthSetMethod; label: string }[] = [
   { value: 'moveEnd', label: 'Move end along its tangent' },
@@ -166,7 +169,12 @@ async function scaleDialog(app: App) {
 }
 
 export function registerMeasure(app: App) {
+  setMeasureHooks({ gradeToSpec: (groups, mode) => openGradeFit(app, groups, mode) });
   registerCommand({ id: 'measure.tool', title: 'Measure tool', menu: 'Measure', group: 0, run: () => app.setTool('measure') });
+  registerCommand({ id: 'measure.line', title: 'Measure line (sum per size)…', menu: 'Measure', group: 0, hotkey: 'Shift+Alt+L', run: () => {
+    (settings.toolState ??= {}).measure = { ...(settings.toolState.measure ?? {}), mode: 'line' }; saveSettings();
+    app.setTool('measure'); renderMeasureWindow(app);
+  } });
   registerCommand({ id: 'measure.walk', title: 'Walk tool', menu: 'Measure', group: 0, run: () => app.setTool('walk') });
   registerCommand({ id: 'measure.piece', title: 'Piece info', menu: 'Measure', group: 0, hotkey: 'Ctrl+I', enabled: hasPiece, run: async () => {
     const p = onePiece(app);

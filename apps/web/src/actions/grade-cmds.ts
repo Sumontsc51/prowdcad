@@ -14,6 +14,7 @@ import { toast } from '../ui/toast';
 import { hasAnchor, pieceAnchors, must } from './cmd-util';
 import { runOrPick, anchorOrPick, sizeNameOf } from '../selection';
 import { openRuleLibrary } from '../panels/rules';
+import { openGradeFit } from '../panels/grade-fit';
 import { openMovement } from '../panels/movement';
 import { pick } from '../tools/pick';
 
@@ -38,6 +39,7 @@ export function registerGrade(app: App) {
   registerCommand({ id: 'grade.absolute', title: 'Show absolute values', menu: 'Grade', group: 0, checked: c => c.app.gradeAbsolute, run: () => { app.gradeAbsolute = !app.gradeAbsolute; } });
   registerCommand({ id: 'grade.tracking', title: 'Point tracking (arrow keys)', menu: 'Grade', group: 0, hotkey: 'Alt+T', checked: c => c.app.pointTracking, run: () => { app.pointTracking = !app.pointTracking; app.status(app.pointTracking ? 'Point tracking ON: ←/→ point, ↑/↓ size' : 'Point tracking OFF'); } });
   registerCommand({ id: 'grade.ruleNames', title: 'Show rule names', menu: 'Grade', group: 0, checked: () => settings.showRuleNames, run: () => { settings.showRuleNames = !settings.showRuleNames; saveSettings(); } });
+  registerCommand({ id: 'grade.badges', title: 'Rule badges on grade points', menu: 'Grade', group: 0, hotkey: 'Shift+Alt+B', checked: () => settings.ruleBadges, run: () => { settings.ruleBadges = !settings.ruleBadges; saveSettings(); app.status(settings.ruleBadges ? 'Rule badges ON: blue = rule · amber * = edited · green g = own grading · grey 0 = ungraded · select points and type a rule number to apply it' : 'Rule badges OFF'); app.invalidate(); } });
   registerCommand({ id: 'grade.prevSize', title: 'Previous size', menu: 'Grade', group: 1, hotkey: 'Ctrl+[', run: () => stepSize(-1) });
   registerCommand({ id: 'grade.nextSize', title: 'Next size', menu: 'Grade', group: 1, hotkey: 'Ctrl+]', run: () => stepSize(1) });
   registerCommand({ id: 'grade.baseSize', title: 'Go to base size', menu: 'Grade', group: 1, hotkey: 'Ctrl+B', run: () => { app.activeSize = app.baseSize(); } });
@@ -108,7 +110,7 @@ export function registerGrade(app: App) {
     if (r) ops.gradeProportionally(app.doc, a.hit.piece.id, ids, a.hit.anchor.id, b.hit.anchor.id, r.by === 'auto' ? {} : { by: r.by as 'arc' | 'chord' });
   } });
   // rules / movement / nest
-  registerCommand({ id: 'grade.rules', title: 'Rule library…', menu: 'Grade', group: 3, hotkey: 'Shift+Alt+R,Ctrl+Shift+R', run: () => openRuleLibrary(app) });
+  registerCommand({ id: 'grade.rules', title: 'Grade rules (rule library)…', menu: 'Grade', group: 3, hotkey: 'Shift+Alt+R,Ctrl+Shift+R', run: () => openRuleLibrary(app) });
   registerCommand({ id: 'grade.applyRule', title: 'Apply rule (number / name)…', menu: 'Grade', group: 3, hotkey: 'Ctrl+R', enabled: hasAnchor, run: async () => {
     const r = await rememberedDialog('grade.applyRule', { title: 'Apply rule', fields: [{ kind: 'text', key: 'r', label: 'Rule number or name', value: '' }] });
     if (!r || !String(r.r).trim()) return;
@@ -116,6 +118,7 @@ export function registerGrade(app: App) {
     ops.applyRule(app.doc, s.pieceId, s.ids, /^\d+$/.test(v) ? Number(v) : v);
   } });
   registerCommand({ id: 'grade.detachRule', title: 'Detach rule', menu: 'Grade', group: 3, enabled: hasAnchor, run: () => { const s = selIds(app); ops.detachRule(app.doc, s.pieceId, s.ids); } });
+  registerCommand({ id: 'grade.byMeasurement', title: 'Grade by measurement…', menu: 'Grade', group: 3, run: () => openGradeFit(app) });
   registerCommand({ id: 'grade.movement', title: 'Movement programs…', menu: 'Grade', group: 3, run: () => openMovement(app) });
   registerCommand({ id: 'grade.nest', title: 'Graded nest from pieces…', menu: 'Grade', group: 4, enabled: c => c.app.sel.pieces.length > 1, run: async () => {
     const ids = app.sel.pieces.slice();

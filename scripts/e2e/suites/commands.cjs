@@ -213,6 +213,7 @@ const cases = [
 
   // ═════════ Measure ═════════
   tool('measure.tool', 'measure'), tool('measure.walk', 'walk'),
+  { id: 'measure.line', change: false, expect: async h => [req((await appv('app.tool.id')(h)) === 'measure', 'Measure tool not active'), req(await win('mline')(h), 'Measure window not open')] },
   { id: 'measure.piece', sel: PC('FRONT'), change: false, expect: async h => req((await h.page.locator('.fwin[data-win="pieceinfo"] tr').count()) === 5, 'piece info: expected header + 4 size rows') },
   { id: 'measure.compare', change: false, drive: async h => { await h.page.waitForSelector('.fwin[data-win="compare"]'); await h.page.locator('.fwin[data-win="compare"] button', { hasText: 'Add + …' }).click(); await h.clickSeg('FRONT', 'SS_HEM', 'UA'); await h.key('Enter'); },
     expect: async h => req((await h.page.locator('.fwin[data-win="compare"] tr').count()) === 5, 'compare table not filled') },
@@ -345,6 +346,8 @@ const cases = [
   { id: 'grade.parallel', pre: P((app, ops, doc, E) => { const L = app.sizeLine(); ops.setGrade(doc, E.P('FRONT').id, E.findA('FRONT', 'UA').a.id, L.sizes[2].id, { dx: 14, dy: 5 }, { view: 'absolute' }); }), sel: A('FRONT', 'SS_HEM'), drive: OK(), expect: (h, c) => { const a = abs(c.after, 'FRONT', 'UA'), b = abs(c.after, 'FRONT', 'SS_HEM'); return req(near(a.L.dx, b.L.dx, 0.01), `side seam not parallel in L: SS_HEM dx ${b.L.dx}, UA dx ${a.L.dx}`); } },
   { id: 'grade.proportional', invoke: h => h.cmd('grade.proportional'), drive: seq(at('FRONT', 'SS_HEM'), at('FRONT', 'SH'), OK()) },
   { id: 'grade.rules', change: false, expect: async h => req(await h.ev(() => !!document.querySelector('.fwin')), 'rule library window not open') },
+  { id: 'grade.byMeasurement', change: false, expect: async h => req(await win('gradefit')(h), 'grade-by-measurement window not open') },
+  toggleS('grade.badges', 'ruleBadges', { expect: async h => [req((await setting('ruleBadges')(h)) === !h._v0, 'ruleBadges did not toggle'), req((await h.page.locator('.rbadge').count()) > 0, 'no rule badges drawn')] }),
   { id: 'grade.applyRule', pre: P((app, ops, doc, E) => { const lib = ops.createLibrary(doc, 'LIB'); const L = app.sizeLine(); const v = {}; for (const s of L.sizes.slice(1)) v[s.id] = { dx: 7, dy: 1 }; ops.createRuleFromValues(doc, lib, v, { number: 1, name: 'R1' }); }), sel: A('FRONT', 'UA'), drive: DLG({ r: '1' }), expect: (h, c) => req(an(c.after, 'FRONT', 'UA').ruleId != null, 'rule not applied') },
   { id: 'grade.detachRule', pre: P((app, ops, doc, E) => { const lib = ops.createLibrary(doc, 'LIB'); const L = app.sizeLine(); const v = {}; for (const s of L.sizes.slice(1)) v[s.id] = { dx: 7, dy: 1 }; ops.createRuleFromValues(doc, lib, v, { number: 1, name: 'R1' }); ops.applyRule(doc, E.P('FRONT').id, [E.findA('FRONT', 'UA').a.id], 1); }), sel: A('FRONT', 'UA'), expect: (h, c) => req(an(c.after, 'FRONT', 'UA').ruleId == null, 'rule still attached') },
   { id: 'grade.movement', change: false, expect: async h => req(await h.ev(() => !!document.querySelector('.fwin')), 'movement window not open') },

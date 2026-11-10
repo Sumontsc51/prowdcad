@@ -10,6 +10,7 @@ import { newStyle, openFile, saveFile, importFile, exportDXF, exportSVGFile, exp
 import { registerSeamNotch } from './seam-notch';
 import { registerMeasure } from './measure-cmds';
 import { registerPointSeg } from './point-seg';
+import { registerLockCmds } from './lock-cmds';
 import { registerCutPiece } from './cut-piece';
 import { registerGrade } from './grade-cmds';
 import { registerLive, deleteLive } from './live-cmds';
@@ -108,6 +109,7 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
   registerSeamNotch(app);
   registerMeasure(app);
   registerPointSeg(app);
+  registerLockCmds(app);
   registerMoveCmds(app);
   registerCutPiece(app);
   registerGrade(app);

@@ -16,6 +16,9 @@ import {
 } from '../model/contour';
 import { type Vec, sub, dist, norm, dot, cross, rotate, angleOf, deg, mul } from '../geom/vec';
 import { polylineLength } from '../geom/poly';
+import type { Style } from '../model/types';
+import { cutLineForSize, type CutLineResult } from './seam';
+import { findRef, refWorldAbs, incFromWorldAbs, materializeCurves, deepClone, type GradeRec } from './grading/util';
 
 // ───────────────────────────── shared helpers ─────────────────────────────
 
@@ -420,4 +423,209 @@ export function segmentLengthSetTo(doc: Document, pieceId: Id, contourId: Id, fr
   doc.transact('Segment length set to', () => { findContour(doc.piece(pieceId), contourId).points = final.points; });
   const length = measure(findContour(doc.piece(pieceId), contourId));
   return { converged: Math.abs(length - target) <= 0.01, length, param: res.t, iterations: res.iterations };
+}
+
+// ───────────────────────────── Measure ▸ Line (AccuMark-style groups) ─────────────────────────────
+
+/**
+ * One picked line of a measurement group: a SegRef on the sew line or an internal, optionally
+ * measured on the CUT line (`cut: true`, sew segments only: the cut polyline between the cut-line
+ * corners of the segment's two grade points, `cutLineForSize().cornerIndex`).
+ */
+export interface MeasurePart { ref: SegRef; cut?: boolean }
+
+/** Cut-line polyline of a sew grade segment for a size (see MeasurePart). */
+export function cutPolyline(doc: Document, ref: SegRef, sizeId?: SizeId, cache?: Map<string, CutLineResult>): Vec[] {
+  const piece = doc.piece(ref.pieceId);
+  const contour = findContour(piece, ref.contourId);
+  if (contour !== piece.sew) throw new Error('Cut-line measure needs a sew-line segment');
+  const line = doc.sizeLine(piece);
+  const sid = sizeId ?? line.baseSizeId;
+  const r = doc.resolveContour(piece, contour, sid);
+  const ia = anchorIdx(contour, ref.from), ib = anchorIdx(contour, ref.to);
+  const ka = r.gradeIdx.indexOf(ia), kb = r.gradeIdx.indexOf(ib);
+  if (ka < 0 || kb < 0) throw new Error('Cut-line measure: both ends must be grade points');
+  const key = piece.id + '|' + sid;
+  let cl = cache?.get(key);
+  if (!cl) { cl = cutLineForSize(piece, line, sid); cache?.set(key, cl); }
+  const n = cl.pts.length;
+  const walk = (i0: number, i1: number): Vec[] => {
+    const out = [cl!.pts[i0]];
+    for (let i = i0, g = 0; g < n; g++) { i = (i + 1) % n; out.push(cl!.pts[i]); if (i === i1) break; }
+    return out;
+  };
+  const i0 = cl.cornerIndex[ka], i1 = cl.cornerIndex[kb];
+  return ref.reverse ? walk(i1, i0).reverse() : walk(i0, i1);
+}
+
+/** Value of one part for a size (mode as measureRef). */
+export function measurePart(doc: Document, part: MeasurePart, mode: MeasureMode = 'contour', sizeId?: SizeId, cache?: Map<string, CutLineResult>): number {
+  return polyValue(part.cut ? cutPolyline(doc, part.ref, sizeId, cache) : resolveSeg(doc, part.ref, sizeId).poly, mode);
+}
+
+/** The size of `piece` matching `sizeId` of `line`: same id when the piece has it, else same name; undefined when the piece is not cut in it. */
+export function matchingSize(doc: Document, piece: Piece, line: SizeLine, sizeId: SizeId): SizeId | undefined {
+  const have = doc.sizesOf(piece);
+  if (have.includes(sizeId)) return sizeId;
+  const name = sizeName(line, sizeId);
+  const pl = doc.sizeLine(piece);
+  const id = pl.sizes.find(s => s.name === name)?.id;
+  return id && have.includes(id) ? id : undefined;
+}
+
+export interface GroupRow {
+  sizeId: SizeId; sizeName: string;
+  /** value of each part (null when its piece is not cut in this size) */
+  parts: (number | null)[];
+  /** Σ parts (null when any part is null) */
+  total: number | null;
+}
+
+/**
+ * AccuMark Measure ▸ Line Length: every picked line summed per size, L1 + L2 + … = Σ.
+ * Rows follow the size line of the first part's piece (or `opt.line`), all sizes in order;
+ * parts on other pieces are matched by size id, else by size name.
+ */
+export function measureGroup(doc: Document, parts: MeasurePart[], mode: MeasureMode = 'contour', opt: { line?: SizeLine; cache?: Map<string, CutLineResult> } = {}): GroupRow[] {
+  if (!parts.length && !opt.line) return [];
+  const line = opt.line ?? doc.sizeLine(doc.piece(parts[0].ref.pieceId));
+  const cache = opt.cache ?? new Map<string, CutLineResult>();
+  return line.sizes.map(s => {
+    const vals = parts.map(p => {
+      const sid = matchingSize(doc, doc.piece(p.ref.pieceId), line, s.id);
+      return sid === undefined ? null : measurePart(doc, p, mode, sid, cache);
+    });
+    const total = vals.some(v => v === null) ? null : (vals as number[]).reduce((a, b) => a + b, 0);
+    return { sizeId: s.id, sizeName: s.name, parts: vals, total };
+  });
+}
+
+export interface GroupCompareRow {
+  sizeId: SizeId; sizeName: string;
+  /** Σ of each group */
+  totals: (number | null)[];
+  /** per group, per part values */
+  parts: (number | null)[][];
+  /** totals[g] − totals[0] for every group (diff[0] = 0) */
+  diff: (number | null)[];
+}
+
+/** Comparison of several measurement groups (e.g. A = front + back armhole, B = sleeve cap): per size Σ of each and B − A. */
+export function compareGroups(doc: Document, groups: MeasurePart[][], mode: MeasureMode = 'contour', opt: { line?: SizeLine } = {}): GroupCompareRow[] {
+  const first = groups.find(g => g.length)?.[0];
+  if (!first && !opt.line) return [];
+  const line = opt.line ?? doc.sizeLine(doc.piece(first!.ref.pieceId));
+  const cache = new Map<string, CutLineResult>();
+  const per = groups.map(g => measureGroup(doc, g, mode, { line, cache }));
+  return line.sizes.map((s, i) => {
+    const totals = per.map(rows => (rows[i] ? rows[i].total : null));
+    const parts = per.map(rows => rows[i]?.parts ?? []);
+    const diff = totals.map(t => (t === null || totals[0] === null ? null : t - totals[0]!));
+    return { sizeId: s.id, sizeName: s.name, totals, parts, diff };
+  });
+}
+
+// ───────────────────────────── grade by measurement ─────────────────────────────
+
+/** A point the solver may move: per unit of the solved parameter t it moves by `dir` (piece frame, e.g. {x:1,y:0} = X only). */
+export interface GradeMover { pieceId: Id; anchorId: Id; dir: Vec }
+
+export interface GradeFitInput {
+  /** the measurement (a Measure ▸ Line group) */
+  parts: MeasurePart[];
+  mode?: MeasureMode;
+  /** wanted measurement per size (size ids of the first part's size line); sizes without a target are left alone */
+  targets: Record<SizeId, number>;
+  movers: GradeMover[];
+  /** write the result (one undo step); default true. false = preview only */
+  write?: boolean;
+  /** solver tolerance in mm (default 1e-6) */
+  tol?: number;
+}
+
+export interface GradeFitRow {
+  sizeId: SizeId; sizeName: string;
+  target: number | null;
+  /** measurement before / after */
+  before: number | null;
+  after: number | null;
+  /** after − target */
+  residual: number | null;
+  /** solved movement (mm along each mover's dir) relative to the current grading of that size */
+  t: number;
+  /** false for the base size (grading cannot change it), sizes without target, or when no solution was bracketed */
+  solved: boolean;
+  note?: string;
+}
+
+/**
+ * Grade by measurement: for every non-base size with a target, find the extra movement t of the
+ * chosen points (each by t · dir, ABSOLUTE edit of that size only, so sizes stay independent) that
+ * makes the measurement equal the target. One 1-D root find per size (bracket + bisection), so a
+ * straight segment moved along its own direction is hit to the solver tolerance; on curves the
+ * achieved value and residual are reported. The base size is never changed: its residual says how
+ * far the base pattern is from the spec. Rule links of moved points are dropped (locally edited).
+ */
+export function gradeByMeasurement(doc: Document, input: GradeFitInput): { rows: GradeFitRow[]; maxResidual: number; written: boolean } {
+  const mode = input.mode ?? 'contour';
+  if (!input.parts.length) throw new Error('Grade by measurement: the measurement has no lines');
+  if (!input.movers.length) throw new Error('Grade by measurement: choose the point(s) to move');
+  const line = doc.sizeLine(doc.piece(input.parts[0].ref.pieceId));
+  const Doc = doc.constructor as new (s: Style) => Document;
+  const scratch = new Doc(deepClone(doc.style));
+  const measureOn = (d: Document, sid: SizeId): number | null => {
+    let v = 0;
+    for (const p of input.parts) {
+      const ps = matchingSize(d, d.piece(p.ref.pieceId), line, sid);
+      if (ps === undefined) return null;
+      v += measurePart(d, p, mode, ps);
+    }
+    return v;
+  };
+  // movers: implicit curve points get explicit grading first (exact current positions)
+  const movers = input.movers.map(m => {
+    const piece = scratch.piece(m.pieceId); const pl = scratch.sizeLine(piece);
+    let ref = findRef(piece, m.anchorId);
+    if (ref.implicit && ref.contour) { materializeCurves(ref.contour, pl, 'grade', [ref.contour.points.indexOf(ref.anchor!)]); ref = findRef(piece, m.anchorId); }
+    return { m, piece, pl, ref, w0: refWorldAbs(ref, pl) };
+  });
+  const setT = (sid: SizeId, t: number) => {
+    for (const mv of movers) {
+      const ps = matchingSize(scratch, mv.piece, line, sid);
+      if (ps === undefined || ps === mv.pl.baseSizeId) continue;
+      const w = refWorldAbs(mv.ref, mv.pl);
+      w[ps] = { x: mv.w0[ps].x + t * mv.m.dir.x, y: mv.w0[ps].y + t * mv.m.dir.y };
+      mv.ref.set(incFromWorldAbs(w, mv.pl, mv.ref.axisDeg));
+    }
+  };
+  const tol = input.tol ?? 1e-6;
+  const rows: GradeFitRow[] = [];
+  for (const s of line.sizes) {
+    const target = input.targets[s.id];
+    const before = measureOn(doc, s.id);
+    const row: GradeFitRow = { sizeId: s.id, sizeName: s.name, target: target ?? null, before, after: before, residual: target !== undefined && before !== null ? before - target : null, t: 0, solved: false };
+    if (target === undefined || !Number.isFinite(target)) { row.note = 'no target'; rows.push(row); continue; }
+    if (before === null) { row.note = 'size not cut'; rows.push(row); continue; }
+    if (s.id === line.baseSizeId) { row.note = 'base size: grading cannot change it (adjust the base pattern)'; rows.push(row); continue; }
+    const f = (t: number) => { setT(s.id, t); return measureOn(scratch, s.id) ?? NaN; };
+    const res = solve(f, target, target - before, tol);
+    const t = res.converged ? res.t : 0;
+    const after = f(t);
+    row.t = t; row.after = after; row.residual = after - target; row.solved = res.converged;
+    if (!res.converged) row.note = 'no solution found by moving these points (kept the current grading)';
+    rows.push(row);
+  }
+  const maxResidual = rows.reduce((m, r) => (r.solved && r.residual !== null ? Math.max(m, Math.abs(r.residual)) : m), 0);
+  let written = false;
+  if (input.write !== false && rows.some(r => r.solved && Math.abs(r.t) > 0)) {
+    doc.transact('Grade by measurement', () => {
+      for (const mv of movers) {
+        const live = findRef(doc.piece(mv.m.pieceId), mv.m.anchorId);
+        live.set(deepClone(mv.ref.get() ?? {}) as GradeRec);
+        if (live.anchor) { delete live.anchor.ruleId; if (mv.ref.anchor?.gradeAxisDeg !== undefined) live.anchor.gradeAxisDeg = mv.ref.anchor.gradeAxisDeg; }
+      }
+    });
+    written = true;
+  }
+  return { rows, maxResidual, written };
 }

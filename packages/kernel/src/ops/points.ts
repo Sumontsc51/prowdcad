@@ -10,6 +10,7 @@
  */
 import type { Anchor, Contour, Id, Piece, SizeId, SizeLine, GradeInc, NotchType } from '../model/types';
 import { makeNotch } from './notches';
+import { isLockDriven } from './lock';
 import type { Document } from '../model/doc';
 import { anchorPositions, absoluteOffset, absoluteToIncremental, incrementalToAbsolute } from '../model/contour';
 import { Vec, add, sub, mul, dist, norm, len, dot, cross, rotate, angleOf, perp, lerp } from '../geom/vec';
@@ -58,6 +59,7 @@ export function anchorAt(contour: Contour, line: SizeLine, i: number, sizeId?: S
 function moveIndex(piece: Piece, contour: Contour, line: SizeLine, i: number, d: Vec, sizeId?: SizeId, followConnections = true): void {
   const a = contour.points[i];
   if (a.flags.locked) throw new Error(`Anchor ${a.id} is locked`);
+  if (contour !== piece.sew && isLockDriven(piece, contour.id, a.id)) throw new Error('This point is locked to the sew line (internal line lock) — unlock the line first (right-click ▸ Unlock)');
   if (isBase(line, sizeId)) {
     // a curve point with interpolated grading keeps its per-size positions relative to base
     a.x += d.x; a.y += d.y;
@@ -71,7 +73,8 @@ function moveIndex(piece: Piece, contour: Contour, line: SizeLine, i: number, d:
       const ic = piece.internals.find(c => c.id === pc.internalContourId);
       if (!ic) continue;
       const j = ic.points.findIndex(p => p.id === pc.internalAnchorId);
-      if (j >= 0) moveIndex(piece, ic, line, j, d, sizeId, false);
+      // a point driven by its line's lock is re-placed by the lock (after the edit), not by the connection
+      if (j >= 0 && !isLockDriven(piece, ic.id, ic.points[j].id)) moveIndex(piece, ic, line, j, d, sizeId, false);
     }
   }
 }

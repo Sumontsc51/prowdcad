@@ -75,7 +75,8 @@ const cases = [
     expect: (h, c) => req(c.after.pieces.length === 3, `not slashed — hint says "${h._hint}", first click outside → status "${h._st}"`) }),
   T('slash#outline', { title: 'slash: start ON the outline (CF), across, Enter', invoke: palette('slash'), drive: seq(W(0, 300), W(300, 300), h => h.key('Enter'), OK()), expect: (h, c) => req(c.after.pieces.length === 3, 'not slashed: ' + c.after.pieces.map(p => p.name)) }),
   T('trace', { invoke: palette('trace'), drive: seq(at('FRONT', 'CF_HEM'), at('FRONT', 'SS_HEM'), at('FRONT', 'UA'), h => h.key('Enter'), OK()), expect: (h, c) => req(c.after.pieces.length === 3, 'no traced piece') }),
-  T('measure', { invoke: palette('measure'), change: false, drive: seq(at('FRONT', 'SS_HEM'), at('FRONT', 'UA')),
+  // Measure opens in Line mode (AccuMark Line Length; suite measure-grade); Tab = Distance mode (point to point)
+  T('measure', { invoke: seq(palette('measure'), h => h.key('Tab')), change: false, drive: seq(at('FRONT', 'SS_HEM'), at('FRONT', 'UA')),
     expect: async (h, c) => [req(c.rec.statuses.some(s => /L 465/.test(s)), 'status lacks "L 465": ' + c.rec.statuses.slice(-2)), req(await h.ev(() => document.querySelectorAll('.fwin[data-win="measure"] tr').length === 5), 'per-size table missing')] }),
   T('walk', { invoke: palette('walk'), drive: async h => { await h.clickA('FRONT', 'SS_HEM'); await h.clickA('BACK', 'BL'); for (let i = 0; i < 5; i++) await h.key('ArrowRight'); await h.key('n'); await h.key('Escape'); },
     expect: (h, c) => req(count(c.after, 'FRONT', 'notches') === 2 && count(c.after, 'BACK', 'notches') === 1, 'walk notches not dropped on both pieces') }),

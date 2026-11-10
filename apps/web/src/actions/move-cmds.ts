@@ -52,9 +52,10 @@ export function registerMoveCmds(app: App) {
       { kind: 'checkbox', key: 'dm', label: 'Allow drag-move in Select (moves only what you grab)', value: settings.selectDragMove, hint: 'Off (default): the Select tool only selects; points, lines and pieces move with the Move tools (G, Shift+G, Ctrl+Shift+G).' },
       { kind: 'number', key: 'pr', label: 'Pick radius', value: settings.pickRadiusPx, min: 4, max: 20, suffix: 'px' },
       { kind: 'length', key: 'nu', label: 'Arrow-key nudge step (Move tools; Shift = ×10)', value: settings.nudgeMm, min: 0.001 },
+      { kind: 'checkbox', key: 'al', label: 'Internal line: lock ends drawn on the outline to their segment', value: settings.autoLockInternal, hint: 'On (default): like CLO / AccuMark attach, an end on the outline keeps its proportional position when the segment changes. Right-click the line ▸ Unlock to free it.' },
     ] });
     if (!r) return;
-    settings.selectDragMove = !!r.dm; settings.pickRadiusPx = Math.round(r.pr as number); settings.nudgeMm = r.nu as number; saveSettings(); app.invalidate();
+    settings.selectDragMove = !!r.dm; settings.pickRadiusPx = Math.round(r.pr as number); settings.nudgeMm = r.nu as number; settings.autoLockInternal = !!r.al; saveSettings(); app.invalidate();
   } });
 }
 
