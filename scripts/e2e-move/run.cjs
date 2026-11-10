@@ -19,6 +19,10 @@
 //                sizes, apex drag with Move Point (Fix Dart), Multi darts with a live ghost
 //  pleat.*       Pleat (Shift+L): count by interval, inverted + taper typed, between two lines
 //  fullness.*    Slash & spread (Shift+U): interactive (Shift-rounded) and typed first → last, exact delete
+//  lock.*        internal lines locked to the outline: auto-lock of ends drawn on the outline (I), the end keeps
+//                its proportional position when the segment moves (base + graded size), a locked end refuses
+//                Move Point, Unlock frees it; Inspector ▸ Lock = Parallel to segment: exact offset in every
+//                size, follows Move Line of the segment, Inspector Unlock; one undo step each
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -792,6 +796,96 @@ test('fullness.typedDelete', async h => {
   check('fullness · edit openings in place', JSON.stringify((await openings(h, 'BACK')).map(x => Math.round(x * 1e6) / 1e6)) === '[5,5,5]');
   await h.ev(() => { void window.__mv.C.runCommand('fullness.delete'); }); await h.settle(120);
   check('fullness · delete restores the sew line exactly', (await h.ev(() => JSON.stringify(window.__mv.P('BACK').sew))) === sew0);
+});
+
+// ───────────────────────── internal lines locked to the outline ─────────────────────────
+/** per-size piece-frame positions of the anchors of internal k (default: the last one) of a piece */
+const ipts = (h, pn, size, k) => h.ev(([pn, size, k]) => { const T = window.__mv; const p = T.P(pn); const c = p.internals[k ?? p.internals.length - 1]; const line = T.app.doc.sizeLine(p); return T.K.anchorPositions(c.points, line, size ? T.sid(size) : line.baseSizeId, c.closed); }, [pn, size, k]);
+const iworld = (h, pn, q) => h.ev(([pn, q]) => window.__mv.G.toWorld(window.__mv.P(pn), q), [pn, q]);
+const sewAt = (h, pn, an, size) => h.ev(([pn, an, size]) => { const T = window.__mv; const p = T.P(pn); const line = T.app.doc.sizeLine(p); const i = p.sew.points.findIndex(a => a.name === an); return T.K.anchorPositions(p.sew.points, line, size ? T.sid(size) : line.baseSizeId, true)[i]; }, [pn, an, size]);
+test('lock.autoDraw', async h => {
+  await h.fixture();
+  await h.key('i');
+  const s0 = await h.along('FRONT', 'A', 'B', 0.4), e0 = await h.along('FRONT', 'H', 'A', 0.5);
+  const rev0 = await h.rev();
+  await h.click(s0); await h.click({ x: 90, y: 120 }); await h.click(e0); await h.key('Enter');
+  const L = await h.ev(() => { const p = window.__mv.P('FRONT'); const c = p.internals[p.internals.length - 1]; return c.lock?.kind === 'ends' ? c.lock.ends.map(e => e.value) : c.lock ?? null; });
+  check('lock.autoDraw · both ends drawn on the outline are locked, proportional 40 % / 50 % (one undo step)', Array.isArray(L) && L.length === 2 && near(L[0], 0.4, 1e-6) && near(L[1], 0.5, 1e-6) && (await h.rev()) - rev0 === 1, JSON.stringify(L));
+  check('lock.autoDraw · padlock drawn on the line', await h.ev(() => document.querySelectorAll('[data-lock]').length >= 1));
+  // Move Point B (grade point at the end of the hem): the locked end keeps 40 % of the hem, base and size L
+  await h.key('g');
+  const B = await h.W('FRONT', 'B');
+  const j0 = await h.json();
+  await h.drag(B, { x: B.x + 40, y: B.y }, { mods: ['Alt'] });
+  for (const size of [undefined, 'L', 'XL']) {
+    const P = await ipts(h, 'FRONT', size), A = await sewAt(h, 'FRONT', 'A', size), Bn = await sewAt(h, 'FRONT', 'B', size);
+    const v = L[0]; // the stored ratio (the drawn click is 40 % to screen precision)
+    check(`lock.autoDraw · end stays at 40 % of the moved hem (${size ?? 'base'})`, near(P[0].x, A.x + v * (Bn.x - A.x), 1e-6) && near(P[0].y, A.y + v * (Bn.y - A.y), 1e-6), JSON.stringify([P[0], A, Bn, v]));
+  }
+  await h.undoRedo('lock.autoDraw · move B', j0, await h.json());
+  // a locked end point refuses an independent move
+  const end = await iworld(h, 'FRONT', (await ipts(h, 'FRONT'))[0]);
+  const rev1 = await h.rev();
+  await h.drag(end, { x: end.x + 15, y: end.y + 20 }, { mods: ['Alt'] });
+  check('lock.autoDraw · locked end is not moved by Move Point (message shown)', (await h.rev()) === rev1 && /locked/i.test(await h.ev(() => window.__mv.app.statusMsg + ' ' + window.__mv.prompt())), await h.ev(() => window.__mv.app.statusMsg));
+  // Unlock (right-click entry = command), then it moves
+  await h.ev(() => { const T = window.__mv; const p = T.P('FRONT'); T.app.applySel({ k: 'internal', c: { pieceId: p.id, contourId: p.internals[p.internals.length - 1].id } }, 'replace'); return T.C.runCommand('internal.unlock'); });
+  await h.settle(60);
+  check('lock.autoDraw · Unlock removes the lock', await h.ev(() => { const p = window.__mv.P('FRONT'); return !p.internals[p.internals.length - 1].lock; }));
+  const rev2 = await h.rev();
+  await h.key('g');
+  await h.drag(end, { x: end.x + 15, y: end.y + 20 }, { mods: ['Alt'] });
+  check('lock.autoDraw · after Unlock the end moves', (await h.rev()) === rev2 + 1);
+  // auto-lock off (tool option): a new line is free
+  await h.key('i');
+  await h.ev(() => window.__mv.app.tool.toggle(window.__mv.app, 'autolock'));
+  await h.click(await h.along('FRONT', 'A', 'B', 0.7)); await h.click({ x: 120, y: 100 }); await h.key('Enter');
+  check('lock.autoDraw · auto-lock off → free line', await h.ev(() => { const p = window.__mv.P('FRONT'); return !p.internals[p.internals.length - 1].lock; }));
+  await h.ev(() => window.__mv.app.tool.toggle(window.__mv.app, 'autolock'));
+});
+test('lock.inspectorParallel', async h => {
+  await h.fixture();
+  await h.key('v');
+  // select the fixture internal line (IA – IM – IB), lock it parallel from the Inspector
+  await h.click(await h.along('FRONT', 'IM', 'IB', 0.5));
+  check('lock.parallel · internal selected', (await h.sel()).internals.length === 1, JSON.stringify(await h.sel()));
+  const j0 = await h.json(), rev0 = await h.rev();
+  await h.page.locator('.insp .prow', { hasText: 'Lock' }).locator('select').first().selectOption('parallel');
+  await h.settle(80);
+  const L = await h.ev(() => { const T = window.__mv; const p = T.P('FRONT'); const c = p.internals[0]; const pn = id => p.sew.points.find(a => a.id === id)?.name; return c.lock?.kind === 'parallel' ? { from: pn(c.lock.from), to: pn(c.lock.to), off: c.lock.offset } : c.lock ?? null; });
+  check('lock.parallel · locked parallel to the segment under the line (H → A)', L && L.from === 'H' && L.to === 'A' && L.off > 50 && L.off < 80 && (await h.rev()) - rev0 === 1, JSON.stringify(L));
+  await h.undoRedo('lock.parallel · lock', j0, await h.json());
+  const exact = async () => {
+    let worst = 0;
+    for (const size of [undefined, 'S', 'L', 'XL']) worst = Math.max(worst, await h.ev(([size]) => {
+      const T = window.__mv; const p = T.P('FRONT'); const line = T.app.doc.sizeLine(p); const sid = size ? T.sid(size) : line.baseSizeId;
+      const r = T.K.resolveContour(p.sew, line, sid); const iH = p.sew.points.findIndex(a => a.name === 'H'), iA = p.sew.points.findIndex(a => a.name === 'A');
+      const span = T.K.spanPolyline(r, iH, iA); const ic = T.K.resolveContour(p.internals[0], line, sid);
+      return Math.max(...ic.pts.map(q => Math.abs(T.K.closestPoint(span, q).d - p.internals[0].lock.offset)));
+    }, [size]));
+    return worst;
+  };
+  check('lock.parallel · exact offset (0.01 mm) in every size', (await exact()) < 0.01, String(await exact()));
+  check('lock.parallel · Inspector shows the lock (offset row)', await h.ev(() => [...document.querySelectorAll('.insp .prow .plabel')].some(e => /Offset/.test(e.textContent))));
+  // Move Line on the sew segment H → A: the parallel follows
+  await h.key('Shift+G');
+  const m = await h.along('FRONT', 'H', 'A', 0.3);
+  await h.drag(m, { x: m.x - 20, y: m.y });
+  const Ax = (await sewAt(h, 'FRONT', 'A')).x;
+  check('lock.parallel · the segment moved', Ax < -10, String(Ax));
+  check('lock.parallel · still exact after Move Line of the segment', (await exact()) < 0.01, String(await exact()));
+  // its points are not movable on their own
+  await h.key('g');
+  const p0 = await iworld(h, 'FRONT', (await ipts(h, 'FRONT', undefined, 0))[0]);
+  const rev1 = await h.rev();
+  await h.drag(p0, { x: p0.x + 10, y: p0.y + 10 }, { mods: ['Alt'] });
+  check('lock.parallel · its points refuse Move Point', (await h.rev()) === rev1);
+  // Inspector Unlock button
+  await h.key('v');
+  await h.ev(() => { const T = window.__mv; const p = T.P('FRONT'); T.app.applySel({ k: 'internal', c: { pieceId: p.id, contourId: p.internals[0].id } }, 'replace'); T.app.flush(); });
+  await h.settle(40);
+  await h.page.locator('.insp button', { hasText: 'Unlock' }).first().click(); await h.settle(60);
+  check('lock.parallel · Inspector Unlock', await h.ev(() => !window.__mv.P('FRONT').internals[0].lock));
 });
 
 (async () => {

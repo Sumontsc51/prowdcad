@@ -82,7 +82,42 @@ export interface Contour {
   style?: 'solid' | 'dashed' | 'dotted';
   /** draw vs cut (plot/cut mode) */
   mode?: 'draw' | 'cut';
+  /**
+   * (internal lines) lock to the sew line, re-applied after every edit in every size (ops/lock.ts).
+   * Absent = free internal.
+   */
+  lock?: ContourLock;
 }
+
+// ───────────── internal-line locks (ops/lock.ts) ─────────────
+
+/**
+ * How a position along a locked sew span is kept when the span changes length or grades:
+ * 'ratio' = the same fraction of the span length (AccuMark proportional, default);
+ * 'start' = the same distance (mm) from the span start; 'end' = the same distance from the span end.
+ */
+export type LockMeasure = 'ratio' | 'start' | 'end';
+
+/**
+ * One end point of an internal line attached to a sew span. The span runs forward along the sew line
+ * from anchor `from` to anchor `to` (the grade points bounding the segment at lock time; points later
+ * inserted between them stay inside the span). `value` = fraction 0…1 ('ratio') or mm ('start' / 'end').
+ */
+export interface LockEnd { anchorId: Id; from: Id; to: Id; measure: LockMeasure; value: number }
+
+export type ContourLock =
+  /** Endpoints attached: each listed end point stays on its sew span at its kept position. */
+  | { kind: 'ends'; ends: LockEnd[] }
+  /**
+   * Parallel: the whole internal is regenerated as the offset of the sew span `from → to` by `offset` mm
+   * (positive = inside the piece), between the span positions `a` and `b` (kept as `measure`).
+   */
+  | { kind: 'parallel'; from: Id; to: Id; offset: number; measure: LockMeasure; a: number; b: number }
+  /**
+   * Rigid follow: the internal translates with sew anchor `anchorId`, per size. `ref` = that anchor's
+   * per-size position the internal was last placed for (bookkeeping; updated by every re-apply).
+   */
+  | { kind: 'follow'; anchorId: Id; ref: Record<SizeId, { x: number; y: number }> };
 
 // ───────────── live objects ─────────────
 

@@ -13,6 +13,9 @@ import {
 } from '../geom/draft-geom';
 import { splitOpenAt } from './segments';
 
+// internal-line locks (ops/lock.ts) are published through this module
+export * from './lock';
+
 export type SegmentRef = { from: Id; to: Id } | { internalId: Id };
 
 export interface ParallelOptions {
@@ -22,6 +25,11 @@ export interface ParallelOptions {
   distanceAlongContour?: [number, number];
   name?: string;
   style?: Contour['style'];
+  /**
+   * lock the new line parallel to its sew segment (ops/lock.ts): it then follows every later change of
+   * the segment, in every size. Sew-segment references without `extendToContour` only.
+   */
+  lock?: boolean;
 }
 
 function refPolyline(piece: Piece, line: SizeLine, ref: SegmentRef): { poly: Vec[]; closedRef: boolean; inward: number } {
@@ -57,6 +65,12 @@ export function createParallelInternal(doc: Document, pieceId: Id, ref: SegmentR
     const c: Contour = { id: newId('c'), type: 'internal', closed: closedRef, points: pts, style: o.style ?? 'solid' };
     if (o.name) c.name = o.name;
     piece.internals.push(c);
+    if (o.lock && 'from' in ref && !o.extendToContour && !closedRef && findAnchorIn(piece, ref.from).contour === piece.sew) {
+      const [s0, s1] = o.distanceAlongContour ?? [0, 0];
+      c.lock = o.distanceAlongContour
+        ? { kind: 'parallel', from: ref.from, to: ref.to, offset: distance * side, measure: 'start', a: Math.min(s0, s1), b: Math.max(s0, s1) }
+        : { kind: 'parallel', from: ref.from, to: ref.to, offset: distance * side, measure: 'ratio', a: 0, b: 1 };
+    }
     return c.id;
   });
 }

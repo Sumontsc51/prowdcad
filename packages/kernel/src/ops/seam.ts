@@ -194,6 +194,10 @@ function miterCorner(c: CornerCtx): Vec[] {
   const convex = dot(sub(M, c.A), c.tIn) > -1e-9 && dot(sub(c.B, M), c.tOut) > -1e-9;
   const lim = SEAM_MITER_LIMIT * Math.max(Math.abs(c.dPrev), Math.abs(c.dNext), 1e-9);
   if (convex && dist(M, c.C) > lim) return squareCapCorner(c, M);
+  // (nearly) tangent join of two DIFFERENT allowances (e.g. a hem meeting a rounded corner, a point
+  // inserted where the seam changes): the end edges are almost parallel, so their intersection lies far
+  // away behind the corner and would cut the whole segment off. Step straight across instead.
+  if (!convex && dist(M, c.C) > lim) return dist(c.A, c.B) < 1e-9 ? [c.A] : [c.A, c.B];
   return [M];
 }
 
@@ -581,6 +585,100 @@ function stampLocks(piece: Piece, line: SizeLine) {
       const a = piece.sew.points.find(q => q.id === c.anchorId)!;
       if (!a.corner) continue;
       (a.corner.lockedPerSize ??= {})[sid] = c.pts.map(q => ({ x: q.x, y: q.y }));
+    }
+  }
+}
+
+// ───────────────────────────── seam follows the sew line ─────────────────────────────
+
+/**
+ * State of the sew lines before an edit (`Document.transact` captures it; `followSeams` compares).
+ * `grade`: ids of every sew grade anchor; `lockKey`: Lock-Grading pieces → fingerprint of what the
+ * per-size corner snapshot depends on.
+ */
+export interface SewCapture { grade: Set<Id>; lockKey: Map<Id, string> }
+
+function lockFingerprint(p: Piece): string {
+  return JSON.stringify([p.sew.points.map(a => (a.corner?.lockedPerSize ? { ...a, corner: { ...a.corner, lockedPerSize: undefined } } : a)), p.sew.closed, p.seamDefault, p.noSeam, p.sizes ?? null, p.darts ?? null]);
+}
+
+export function captureSew(style: Style, pieceIds?: Set<Id>): SewCapture {
+  const grade = new Set<Id>(), lockKey = new Map<Id, string>();
+  for (const p of style.pieces) {
+    if (pieceIds && !pieceIds.has(p.id)) continue;
+    for (const a of p.sew.points) if (a.kind === 'grade') grade.add(a.id);
+    if (p.lockGrading) lockKey.set(p.id, lockFingerprint(p));
+  }
+  return { grade, lockKey };
+}
+
+/** Index of the old grade segment that contains every sample point (0.01 mm), −1 when none / several. */
+function oldSegmentOf(oldSegs: Vec[][], samples: Vec[]): number {
+  let found = -1;
+  for (const q of samples) {
+    let best = -1, bd = 0.01;
+    oldSegs.forEach((seg, k) => { const d = seg.length > 1 ? closestPoint(seg, q).d : dist(seg[0], q); if (d <= bd) { bd = d; best = k; } });
+    if (best < 0 || (found >= 0 && best !== found)) return -1;
+    found = best;
+  }
+  return found;
+}
+function samplesOf(poly: Vec[]): Vec[] {
+  const P = dedupe(poly), L = polylineLength(P);
+  if (P.length < 2 || L < 1e-6) return [];
+  return [0.25, 0.5, 0.75].map(f => pointAtLength(P, L * f).pt);
+}
+
+/**
+ * Seam allowances follow segment edits (run after every top-level transaction):
+ *
+ *  - A sew grade point that is NEW (or was a curve point) and has no seam of its own takes the seam of
+ *    the old segment its outgoing segment lies on (0.01 mm, base size). So inserting a point (Cut Point,
+ *    Add point, Divide, notch Add Points, curve → grade …) splits a segment into two that both keep the
+ *    parent's seam, whatever op did it. A new grade point whose outgoing segment is new geometry (a cut
+ *    edge, a joined edge) keeps what the op gave it (dialog value or piece default).
+ *  - A corner spec on such a point is dropped when both its segments lie on the same old segment
+ *    (a point inserted in the middle of a segment is not a corner); corners stay on the original corners.
+ *  - A sew point that was a grade point and is now a curve point loses its seam / corner (the merged
+ *    segment keeps the seam of the segment that started the run — AccuMark).
+ *  - Deleting a grade point needs nothing: the remaining segment starts at the previous grade point and
+ *    keeps its seam (the first segment's value, AccuMark behaviour).
+ *  - Lock Grading pieces whose sew line, seams or sizes changed get their per-size corner snapshot
+ *    re-stamped (when `settings.autoReseam`; the cut line itself is always derived live).
+ *
+ * `oldPieces` returns the pieces as they were before the edit (lazily: parsed only when needed).
+ */
+export function followSeams(style: Style, cap: SewCapture, oldPieces: () => Piece[], lineOf: (p: Piece) => SizeLine, pieceIds?: Set<Id>): void {
+  let old: Piece[] | null = null;
+  for (const p of style.pieces) {
+    if (pieceIds && !pieceIds.has(p.id)) continue;
+    const pts = p.sew.points;
+    for (const a of pts) if (a.kind !== 'grade' && cap.grade.has(a.id) && (a.seamAfter !== undefined || a.corner)) { delete a.seamAfter; delete a.corner; }
+    const cands = pts.filter(a => a.kind === 'grade' && !cap.grade.has(a.id) && !a.flags.derived && (a.seamAfter === undefined || a.corner));
+    if (cands.length && p.sew.closed && !p.noSeam) {
+      try {
+        old ??= oldPieces();
+        const src = old.find(q => q.id === p.id) ?? old.find(q => q.sew.points.some(a => pts.some(b => b.id === a.id)));
+        if (src && src.sew.closed && src.sew.points.length > 2) {
+          const line = lineOf(p);
+          const ro = resolveContour(src.sew, line, line.baseSizeId);
+          const go = ro.gradeIdx;
+          const oldSegs = go.map((gi, k) => dedupe(spanPolyline(ro, gi, go[(k + 1) % go.length])));
+          const rn = resolveContour(p.sew, line, line.baseSizeId);
+          const gn = rn.gradeIdx, G = gn.length;
+          for (const a of cands) {
+            const i = pts.indexOf(a), k = gn.indexOf(i);
+            if (k < 0 || G < 2) continue;
+            const segOut = oldSegmentOf(oldSegs, samplesOf(spanPolyline(rn, i, gn[(k + 1) % G])));
+            if (segOut < 0) continue;
+            if (a.seamAfter === undefined) { const v = src.sew.points[go[segOut]].seamAfter; if (v !== undefined) a.seamAfter = v; }
+            if (a.corner && oldSegmentOf(oldSegs, samplesOf(spanPolyline(rn, gn[(k - 1 + G) % G], i))) === segOut) delete a.corner;
+          }
+        }
+      } catch { /* geometry that cannot be compared keeps what the op wrote */ }
+    }
+    if (p.lockGrading && style.settings?.autoReseam !== false && cap.lockKey.get(p.id) !== lockFingerprint(p)) {
+      try { stampLocks(p, lineOf(p)); } catch { /* informational snapshot only */ }
     }
   }
 }

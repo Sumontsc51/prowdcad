@@ -14,6 +14,8 @@ import { cornerGallery } from '../actions/seam-notch';
 import { fmt, unitLabel } from '../units-ui';
 import { spanLength, gradeSegment, totalLength } from '@prowdcad/kernel';
 import { liveInspector } from './live-inspector';
+import { lockInteractive, lockDetail, LOCK_KINDS, LOCK_MEASURES, type LockKind } from '../actions/lock-cmds';
+import type { Piece, Contour, LockMeasure } from '@prowdcad/kernel';
 
 export function renderInspector(app: App, host: HTMLElement) {
   clear(host);
@@ -22,7 +24,14 @@ export function renderInspector(app: App, host: HTMLElement) {
   const live = app.currentLive();
   if (live) { liveInspector(app, host, live); return; }
   const piece = app.primaryPiece();
-  if (piece) { selectionSummary(app, host); pieceInspector(app, host, piece.id); return; }
+  if (piece) {
+    selectionSummary(app, host);
+    const si = app.sel.internals[app.sel.internals.length - 1];
+    const ip = si && (app.sel.primary === 'internal' || !app.sel.segments.length) ? app.doc.style.pieces.find(x => x.id === si.pieceId) : undefined;
+    const ic = ip?.internals.find(x => x.id === si.contourId);
+    if (ip && ic) internalLockSection(app, host, ip, ic);
+    pieceInspector(app, host, piece.id); return;
+  }
   host.append(h('div.empty', {}, 'Nothing selected. Click a piece or a point.'));
 }
 
@@ -45,6 +54,35 @@ function selectionSummary(app: App, host: HTMLElement) {
   }
   if (s.notches.length) host.append(row('Notches', h('span.val', {}, String(s.notches.length))));
   if (s.marks.length) host.append(row('Drills / texts', h('span.val', {}, String(s.marks.length))));
+}
+
+/** Lock of a selected internal line to the outline (ops/lock): mode, target, kept measure, offset / range, unlock. */
+function internalLockSection(app: App, host: HTMLElement, piece: Piece, c: Contour) {
+  const k = piece.internals.indexOf(c) + 1;
+  const L = c.lock;
+  const run = (label: string, fn: () => unknown) => { try { const r = fn(); if (r instanceof Promise) r.catch(err => reportError(err, label)); } catch (err) { reportError(err, label); } };
+  const kind: LockKind = L?.kind ?? 'none';
+  const kinds = LOCK_KINDS.filter(([v]) => !(c.closed && (v === 'ends' || v === 'parallel')));
+  host.append(h('div.insp-title', {}, `Internal ${k} · lock to outline`),
+    row('Lock', selectInput(kind, kinds, v => run('Lock', () => lockInteractive(app, piece, c, v as LockKind))), L ? h('span.lock-badge', { title: 'Locked to the sew line' }, '🔒') : ''));
+  if (!L) {
+    host.append(h('div.insp-hint', {}, c.closed ? 'Follow point: the shape moves with a sew point in every size (pockets).' : 'Endpoints: ends on the outline stay on their segment · Parallel: exact offset of a segment · Follow: moves with a sew point.'));
+    return;
+  }
+  host.append(row('Locked to', h('span.val', { title: ops.lockSummary(piece, c) }, lockDetail(app, piece, c))));
+  const measure: LockMeasure | null = L.kind === 'follow' ? null : L.kind === 'ends' ? L.ends[0]?.measure ?? 'ratio' : L.measure;
+  if (measure) host.append(row('Keep position', selectInput(measure, LOCK_MEASURES, v => run('Lock measure', () => ops.setLockMeasure(app.doc, piece.id, c.id, v as LockMeasure)))));
+  if (L.kind === 'parallel') {
+    host.append(row('Offset (+ inside)', lengthInput(L.offset, v => run('Offset', () => ops.setLockOffset(app.doc, piece.id, c.id, v))), unitTag()));
+    const pct = L.measure === 'ratio';
+    const field = (val: number, set: (v: number) => void) => pct ? numberInput(val * 100, v => set(v / 100), { decimals: 2 }) : lengthInput(val, set);
+    host.append(
+      row(pct ? 'From (% of segment)' : `From (${L.measure === 'start' ? 'start' : 'end'})`, field(L.a, v => run('Range', () => ops.setLockRange(app.doc, piece.id, c.id, v, L.b))), pct ? h('span.u', {}, '%') : unitTag()),
+      row(pct ? 'To (% of segment)' : `To (${L.measure === 'start' ? 'start' : 'end'})`, field(L.b, v => run('Range', () => ops.setLockRange(app.doc, piece.id, c.id, L.a, v))), pct ? h('span.u', {}, '%') : unitTag()));
+  }
+  host.append(row('', h('button.btn.sm', { title: L.kind === 'follow' ? 'Click the sew point the line follows' : 'Click the sew segment to lock to', onclick: () => run('Lock', () => lockInteractive(app, piece, c, L.kind, { pickTarget: true, measure: measure ?? undefined })) }, L.kind === 'follow' ? 'Pick point…' : 'Pick segment…'),
+    h('button.btn.sm', { title: 'Unlock: the line keeps its geometry and its points move freely again', onclick: () => run('Unlock', () => ops.unlockInternal(app.doc, piece.id, c.id)) }, 'Unlock')));
+  host.append(h('div.insp-hint', {}, L.kind === 'follow' ? 'Points cannot be moved one by one; Move Line moves the whole line.' : 'Locked points cannot be moved on their own (Unlock first). Re-applied after every edit, in every size.'));
 }
 
 function tx(app: App, label: string, fn: () => void) {
@@ -99,7 +137,10 @@ function anchorInspector(app: App, host: HTMLElement, pa: NonNullable<ReturnType
   const multi = app.sel.anchors.length > 1 ? ` (+${app.sel.anchors.length - 1} more)` : '';
   host.append(h('div.insp-title', {}, `Point ${index + 1} · ${piece.name} · ${where}${multi}`));
   if (piece.locked) host.append(h('div.warnline', {}, 'Piece is locked — values are read-only.'));
-  const ro = piece.locked || !!a.flags.locked;
+  const lockNote = contour !== piece.sew && contour.lock ? (() => { try { return ops.lockSummary(piece, contour); } catch { return 'locked'; } })() : '';
+  const lockDriven = !!lockNote && (contour.lock?.kind === 'follow' || (() => { try { return ops.isLockDriven(piece, contour.id, a.id); } catch { return false; } })());
+  if (lockNote) host.append(h('div.warnline', {}, `🔒 Line locked: ${lockNote}${lockDriven ? ' — this point follows the outline (Unlock the line to edit it)' : ''}`));
+  const ro = piece.locked || !!a.flags.locked || lockDriven;
 
   // position: base size edits the anchor; other sizes edit its grading for that size
   // Same op as Move Point / Move XY (ops.movePoint): point connections follow, and on a non-base size
@@ -113,7 +154,8 @@ function anchorInspector(app: App, host: HTMLElement, pa: NonNullable<ReturnType
     row(`X${isBase ? '' : ` (${sizeName})`}`, lengthInput(pos.x, v => setPos('x', v), { readOnly: ro }), unitTag()),
     row(`Y${isBase ? '' : ` (${sizeName})`}`, lengthInput(pos.y, v => setPos('y', v), { readOnly: ro }), unitTag()),
     row('Name', textInput(a.name ?? '', v => set('Point name', an => { an.name = v || undefined; }), 'e.g. 03 Hip/m')),
-    row('Kind', selectInput(a.kind, [['grade', 'Grade point'], ['curve', 'Curve point']], v => set('Point kind', an => { an.kind = v as Anchor['kind']; }))),
+    // through the kernel op: curve → grade materialises its current grading (no jump in graded sizes)
+    row('Kind', selectInput(a.kind, [['grade', 'Grade point'], ['curve', 'Curve point']], v => { if (v === a.kind) return; try { ops.togglePointKind(app.doc, ref.pieceId, ref.anchorId); } catch (err) { reportError(err, 'Point kind'); } })),
     row('Smooth', checkbox(a.smooth, v => set('Smooth', an => { an.smooth = v; if (!v) { delete an.hIn; delete an.hOut; } }))),
     row('Locked', checkbox(!!a.flags.locked, v => set('Lock point', an => { an.flags.locked = v || undefined; }))),
   );

@@ -8,7 +8,8 @@
  */
 import type { Style, Piece, SizeId, SizeLine, SizeTable, Id, Contour, Anchor } from './types';
 import { resolveContour, absoluteOffset, halfOpenedPiece, type ResolvedContour } from './contour';
-import { computeCutLine } from '../ops/seam';
+import { computeCutLine, captureSew, followSeams, type SewCapture } from '../ops/seam';
+import { applyInternalLocks } from '../ops/lock';
 import { makeStyle } from './factory';
 import type { Vec } from '../geom/vec';
 
@@ -44,21 +45,51 @@ export class Document {
   on(fn: Listener): () => void { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   private emit(e: DocEvent) { for (const l of this.listeners) l(e); }
 
-  /** Run a mutation as one undoable step. Returns fn's result. */
+  /**
+   * Run a mutation as one undoable step. Returns fn's result. After a successful top-level step the
+   * edit rules run in the same step (`finishEdit`): seams follow segment edits, Lock Grading snapshots
+   * refresh, locked internal lines follow the sew line.
+   */
   transact<T>(label: string, fn: (s: Style) => T): T {
+    let cap: SewCapture | undefined, snap = '';
     if (this.txDepth === 0) {
-      this.undoStack.push({ label, snap: JSON.stringify(this.style) });
+      snap = JSON.stringify(this.style);
+      this.undoStack.push({ label, snap });
       if (this.undoStack.length > this.maxUndo) this.undoStack.shift();
       this.redoStack = [];
       this.txLabel = label;
+      cap = this.captureEdit();
     }
     this.txDepth++;
+    let ok = false;
     try {
       const r = fn(this.style);
+      ok = true;
       return r;
     } finally {
       this.txDepth--;
-      if (this.txDepth === 0) { this.touch(); this.emit({ type: 'change', label: this.txLabel }); }
+      if (this.txDepth === 0) {
+        if (ok && cap) this.finishEdit(cap, () => (JSON.parse(snap) as Style).pieces);
+        this.touch(); this.emit({ type: 'change', label: this.txLabel });
+      }
+    }
+  }
+
+  /** State the edit rules compare against (call before an edit; `pieceIds` limits it to those pieces). */
+  captureEdit(pieceIds?: Set<Id>): SewCapture { return captureSew(this.style, pieceIds); }
+  /**
+   * Edit rules, run after an edit (by transact; Move-tool previews call it on their scratch copy):
+   * seam allowances follow inserted / removed grade points (`followSeams`), Lock Grading corner
+   * snapshots are re-stamped, and every internal-line lock is re-applied from the current sew line in
+   * every size (`applyInternalLocks`). `oldPieces` = the pieces before the edit (read lazily).
+   */
+  finishEdit(cap: SewCapture, oldPieces: () => Piece[], pieceIds?: Set<Id>): void {
+    const lineOf = (p: Piece) => this.sizeLine(p);
+    try { followSeams(this.style, cap, oldPieces, lineOf, pieceIds); } catch { /* never block an edit */ }
+    for (const p of this.style.pieces) {
+      if (pieceIds && !pieceIds.has(p.id)) continue;
+      if (!p.internals?.some(c => c.lock)) continue;
+      try { applyInternalLocks(p, lineOf(p)); } catch { /* idem */ }
     }
   }
   private touch() { this.rev++; this.cache.clear(); this.openCache.clear(); this.style.updatedAt = new Date().toISOString(); }
@@ -85,7 +116,11 @@ export class Document {
     if (s.schema !== 'prowdcad/2') throw new Error('Unsupported file schema: ' + (s as any).schema);
     return new Document(s);
   }
-  load(style: Style) { this.style = style; this.undoStack = []; this.redoStack = []; this.touch(); this.emit({ type: 'load' }); }
+  load(style: Style) {
+    this.style = style; this.undoStack = []; this.redoStack = [];
+    for (const p of style.pieces ?? []) if (p.internals?.some(c => c.lock)) { try { applyInternalLocks(p, this.sizeLine(p)); } catch { /* keep as loaded */ } }
+    this.touch(); this.emit({ type: 'load' });
+  }
   revision() { return this.rev; }
 
   // ───── lookup ─────

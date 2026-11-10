@@ -408,6 +408,7 @@ export function halfOpenedPiece(piece: Piece, line: SizeLine): Piece {
     if (c.type === 'fold' || c.type === 'mirror' || c.points.length === 0) continue;
     const m: Contour = clone(c);
     m.id = mirroredId(c.id);
+    delete m.lock; // derived copy: placed exactly per size below
     m.points = c.points.map(q => {
       const a: Anchor = clone(q);
       a.id = mirroredId(q.id);

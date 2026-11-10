@@ -51,10 +51,40 @@ function scratchDoc(app: App, ids: Id[]): Document {
   const set = new Set(ids);
   const style = { ...app.doc.style, pieces: app.doc.style.pieces.map(p => (set.has(p.id) ? deepClone(p) : p)) };
   const d = new Document(style);
-  // ops run directly on the copy: no undo snapshots, no events
-  (d as unknown as { transact: (l: string, f: (s: unknown) => unknown) => unknown }).transact = (_l, f) => f(d.style);
+  // ops run directly on the copy: no undo snapshots, no events. The edit rules of a real transaction
+  // (seams follow inserted points, Lock Grading refresh, locked internal lines follow the sew line) run
+  // on the copied pieces only, so the preview is exactly what the commit produces.
+  let depth = 0;
+  (d as unknown as { transact: (l: string, f: (s: unknown) => unknown) => unknown }).transact = (_l, f) => {
+    const top = depth++ === 0;
+    const cap = top ? d.captureEdit(set) : null;
+    const before = top ? JSON.stringify(ids.map(id => d.style.pieces.find(p => p.id === id)).filter(Boolean)) : '';
+    let ok = false;
+    try { const r = f(d.style); ok = true; return r; } finally {
+      depth--;
+      if (top && ok && cap) d.finishEdit(cap, () => JSON.parse(before) as Piece[], set);
+    }
+  };
   return d;
 }
+
+/**
+ * Why a point / line cannot be moved on its own because of an internal-line lock (ops/lock), or null.
+ * 'line' = the whole internal is moved (Move Line): allowed for a line that follows a sew point.
+ */
+export function lockBlock(app: App, pieceId: Id, contourId: Id, anchorId: Id | null, what: 'point' | 'line'): string | null {
+  const p = app.doc.style.pieces.find(x => x.id === pieceId); if (!p || contourId === p.sew.id) return null;
+  const c = p.internals.find(x => x.id === contourId); const L = c?.lock; if (!c || !L) return null;
+  const k = p.internals.indexOf(c) + 1;
+  const unlock = 'right-click the line ▸ Unlock to edit it freely';
+  if (L.kind === 'follow') return what === 'point' ? `Internal ${k} follows a sew point (${ops.lockSummary(p, c)}): move that point, or Move Line moves the whole line · ${unlock}` : null;
+  if (L.kind === 'parallel') return `Internal ${k} is locked ${ops.lockSummary(p, c)}: change the segment or the offset (Inspector) · ${unlock}`;
+  if (what === 'line') return `Internal ${k} has its ${ops.lockSummary(p, c)} — ${unlock}`;
+  if (anchorId && ops.isLockDriven(p, contourId, anchorId)) return `This end point is locked to the sew line (${ops.lockSummary(p, c)}) · ${unlock}`;
+  return null;
+}
+/** Locked internal lines of a piece (they follow the sew line when it moves). */
+function lockedCount(p: Piece): number { return p.internals.filter(c => c.lock).length; }
 /** Run `fn` on scratch copies of the pieces and show them as the live preview. Returns an error message or null. */
 export function previewWith(app: App, ids: Id[], fn: (d: Document) => void): string | null {
   const d = scratchDoc(app, ids);
@@ -193,6 +223,7 @@ function mpApply(app: App, d: Document, spec: MPSpec) {
   const piece = d.piece(r.pieceId);
   if (piece.locked) throw new Error(lockedMsg(piece));
   const mode = mpMode();
+  for (const g of mode === 'group' ? groupRefs(app) : [r]) { const why = lockBlock(app, g.pieceId, g.contourId, g.anchorId, 'point'); if (why) throw new Error(why); }
   const cur = () => ops.pointPos(d, r, sid ?? d.baseSize(piece));
   switch (mode) {
     case 'single': case 'h': case 'v': {
@@ -400,7 +431,9 @@ export const movePointTool: Tool = {
     if (!mpValid(app)) return `${head} · Select point to move · Tab = mode · Esc = back to Select`;
     const piece = mpPiece(app)!;
     const conn = m === 'single' || m === 'h' || m === 'v' ? connectionsOf(piece, MP.pick!.ref.anchorId).length : 0;
-    const extra = conn ? ` · ${conn} connected internal point${conn > 1 ? 's' : ''} follow${conn > 1 ? '' : 's'} (point connection)` : '';
+    const nl = MP.pick!.ref.contourId === piece.sew.id ? lockedCount(piece) : 0;
+    const extra = (conn ? ` · ${conn} connected internal point${conn > 1 ? 's' : ''} follow${conn > 1 ? '' : 's'} (point connection)` : '')
+      + (nl ? ` · 🔒 ${nl} locked internal line${nl > 1 ? 's follow' : ' follows'} the sew line` : '');
     if (MP.op && MP.op.kind !== 'press') {
       const v = MP.op.spec?.kind === 'along' ? `Along ${fmt(MP.op.spec.dist)} ${unitLabel()}` : fmtV(dirToLocal(piece, MP.op.dW));
       const fl = mpFollowers(app);
@@ -437,6 +470,8 @@ export const movePointTool: Tool = {
     if (!hit) { app.status('Nothing to pick here: click a point (or press on a dart apex and drag)'); return; }
     const piece = app.doc.piece(hit.ref.pieceId);
     if (piece.locked) { toast(lockedMsg(piece), 'warn'); return; }
+    const why = mpMode() === 'group' ? null : lockBlock(app, hit.ref.pieceId, hit.ref.contourId, hit.ref.anchorId, 'point');
+    if (why) { app.applySel({ k: 'point', ref: hit.ref }, 'replace'); toast(why, 'warn'); app.status('🔒 ' + why); return; }
     mpSetPick(app, hit.ref, hit.sizeId, true);
     if (mpMode() === 'along' && MP.pick!.sizeId) { toast('Along line moves the base shape: switch to the base size (Ctrl+B)', 'warn'); return; }
     const grabW = anchorWorld(app, hit.ref, MP.pick!.sizeId) ?? p.w;
@@ -623,6 +658,7 @@ function mlSid(app: App, pk: LPick) { return editSid(app, app.doc.piece(mlPieceI
 function mlApply(app: App, d: Document, pk: LPick, dLocal: Vec) {
   const pid = mlPieceId(pk); const pc = d.piece(pid);
   if (pc.locked) throw new Error(lockedMsg(pc));
+  if (pk.kind === 'internal') { const why = lockBlock(app, pid, pk.c.contourId, null, 'line'); if (why) throw new Error(why); }
   ops.multiMove(d, mlTargets(app, pk).map(anchorId => ({ pieceId: pid, anchorId })), dLocal, { sizeId: mlSid(app, pk) });
 }
 function mlDeltaFromCursor(app: App, op: LOp, w: Vec, e: MouseEvent | PointerEvent): Vec {
@@ -707,6 +743,8 @@ export const moveLineTool: Tool = {
     const pk: LPick = c.item.k === 'segment' ? { kind: 'segment', seg: c.item.seg } : { kind: 'internal', c: (c.item as { c: ContourSel }).c };
     const pc = app.doc.piece(mlPieceId(pk));
     if (pc.locked) { toast(lockedMsg(pc), 'warn'); return; }
+    const why = pk.kind === 'internal' ? lockBlock(app, pc.id, pk.c.contourId, null, 'line') : null;
+    if (why) { app.applySel(mlItem(pk), 'replace'); toast(why, 'warn'); app.status('🔒 ' + why); return; }
     mlSetPick(app, pk);
     ML.op = { kind: 'press', startW: p.w, s: p.s, dW: { x: 0, y: 0 }, lastW: p.w, err: null };
   },

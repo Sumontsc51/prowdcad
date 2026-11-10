@@ -19,6 +19,8 @@ import { DoubleClick } from '../ui/dom';
 import { toast } from '../ui/toast';
 import { showDialog } from '../ui/dialog';
 import { fmt, unitLabel, parseNum } from '../units-ui';
+import { settings, saveSettings } from '../settings';
+import { ops } from '../ops-bridge';
 
 type MirrorMode = 'none' | 'local' | 'x' | 'y';
 interface Draft { host: Piece; pts: Anchor[]; hover: Vec | null; snapRing: Vec | null; mirror: MirrorMode }
@@ -66,12 +68,20 @@ function commit(app: App, closed: boolean) {
     // swap hIn/hOut sense is preserved: reflection keeps order, handles reflect as vectors
     extra.push(makeContour(mp, { type: 'internal', closed }));
   }
+  // CLO / AccuMark attach: an open line that starts / ends on the outline is locked to it
+  let locked = 0;
   app.doc.transact(closed ? 'Internal polygon' : 'Internal line', () => {
     const live = app.doc.piece(host.id);
     live.internals.push(contour, ...extra);
+    if (!closed && settings.autoLockInternal) {
+      const sizeId = app.sizeOf(live);
+      for (const c of [contour, ...extra]) {
+        try { if (ops.lockableEnds(live, app.doc.sizeLine(live), c, { tol: 0.05, sizeId }).length) locked += ops.lockInternalEnds(app.doc, host.id, c.id, { tol: 0.05, sizeId }); } catch { /* free line */ }
+      }
+    }
   });
   app.sel = { pieces: [host.id], anchors: [] };
-  toast(`${closed ? 'Internal polygon' : 'Internal line'} added to “${host.name}”${extra.length ? ' + mirror' : ''}`, 'ok');
+  toast(`${closed ? 'Internal polygon' : 'Internal line'} added to “${host.name}”${extra.length ? ' + mirror' : ''}${locked ? ` · 🔒 ${locked} end${locked > 1 ? 's' : ''} locked to the outline (right-click ▸ Unlock)` : ''}`, 'ok');
   D = null; dbl.reset();
   app.invalidate();
 }
@@ -111,6 +121,8 @@ export const internalTool: Tool = {
   id: 'internal', title: 'Internal line / polygon', group: 'pen', hotkey: 'I', icon: ICON.internal, cursor: 'crosshair',
   deactivate(app) { D = null; ringHover = null; dbl.reset(); app.invalidate('canvas'); },
   busy: () => !!D,
+  toggles: () => [{ id: 'autolock', label: 'Lock ends to outline', title: 'An end drawn on the outline stays attached to its segment (proportional) when the segment moves, changes length or grades', on: settings.autoLockInternal }],
+  toggle(app, id) { if (id === 'autolock') { settings.autoLockInternal = !settings.autoLockInternal; saveSettings(); app.invalidate(); } },
   hint: () => D ? `Internal: ${D.pts.length} pts on “${D.host.name}” · click start = polygon · dbl-click/Enter = end line · right-click = exact/mirror${D.mirror !== 'none' ? ` · mirror ${D.mirror}` : ''}` : 'Internal: click inside a piece to start · Ctrl = curve · Shift = H/V/45°',
 
   down(app, p) {
