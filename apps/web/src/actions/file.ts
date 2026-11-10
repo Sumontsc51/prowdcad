@@ -89,6 +89,29 @@ export async function openFile(app: App) {
   if (f) readInto(app, await f.text(), f.name, null);
 }
 
+const NATIVE_RE = /\.(json|prowd|wptn)$/i;
+const IMPORT_RE = /\.(dxf|aama|astm|rul|svg|plt|hpgl|hpg)$/i;
+
+/**
+ * Files dropped on the window: a ProwdCAD style opens (after the unsaved-changes question), DXF / RUL /
+ * SVG / PLT files import into the current style. Without this the browser would navigate to the file
+ * and the session would be gone.
+ */
+export async function openDropped(app: App, files: File[]) {
+  const native = files.filter(f => NATIVE_RE.test(f.name));
+  const imports = files.filter(f => IMPORT_RE.test(f.name));
+  if (!native.length && !imports.length) {
+    toast(`Cannot open ${files.map(f => f.name).join(', ') || 'that'} — drop a .prowd.json style, or DXF / RUL / SVG / PLT files to import`, 'warn', 4500);
+    return;
+  }
+  if (native.length) {
+    if (native.length > 1) toast(`Opening ${native[0].name} (one style at a time)`, 'info');
+    if (app.isDirty() && !(await confirmDialog('Open ' + native[0].name, 'The current style has unsaved changes. Discard them and open the dropped file?', 'Discard'))) return;
+    readInto(app, await native[0].text(), native[0].name, null);
+  }
+  if (imports.length) await importFiles(app, imports);
+}
+
 export function readInto(app: App, text: string, name: string, handle: unknown) {
   try {
     const res = ops.loadNative(text);
@@ -148,9 +171,14 @@ export async function attachPreview(app: App, quiet = false): Promise<void> {
     const svg = ops.exportSVG(app.doc, { sizes: [app.activeSize], labels: false, layout: 'none', stroke: 1.2 });
     const png = await svgToPng(svg, 256);
     if (!png || png === app.style.meta.previewPng) return;
-    const dirty = app.isDirty();
-    app.doc.transact('Attach preview', s => { s.meta.previewPng = png; });
-    if (!dirty) app.markSaved();
+    if (quiet) {
+      // Save refreshes the thumbnail silently: it is not an edit, so no undo step (Ctrl+Z after Save must undo the last real edit)
+      app.style.meta.previewPng = png;
+    } else {
+      const dirty = app.isDirty();
+      app.doc.transact('Attach preview', s => { s.meta.previewPng = png; });
+      if (!dirty) app.markSaved();
+    }
     if (!quiet) toast('Preview thumbnail attached', 'ok');
   } catch (err) { if (!quiet) reportError(err, 'Preview'); else console.warn('preview failed', err); }
 }
@@ -313,6 +341,11 @@ export async function exportStandalone(app: App) {
 export async function importFile(app: App) {
   const files = await pickFiles('.dxf,.rul,.svg,.plt,.hpgl,.hpg,.aama,.astm', true);
   if (!files.length) return;
+  await importFiles(app, files);
+}
+
+/** Import already-picked files (File ▸ Import, or files dropped on the window). */
+export async function importFiles(app: App, files: File[]) {
   const dxf = files.filter(f => /\.(dxf|aama|astm)$/i.test(f.name));
   const ruls = files.filter(f => /\.rul$/i.test(f.name));
   const svgs = files.filter(f => /\.svg$/i.test(f.name));
@@ -410,12 +443,24 @@ export async function mergeFromFile(app: App) {
 
 export function clearBackup() { store.del(BACKUP_KEY); }
 
+/**
+ * "Keep for later" on the recovery question: the backup stays until the user restores or discards it.
+ * It is parked under its own key so that neither a clean close nor the next auto-backup of the new
+ * session can delete or overwrite it.
+ */
+const HELD_KEY = 'prowdcad.web.backup.held';
+
 export function startAutoBackup(app: App) {
-  let lastRev = -1;
+  let lastRev = -1, warned = false;
   const tick = () => {
     if (!app.isDirty() || app.doc.revision() === lastRev) return;
     const ok = store.set(BACKUP_KEY, JSON.stringify({ at: new Date().toISOString(), fileName: app.fileName, style: app.doc.style }));
     if (ok) lastRev = app.doc.revision();
+    else if (!warned) {
+      // browser storage full / blocked: say so once instead of silently running without a safety net
+      warned = true;
+      toast('Auto-backup could not be written (browser storage is full or blocked). Save your work to a file regularly.', 'warn', 7000);
+    }
   };
   setInterval(tick, 30_000);
   store.set(SESSION_KEY, String(Date.now()));
@@ -427,20 +472,29 @@ export function startAutoBackup(app: App) {
 
 /** On load: offer to restore a backup left by a crash / unsaved close. Returns true when restored. */
 export async function offerRecovery(app: App): Promise<boolean> {
-  const raw = store.get(BACKUP_KEY);
+  // a fresh backup (crash / unsaved close) wins; otherwise the one the user chose to keep for later
+  let key = BACKUP_KEY;
+  let raw = store.get(BACKUP_KEY);
+  if (!raw) { key = HELD_KEY; raw = store.get(HELD_KEY); }
   if (!raw) return false;
   let data: { at: string; fileName: string; style: Style };
   try { data = JSON.parse(raw); if (data?.style?.schema !== 'prowdcad/2') throw new Error('bad'); }
-  catch { clearBackup(); return false; }
+  catch { store.del(key); return false; }
   const when = new Date(data.at).toLocaleString();
   const r = await showDialog({
     title: 'Recover unsaved work?',
-    message: `An auto-backup of “${data.style.name}” (${data.fileName}, ${data.style.pieces.length} pieces) from ${when} was found. It was not saved before the app closed.`,
+    message: `An auto-backup of “${data.style.name}” (${data.fileName}, ${data.style.pieces.length} piece${data.style.pieces.length === 1 ? '' : 's'}) from ${when} was found. It was not saved before the app closed.\n\nRestore opens it now. Keep for later asks again next time. Discard deletes it for good.`,
     okLabel: 'Restore', cancelLabel: 'Keep for later',
     buttons: [{ id: 'discard', label: 'Discard backup', danger: true }],
   });
-  if (r?.__button === 'discard') { clearBackup(); return false; }
-  if (!r) return false;
+  if (r?.__button === 'discard') { store.del(key); return false; }
+  if (!r) {
+    // keep for later: park it where this session's own backups and a clean close cannot touch it
+    if (key === BACKUP_KEY && store.set(HELD_KEY, raw)) store.del(BACKUP_KEY);
+    return false;
+  }
+  // a restored held backup becomes this session's live backup (the restored style is unsaved)
+  if (key === HELD_KEY) { store.set(BACKUP_KEY, raw); store.del(HELD_KEY); }
   app.doc.load(data.style);
   app.fileName = data.fileName; app.fileHandle = null;
   app.savedRev = -1;

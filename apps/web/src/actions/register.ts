@@ -2,6 +2,7 @@
  * All built-in commands. Menus, hotkeys and context menus come from here. Commands backed by
  * kernel ops that have not landed yet call ops-bridge placeholders (→ "not wired yet" toast).
  */
+import { openCommandFinder } from '../ui/cmdk';
 import { registerCommand, type CommandCtx, hotkeyMap, allCommands, normalizeChord, getCommand } from '../commands';
 import type { App } from '../app';
 import type { Canvas } from '../canvas/canvas';
@@ -149,9 +150,10 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
   }
 
   // ───────────── Help ─────────────
-  registerCommand({ id: 'help.keys', title: 'Shortcuts', menu: 'Help', hotkey: 'F1', run: () => alertDialog('Keyboard shortcuts', allCommands().filter(c => hotkeyMap()[c.id]).map(c => `${hotkeyMap()[c.id].padEnd(22)} ${c.title}`).join('\n')) });
-  registerCommand({ id: 'help.ops', title: 'Kernel ops status', menu: 'Help', run: () => alertDialog('Kernel ops (ops-bridge)', (() => { const st = opStatus(); const stub = st.filter(o => o.state === 'stub'); return `${st.length - stub.length} wired · ${stub.length} placeholder(s)\n\nPlaceholders:\n${stub.map(o => `  ${o.name}  (${o.module})`).join('\n') || '  none'}\n\nWired:\n${st.filter(o => o.state === 'wired').map(o => `  ${o.name}  (${o.module})`).join('\n')}`; })()) });
-  registerCommand({ id: 'help.about', title: 'About ProwdCAD', menu: 'Help', run: () => alertDialog('ProwdCAD', 'ProwdCAD 2 — Design workspace (Vite + TypeScript, SVG).\nInternal units mm, y-up. Undo history: 200 steps. Auto-backup every 30 s.') });
+  registerCommand({ id: 'help.find', title: 'Find a command…', menu: 'Help', group: 0, hotkey: 'Ctrl+K', hint: 'Search every command and tool by name', run: () => openCommandFinder() });
+  registerCommand({ id: 'help.keys', title: 'Keyboard shortcuts…', menu: 'Help', group: 0, hotkey: 'F1', run: () => openCommandFinder({ shortcutsOnly: true }) });
+  registerCommand({ id: 'help.ops', title: 'Kernel ops status', menu: 'Help', group: 1, run: () => alertDialog('Kernel ops (ops-bridge)', (() => { const st = opStatus(); const stub = st.filter(o => o.state === 'stub'); return `${st.length - stub.length} wired · ${stub.length} placeholder(s)\n\nPlaceholders:\n${stub.map(o => `  ${o.name}  (${o.module})`).join('\n') || '  none'}\n\nWired:\n${st.filter(o => o.state === 'wired').map(o => `  ${o.name}  (${o.module})`).join('\n')}`; })()) });
+  registerCommand({ id: 'help.about', title: 'About ProwdCAD', menu: 'Help', group: 1, run: () => alertDialog('ProwdCAD', 'ProwdCAD 2 — Design workspace (Vite + TypeScript, SVG).\nInternal units mm, y-up. Undo history: 200 steps. Auto-backup every 30 s.') });
 }
 
 // ───────────── helpers ─────────────
