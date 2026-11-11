@@ -340,6 +340,8 @@ export interface DXFImportOptions {
   /** see BuildOptions */
   seamMode?: 'infer' | 'manual';
   cornerAngleDeg?: number;
+  /** rebuild curves written as a few turn points only (TUKAcad-style export). Default true */
+  sparseCurves?: boolean;
   /** merge blocks of the same piece name with different Size attributes into one graded piece (default true) */
   mergeSizes?: boolean;
   /** base size name when merging nested sizes (else the .rul SAMPLE SIZE, else the middle size) */
@@ -494,7 +496,7 @@ export function importDXF(text: string, opt: DXFImportOptions = {}): ImportRepor
   }
 
   // ── build pieces
-  const bopt: BuildOptions = { line, sizeTableId: sizeTable.id, seamMode: opt.seamMode, cornerAngleDeg: opt.cornerAngleDeg };
+  const bopt: BuildOptions = { line, sizeTableId: sizeTable.id, seamMode: opt.seamMode, cornerAngleDeg: opt.cornerAngleDeg, sparseCurves: opt.sparseCurves };
   let pieces: Piece[] = [];
   const doMerge = (opt.mergeSizes ?? true) && sizeNames.size > 1 && !table;
   if (doMerge) {

@@ -81,6 +81,8 @@ export interface BuildOptions {
   sizeTableId: Id;
   /** turning angle (deg) at or above which an unmarked vertex is a corner grade point. Default 25° */
   cornerAngleDeg?: number;
+  /** rebuild curves that the file wrote as a few turn points only (see toAnchors). Default true */
+  sparseCurves?: boolean;
   /** max deviation (mm) between the file's cut line and the re-derived offset for seams to be inferred. Default 0.1 */
   seamInferTol?: number;
   /** 'infer' (default): infer per-segment seams, fall back to manual cut; 'manual': always keep the file's cut as manualCut */
@@ -263,7 +265,15 @@ export function resolveNotch(piece: Piece, notch: Notch, line: SizeLine, sizeId:
 // ───────────────────────── piece builder ─────────────────────────
 
 /** Convert raw vertices into anchors (dedupes closing duplicate, classifies kinds). */
-export function toAnchors(raw: RawVertex[], closed: boolean, cornerAngleDeg = 25): Anchor[] {
+/**
+ * `sparseCurves` (default true): some CAD systems (TUKAcad among them) write a curve as only its own
+ * few points, mark every one of them as a turn point and write no curve points at all, so the curve
+ * arrives as a polygon. When a contour has turn markers but no curve information, a shallow bend
+ * between two long edges is taken as a point ON a curve (smooth grade point) and the unmarked
+ * points between turn points as curve points, so the curve is rebuilt through them. Files that
+ * do mark their curve points (ProwdCAD, Gerber, …) are read exactly as written.
+ */
+export function toAnchors(raw: RawVertex[], closed: boolean, cornerAngleDeg = 25, sparseCurves = true): Anchor[] {
   let pts = raw.filter((v, i) => i === 0 || dist(v, raw[i - 1]) > 1e-7);
   if (closed && pts.length > 2 && dist(pts[0], pts[pts.length - 1]) < 1e-6) {
     const last = pts.pop()!;
@@ -273,6 +283,7 @@ export function toAnchors(raw: RawVertex[], closed: boolean, cornerAngleDeg = 25
   }
   const n = pts.length;
   const hasMarkers = pts.some(v => v.marker);
+  const rebuild = sparseCurves && hasMarkers && !pts.some(v => v.marker === 'curve' || v.curve);
   const out: Anchor[] = [];
   for (let i = 0; i < n; i++) {
     const v = pts[i];
@@ -296,6 +307,14 @@ export function toAnchors(raw: RawVertex[], closed: boolean, cornerAngleDeg = 25
       const neighCurve = (j: number) => pts[j].marker === 'curve' || (!pts[j].marker && !!pts[j].curve);
       smooth = v.marker === 'curve' || v.curve ? ratio < 4 : ratio < 4 && (hasMarkers ? neighCurve((i - 1 + n) % n) && neighCurve((i + 1) % n) : true);
     }
+    if (!smooth && rebuild && !endpoint && n >= 3) {
+      const l0 = dist(pts[(i - 1 + n) % n], v), l1 = dist(v, pts[(i + 1) % n]);
+      const ratio = Math.max(l0, l1) / Math.max(Math.min(l0, l1), 1e-12);
+      // a turn point with a shallow bend between two long edges lies on a curve; a nearly straight one (< 1.5°) stays a plain point
+      if (v.marker === 'turn') smooth = ang >= 1.5 && ang < cornerAngleDeg && ratio < 4 && Math.min(l0, l1) >= 12;
+      // a point the file did not mark as a turn point is a curve point, however few of them describe the curve
+      else smooth = ang < 80 && ratio < 6;
+    }
     const a = makeAnchor(v.x, v.y, { kind, smooth });
     if (v.grade) a.grade = v.grade;
     if (v.rule !== undefined) a.ruleId = String(v.rule);
@@ -306,8 +325,8 @@ export function toAnchors(raw: RawVertex[], closed: boolean, cornerAngleDeg = 25
   return out;
 }
 
-export function rawToContour(p: RawPoly, type: ContourType, cornerAngleDeg?: number): Contour {
-  const c = makeContour(toAnchors(p.pts, p.closed, cornerAngleDeg), { type, closed: p.closed });
+export function rawToContour(p: RawPoly, type: ContourType, cornerAngleDeg?: number, sparseCurves?: boolean): Contour {
+  const c = makeContour(toAnchors(p.pts, p.closed, cornerAngleDeg, sparseCurves), { type, closed: p.closed });
   if (p.mode) c.mode = p.mode;
   if (p.name) c.name = p.name;
   return c;
@@ -431,7 +450,7 @@ export function buildPiece(g: RawGroup, opt: BuildOptions, warnings: string[], n
   const setup = opt.notchSetup ?? DEFAULT_NOTCH_SETUP;
   const sewRaw = g.sew ?? g.cut;
   if (!sewRaw || sewRaw.pts.length < 3) { warnings.push(`piece ${index + 1}: no closed boundary — skipped`); return null; }
-  const sew = rawToContour({ ...sewRaw, closed: true }, 'perimeter', opt.cornerAngleDeg);
+  const sew = rawToContour({ ...sewRaw, closed: true }, 'perimeter', opt.cornerAngleDeg, opt.sparseCurves);
   const name = g.attrs['piece name'] ?? g.name ?? `Piece ${index + 1}`;
   const piece = makePiece(name, sew, opt.sizeTableId);
   const sewPts = resolveContour(sew, line, line.baseSizeId).pts;
@@ -443,7 +462,7 @@ export function buildPiece(g: RawGroup, opt: BuildOptions, warnings: string[], n
     piece.noSeam = true; piece.seamDefault = 0;
     warnings.push(`${name}: sew line without a boundary — cut = sew (noSeam)`);
   } else {
-    const cutC = rawToContour({ ...g.cut, closed: true }, 'perimeter', opt.cornerAngleDeg);
+    const cutC = rawToContour({ ...g.cut, closed: true }, 'perimeter', opt.cornerAngleDeg, opt.sparseCurves);
     cutPoly = resolveContour(cutC, line, line.baseSizeId).pts;
     const dev = (opt.seamMode ?? 'infer') === 'infer' ? inferSeams(piece, cutPoly, line) : Infinity;
     const allZero = piece.seamDefault === 0 && piece.sew.points.every(a => a.seamAfter === undefined || a.seamAfter === 0);
@@ -458,7 +477,7 @@ export function buildPiece(g: RawGroup, opt: BuildOptions, warnings: string[], n
   }
   for (const ip of g.internals) {
     if (ip.pts.length < 2) continue;
-    piece.internals.push(rawToContour(ip, ip.type ?? 'internal', opt.cornerAngleDeg));
+    piece.internals.push(rawToContour(ip, ip.type ?? 'internal', opt.cornerAngleDeg, opt.sparseCurves));
   }
   for (const rn of g.notches) {
     const n = anchorNotch(piece, rn, line, cutPoly, setup);
