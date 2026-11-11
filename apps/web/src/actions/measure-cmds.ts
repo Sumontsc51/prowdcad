@@ -170,8 +170,9 @@ async function scaleDialog(app: App) {
 
 export function registerMeasure(app: App) {
   setMeasureHooks({ gradeToSpec: (groups, mode) => openGradeFit(app, groups, mode) });
-  registerCommand({ id: 'measure.tool', title: 'Measure tool', menu: 'Measure', group: 0, run: () => app.setTool('measure') });
-  registerCommand({ id: 'measure.line', title: 'Measure line (sum per size)…', menu: 'Measure', group: 0, hotkey: 'Shift+Alt+L', run: () => {
+  registerCommand({ id: 'measure.tool', title: 'Measure tool', menu: 'Measure', group: 0, hint: 'M', run: () => app.setTool('measure') });
+  // no menu entry: Measure tool already opens Line mode with the per-size window; kept for its shortcut and the command finder
+  registerCommand({ id: 'measure.line', title: 'Measure line (sum per size)…', hotkey: 'Shift+Alt+L', run: () => {
     (settings.toolState ??= {}).measure = { ...(settings.toolState.measure ?? {}), mode: 'line' }; saveSettings();
     app.setTool('measure'); renderMeasureWindow(app);
   } });
