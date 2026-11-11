@@ -206,6 +206,49 @@ describe('DXF round-trip (acceptance D11)', () => {
     }
   });
 
+  // A jeans back panel as TUKAcad writes it: the outline is only the pattern's own points, every
+  // one of them (but three in the crotch curve) marked as a turn point, no curve points at all.
+  const tukaBack = () => {
+    const P: [number, number, 'g' | 'c'][] = [[2221, 327, 'g'], [2577, 336, 'g'], [2729, 343, 'g'], [2877, 365, 'g'], [3044, 395, 'g'], [3133, 398, 'g'], [3218, 386, 'g'], [3257, 374, 'g'], [3270, 138, 'g'], [3260, 136, 'g'], [3139, 111, 'g'], [3118, 106, 'c'], [3074, 85, 'c'], [3058, 39, 'c'], [3057, 17, 'g'], [3040, 21, 'g'], [2880, 58, 'g'], [2729, 81, 'g'], [2577, 90, 'g'], [2221, 99, 'g'], [2221, 214, 'g']];
+    const dxf = ['0', 'SECTION', '2', 'HEADER', '9', '$INSUNITS', '70', '4', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES',
+      '0', 'LWPOLYLINE', '8', '1', '90', String(P.length), '70', '1', ...P.flatMap(([x, y]) => ['10', String(x), '20', String(y)]),
+      ...P.filter(q => q[2] === 'g').flatMap(([x, y]) => ['0', 'POINT', '8', '2', '10', String(x), '20', String(y)]),
+      '0', 'ENDSEC', '0', 'EOF'].join('\n');
+    return { P, dxf };
+  };
+  it('turn points only, no curve points (TUKAcad-style): curves are rebuilt through the sparse points; corners and straight edges stay', () => {
+    const { P, dxf } = tukaBack();
+    const imp = importDXF(dxf);
+    const pts = imp.pieces[0].sew.points;
+    expect(pts.map(a => [a.x, a.y])).toEqual(P.map(([x, y]) => [x, y])); // no point is moved, added or dropped
+    const at = (x: number, y: number) => pts.find(a => a.x === x && a.y === y)!;
+    // the hip curve: shallow bends between long edges → smooth grade points
+    for (const [x, y] of [[2729, 343], [2877, 365], [3044, 395], [3133, 398], [2880, 58], [2729, 81]]) expect([x, y, at(x, y).kind, at(x, y).smooth]).toEqual([x, y, 'grade', true]);
+    // the crotch curve: points the file did not mark as turn points → smooth curve points
+    for (const [x, y] of [[3118, 106], [3074, 85], [3058, 39]]) expect([x, y, at(x, y).kind, at(x, y).smooth]).toEqual([x, y, 'curve', true]);
+    // real corners (hem ends, waist corners) and a point on a straight edge stay as they are
+    for (const [x, y] of [[2221, 327], [2221, 99], [3257, 374], [3270, 138], [3057, 17], [2221, 214]]) expect([x, y, at(x, y).smooth]).toEqual([x, y, false]);
+    // the rebuilt outline is a curve: it leaves the polygon between the sparse points, by millimetres not centimetres
+    const line = imp.sizeLine;
+    const r = resolveContour(imp.pieces[0].sew, line, line.baseSizeId);
+    const poly = P.map(([x, y]) => ({ x, y }));
+    const dev = Math.max(...r.pts.map(q => distToPolygon(q, poly)));
+    expect(r.pts.length).toBeGreaterThan(P.length * 3);
+    expect(dev).toBeGreaterThan(1); expect(dev).toBeLessThan(15);
+    // opt out: exactly the polygon of the file
+    const flat = importDXF(dxf, { sparseCurves: false });
+    expect(flat.pieces[0].sew.points.every(a => !a.smooth)).toBe(true);
+  });
+  it('a file that marks its curve points is read as written (no rebuilding): a shallow turn point stays a corner', () => {
+    const P: [number, number][] = [[0, 0], [150, 0], [300, 12], [300, 200], [150, 215], [0, 200]];
+    const dxf = ['0', 'SECTION', '2', 'ENTITIES', '0', 'LWPOLYLINE', '8', '1', '90', String(P.length), '70', '1', ...P.flatMap(([x, y]) => ['10', String(x), '20', String(y)]),
+      ...P.filter((_, i) => i !== 4).flatMap(([x, y]) => ['0', 'POINT', '8', '2', '10', String(x), '20', String(y)]), '0', 'POINT', '8', '3', '10', '150', '20', '215',
+      '0', 'ENDSEC', '0', 'EOF'].join('\n');
+    const pts = importDXF(dxf, { units: 'mm' }).pieces[0].sew.points;
+    expect(pts.find(a => a.x === 150 && a.y === 0)!.smooth).toBe(false); // turn point with a 4.6° bend: still a corner
+    expect(pts.find(a => a.x === 150 && a.y === 215)!.kind).toBe('curve');
+  });
+
   it('boundary only (layer 1) → sew = boundary, noSeam, noted in report', () => {
     const dxf = ['0', 'SECTION', '2', 'ENTITIES', '0', 'LWPOLYLINE', '8', '1', '90', '4', '70', '1',
       '10', '0', '20', '0', '10', '100', '20', '0', '10', '100', '20', '50', '10', '0', '20', '50', '0', 'ENDSEC', '0', 'EOF'].join('\n');
