@@ -34,7 +34,7 @@ export function mountDocks(app: App, right: HTMLElement, bottom: HTMLElement, zo
     rPieces(); rSizes(); rInsp();
     if (settings.panels.grading) rGrad();
     if (ruleWindowOpen()) refreshRuleWindow();
-    if (specWindowOpen()) refreshSpecWindow(app);
+    refreshSpecWindow(app); // Measure spec + its Rules window (no-op when both are closed)
   };
   app.setRenderer('panels', render);
   render();
