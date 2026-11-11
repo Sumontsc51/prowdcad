@@ -176,13 +176,15 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
           <tr><td>Status bar</td><td>Cursor position, display unit, active size, zoom, and the step prompt of the current tool: what to click next and what right-click, Enter and Esc do.</td></tr>
         </tbody>
       </table></div>
-      <h3>Select only selects</h3>
-      <p>The Select tool (<kbd>V</kbd>) never moves anything. It picks points, segments, internal lines, notches, drills, darts and pieces, and the selection <strong>stays</strong> while you run commands, undo, switch sizes or switch tools. You move things with the Move tools (Chapter 6), which take the current selection straight away.</p>
+      <h3>Select selects, and moves whole pieces</h3>
+      <p>The Select tool (<kbd>V</kbd>) never moves points or lines and never changes a shape. Dragging a piece by its inside moves that piece on the sheet (with the other selected pieces). It picks points, segments, internal lines, notches, drills, darts and pieces, and the selection <strong>stays</strong> while you run commands, undo, switch sizes or switch tools. You move things with the Move tools (Chapter 6), which take the current selection straight away.</p>
       <div class="tbl"><table>
         <thead><tr><th>With Select</th><th>Result</th></tr></thead>
         <tbody>
           <tr><td>Click</td><td>Select that object (replaces the selection). <kbd>Shift</kbd>+click adds, <kbd>Ctrl</kbd>+click toggles.</td></tr>
           <tr><td>Click on empty sheet, or <kbd>Esc</kbd></td><td>Clear the selection. An <kbd>Esc</kbd> that closes a menu or cancels a pick does not also clear it; press <kbd>Esc</kbd> once more.</td></tr>
+          <tr><td>Drag a piece by its inside</td><td>Move the piece on the sheet; other selected pieces go along. <kbd>Shift</kbd> keeps it straight, <kbd>Esc</kbd> cancels. One undo step.</td></tr>
+          <tr><td><kbd>Alt</kbd>+drag</td><td>Always a box select, also when the drag starts inside a piece (<kbd>Shift</kbd>+drag adds, <kbd>Ctrl</kbd>+drag toggles).</td></tr>
           <tr><td>Drag left → right</td><td><strong>Window</strong> box (blue): selects what is fully inside.</td></tr>
           <tr><td>Drag right → left</td><td><strong>Crossing</strong> box (green, dashed): selects what the box touches. <kbd>Shift</kbd>+drag adds, <kbd>Ctrl</kbd>+drag toggles.</td></tr>
           <tr><td>Several objects under the cursor</td><td>The status bar lists them; <kbd>Tab</kbd> steps through them. A point on the sew line wins over an internal point lying on top of it.</td></tr>
