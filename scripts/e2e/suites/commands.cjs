@@ -213,6 +213,7 @@ const cases = [
 
   // ═════════ Measure ═════════
   tool('measure.tool', 'measure'), tool('measure.walk', 'walk'),
+  { id: 'measure.spec', change: false, expect: async h => req(await win('mspec')(h), 'Measure spec window not open') },
   { id: 'measure.line', change: false, expect: async h => [req((await appv('app.tool.id')(h)) === 'measure', 'Measure tool not active'), req(await win('mline')(h), 'Measure window not open')] },
   { id: 'measure.piece', sel: PC('FRONT'), change: false, expect: async h => req((await h.page.locator('.fwin[data-win="pieceinfo"] tr').count()) === 5, 'piece info: expected header + 4 size rows') },
   { id: 'measure.walkCheck', change: false, invoke: h => h.cmd('measure.walkCheck'), drive: async h => { await h.clickSeg('FRONT', 'SS_HEM', 'UA'); await h.clickSeg('BACK', 'BL', 'TL'); await h.key('Enter'); await OK()(h); },

@@ -309,6 +309,75 @@ const cases = [
       req(h._b2 === 'edited', 'badge after a local edit: ' + h._b2),
     ],
   }),
+
+  // ── Measure Spec: points of measure with targets and movement rules ──
+  C('spec-line', {
+    title: 'Measure spec: FRONT hem from the selection; base target +15 shifts every size; Apply moves the line end → hem = old + 15 in every size',
+    pre: async h => { await resetMeasure(h); h._hem0 = await hand(h, [['FRONT', 'CF_HEM', 'SS_HEM']]); },
+    invoke: async h => {
+      await h.ev(() => { const E = window.__e2e; const a = E.findA('FRONT', 'CF_HEM'), b = E.findA('FRONT', 'SS_HEM'); E.app.sel = { pieces: [a.p.id], anchors: [], segments: [{ pieceId: a.p.id, contourId: a.c.id, from: a.a.id, to: b.a.id }] }; E.app.invalidate(); });
+      await h.cmd('measure.spec');
+    },
+    drive: async h => {
+      const w = h.page.locator('.fwin[data-win="mspec"]');
+      await w.locator('[data-act="from-sel"]').click(); await h.settle(80);
+      h._item = await h.ev(() => { const it = window.__e2e.app.style.measureSpec[0]; return { n: window.__e2e.app.style.measureSpec.length, kind: it.kind, movers: it.movers.map(m => m.dir + ':' + m.share), targets: Object.keys(it.targets).length }; });
+      const base = h._hem0.find(r => r.size === 'M').parts[0];
+      await typeInto(h, w.locator('table.sp-list input.sp-target').first(), String(Math.round((base + 15) * 1000) / 1000));
+      await w.locator('.fw-foot [data-act="apply"]').click(); await h.settle(150);
+      h._sum = await w.locator('[data-spec]').getAttribute('data-spec');
+      h._diff = await h.ev(() => [...document.querySelectorAll('.fwin[data-win="mspec"] td[data-col="diff"]')].map(td => td.className));
+    },
+    expect: async h => {
+      const now = await hand(h, [['FRONT', 'CF_HEM', 'SS_HEM']]);
+      const errs = [req(h._item.n === 1 && h._item.kind === 'line' && h._item.movers.join() === 'along:1' && h._item.targets === 4, 'new item ' + JSON.stringify(h._item))];
+      for (const r of now) { const o = h._hem0.find(x => x.size === r.size).parts[0]; errs.push(req(near(r.parts[0], o + 15, 0.01), `${r.size} hem ${r.parts[0].toFixed(4)} ≠ ${(o + 15).toFixed(4)}`)); }
+      errs.push(req(h._sum === 'ok', 'summary ' + h._sum));
+      errs.push(req(h._diff.length === 4 && h._diff.every(c => /pass/.test(c)), 'diff cells ' + JSON.stringify(h._diff)));
+      return errs;
+    },
+  }),
+  C('spec-distance-rules', {
+    title: 'Measure spec: straight distance SS_HEM → UA, per-size targets pasted, rule = Y only; Apply → every size on target, SS_HEM never moves, UA keeps its X',
+    pre: async h => { await resetMeasure(h); h._p0 = await h.ev(() => { const E = window.__e2e; const f = n => { const a = E.findA('FRONT', n); return { x: a.a.x, y: a.a.y }; }; return { hem: f('SS_HEM'), ua: f('UA') }; }); },
+    invoke: async h => { await h.selectA('FRONT', 'SS_HEM'); await h.selectA('FRONT', 'UA', true); await h.cmd('measure.spec'); },
+    drive: async h => {
+      const w = h.page.locator('.fwin[data-win="mspec"]');
+      await w.locator('[data-act="from-sel"]').click(); await h.settle(80);
+      await w.locator('table.sp-rules select[data-rule="dir"]').selectOption('y'); await h.settle(80);
+      h._now = await h.ev(() => { const E = window.__e2e; const it = E.app.style.measureSpec[0]; return Object.fromEntries(E.app.sizeLine().sizes.map(s => [s.name, window.prowdcad.ops.specValue(E.app.doc, it.id, s.id)])); });
+      h._want = { S: h._now.S + 4, M: h._now.M + 10, L: h._now.L + 17, XL: h._now.XL + 25 };
+      await pasteInto(h, '.fwin[data-win="mspec"] input[data-size="S"][data-col="target"]', ['S', 'M', 'L', 'XL'].map(k => h._want[k].toFixed(4)).join('\n'));
+      await w.locator('.fw-foot [data-act="apply"]').click(); await h.settle(150);
+    },
+    expect: async h => {
+      const got = await h.ev(() => { const E = window.__e2e; const it = E.app.style.measureSpec[0]; const f = n => { const a = E.findA('FRONT', n); return { x: a.a.x, y: a.a.y }; }; return { v: Object.fromEntries(E.app.sizeLine().sizes.map(s => [s.name, window.prowdcad.ops.specValue(E.app.doc, it.id, s.id)])), kind: it.kind, rule: it.movers.map(m => m.dir).join(), hem: f('SS_HEM'), ua: f('UA') }; });
+      const errs = [req(got.kind === 'distance' && got.rule === 'y', 'item ' + got.kind + ' / ' + got.rule)];
+      for (const k of ['S', 'M', 'L', 'XL']) errs.push(req(near(got.v[k], h._want[k], 0.01), `${k} distance ${got.v[k].toFixed(4)} ≠ ${h._want[k].toFixed(4)}`));
+      errs.push(req(near(got.hem.x, h._p0.hem.x, 1e-6) && near(got.hem.y, h._p0.hem.y, 1e-6), 'the fixed point SS_HEM moved'));
+      errs.push(req(near(got.ua.x, h._p0.ua.x, 1e-6) && !near(got.ua.y, h._p0.ua.y, 1), `UA should move in Y only: ${JSON.stringify(got.ua)} from ${JSON.stringify(h._p0.ua)}`));
+      return errs;
+    },
+  }),
+  C('adjust-segment', {
+    title: 'Measure window ▸ Adjust segment…: FRONT hem made exactly 300 (all sizes follow the base)',
+    pre: resetMeasure,
+    invoke: async h => { await h.key('m'); await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); await h.page.locator('.fwin[data-win="mline"] [data-act="adjust"]').click(); },
+    drive: async h => { await h.waitDialog(); h._t = await h.dlgTitle(); await h.dlg().locator('input[data-key="v"]').fill('300'); await h.ok(); },
+    expect: async h => { const L = await h.ev(() => window.__e2e.segLen('FRONT', 'CF_HEM', 'SS_HEM')); return [req(h._t === 'Adjust segment', 'dialog ' + h._t), req(near(L, 300, 0.05), 'hem ' + L)]; },
+  }),
+  C('measure-window-follows-tool', {
+    title: 'The Measure window closes when another tool is chosen and reopens with the Measure tool; the open measurement is kept',
+    change: false,
+    pre: resetMeasure,
+    invoke: async h => { await h.key('m'); await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); },
+    drive: async h => {
+      const open = () => h.ev(() => !!document.querySelector('.fwin[data-win="mline"]'));
+      h._a = await open(); await h.key('g'); h._b = await open(); await h.key('m'); h._c = await open();
+      h._ms = await MSmod(h);
+    },
+    expect: async h => [req(h._a === true, 'not open with the Measure tool'), req(h._b === false, 'still open after choosing Move Point'), req(h._c === true, 'did not reopen with the Measure tool'), req(h._ms.groups.length === 1 && h._ms.groups[0].parts.length === 1, 'open measurement lost: ' + JSON.stringify(h._ms))],
+  }),
 ];
 
 module.exports = { cases };
