@@ -30,6 +30,9 @@ import { MS, type MGroupUI } from './measure-table';
 import { registerOverlay } from '../canvas/overlays';
 import { screenPath, runWorld } from '../hitkit';
 import { toWorld, resolveFor } from '../geometry';
+import { buildXlsx, type XSheet, type XCell } from '../ui/xlsx';
+import { download } from '../actions/file';
+import { settings } from '../settings';
 
 const SS = {
   cur: null as Id | null,
@@ -39,6 +42,8 @@ const SS = {
   allSizes: false,
   /** Rules window: which item, and whether points are added as they are selected */
   rulesFor: null as Id | null,
+  /** Rules window: a line of that item (index into its parts), or null = the whole measurement */
+  rulesLine: null as number | null,
   autoAdd: false,
   lastSelKey: '',
   /** last preview / apply result per item */
@@ -120,6 +125,54 @@ function apply(app: App, ids: Id[] | undefined, write: boolean, sizes?: Id[]) {
   const msg = `${write ? 'Applied' : 'Preview'}: ${moved} measurement(s) ${write ? 'changed the pattern' : 'would change the pattern'}${missed ? ` · ${missed} size value(s) cannot be reached` : ''}${errs.length ? ` · ${errs.length} with missing geometry` : ''}`;
   app.status(msg);
   if (write) toast(res.written ? msg : (missed || errs.length ? msg : 'Already on spec — nothing to change'), missed || errs.length ? 'warn' : 'ok', 3600);
+}
+
+// ───────────────────────── Excel export ─────────────────────────
+
+/** mm → the display unit, as a number for the sheet (4 decimals). */
+function unitValue(mm: number | null | undefined): number | null {
+  if (mm === null || mm === undefined || !Number.isFinite(mm)) return null;
+  const v = settings.unit === 'in' ? mm / 25.4 : settings.unit === 'cm' ? mm / 10 : mm;
+  return Math.round(v * 1e4) / 1e4;
+}
+
+/** The chart as workbook sheets (also used by tests): Totals, Targets, Difference, Lines (+ Line targets when any). */
+export function specSheets(app: App): XSheet[] {
+  const list = items(app); const line = app.sizeLine(); const u = unitLabel();
+  const sizes = line.sizes.map(s => s.name + (s.id === line.baseSizeId ? ' *' : ''));
+  const head = (first: string[]) => [...first, ...sizes];
+  const widths = (n: number) => [...Array.from({ length: n }, (_, i) => (i === 0 ? 26 : i === 1 && n > 2 ? 34 : 10)), ...sizes.map(() => 11)];
+  const per = (rows: { sizeId: Id }[], get: (i: number) => number | null | undefined) => line.sizes.map(s => { const i = rows.findIndex(r => r.sizeId === s.id); return i < 0 ? null : unitValue(get(i)); });
+  const totals: XCell[][] = [head([`Measurement (${u})`])], targets: XCell[][] = [head([`Target (${u})`])], diffs: XCell[][] = [head([`Total − target (${u})`])];
+  const lines: XCell[][] = [head([`Measurement (${u})`, 'Piece · line', 'Quantity'])];
+  const ltargets: XCell[][] = [head([`Line target (${u})`, 'Piece · line'])];
+  for (const it of list) {
+    const rows = ops.specRows(app.doc, it.id);
+    totals.push([it.name, ...per(rows, i => rows[i].value)]);
+    targets.push([it.name, ...per(rows, i => rows[i].target)]);
+    diffs.push([it.name, ...per(rows, i => rows[i].diff)]);
+    const det = line.sizes.map(s => ops.specDetails(app.doc, it.id, s.id));
+    (det[0] ?? []).forEach((d, k) => {
+      const label = it.kind === 'line' ? partLabel(app, it.parts[d.index]) : describe(app, it);
+      lines.push([k === 0 ? it.name : '', label, d.qty, ...det.map(x => unitValue(x[k]?.length))]);
+      if (it.kind === 'line' && it.parts[d.index].targets) { const lr = ops.specLineRows(app.doc, it.id, d.index); ltargets.push([it.name, label, ...per(lr, i => lr[i].target)]); }
+    });
+    lines.push([`${it.name} total`, '', '', ...per(rows, i => rows[i].value)]);
+  }
+  const out: XSheet[] = [
+    { name: 'Totals', rows: totals, widths: widths(1) },
+    { name: 'Targets', rows: targets, widths: widths(1) },
+    { name: 'Difference', rows: diffs, widths: widths(1) },
+    { name: 'Lines', rows: lines, widths: widths(3) },
+  ];
+  if (ltargets.length > 1) out.push({ name: 'Line targets', rows: ltargets, widths: widths(2) });
+  return out;
+}
+
+export function exportSpecExcel(app: App) {
+  const name = `${app.fileName.replace(/\.prowd\.json$|\.json$|\.prowd$/i, '') || 'style'} - measure spec.xlsx`;
+  download(name, new Blob([buildXlsx(specSheets(app)) as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  toast(`Exported ${name} — ${items(app).length} measurement(s), ${app.sizeLine().sizes.length} size(s)`, 'ok', 3600);
 }
 
 // ───────────────────────── window ─────────────────────────
@@ -213,14 +266,42 @@ export function renderSpecWindow(app: App) {
       tr.addEventListener('click', e => { if ((e.target as Element).closest('input,button,select')) { if (SS.cur !== it.id) { SS.cur = it.id; app.invalidate('canvas'); } return; } SS.cur = it.id; rerender(); });
       t.append(tr);
       if (isOpen) {
-        // the lines behind the total, as in a measurement chart's details: piece · length · quantity
+        // the lines behind the total, as in a measurement chart's details: piece · length · quantity —
+        // and, per line, its own target, Apply and Rules (a line's target changes that line only)
         const det = ops.specDetails(app.doc, it.id, row?.sizeId);
-        t.append(h('tr.sp-dh', {}, h('td', {}, ''), h('td.dim', {}, 'Piece · line'), h('td.dim', {}, 'Length'), h('td.dim', { title: 'How many times the line counts in the total (2 for a half piece)' }, 'Quantity'), h('td', { colspan: 3 }, '')));
+        const isLine = it.kind === 'line';
+        t.append(h('tr.sp-dh', {}, h('td', {}, ''), h('td.dim', {}, 'Piece · line'), h('td.dim', {}, 'Length'), h('td.dim', { title: 'Target length of this line alone (not × quantity). Type a value, then Apply on this line.' }, isLine ? 'Target' : ''), h('td.dim', {}, isLine ? 'Diff' : ''), h('td', {}, ''), h('td.dim', { title: 'How many times the line counts in the total (2 for a half piece)' }, 'Qty')));
         det.forEach(d => {
           const q = numberInput(d.qty, v => run('Quantity', () => { ops.setSpecQty(app.doc, it.id, d.index, v); SS.result.delete(it.id); }), { min: 0.0001, decimals: 3, title: 'How many times this line counts in the total (2 for a half piece)' });
           q.classList.add('sp-qty'); q.dataset.qty = String(d.index);
-          const what = it.kind === 'distance' ? describe(app, it) : partLabel(app, it.parts[d.index]);
-          t.append(h('tr.sp-det', { 'data-detail': it.id }, h('td', {}, ''), h('td', { title: what }, what), h('td', {}, d.length === null ? h('span.warnc', {}, 'missing') : fmt(d.length)), h('td', {}, q), h('td.dim', { colspan: 3 }, d.length === null ? '' : `= ${fmt(d.length * d.qty)}`)));
+          const what = isLine ? partLabel(app, it.parts[d.index]) : describe(app, it);
+          let cells: (HTMLElement | string)[] = ['', '', ''];
+          if (isLine) {
+            const lrows = ops.specLineRows(app.doc, it.id, d.index);
+            const lrow = lrows.find(r => r.sizeId === (row?.sizeId ?? app.activeSize));
+            const lineId = `${it.id}:${d.index}`;
+            const lt = lengthInput(lrow?.target ?? NaN, v => run('Line target', () => {
+              if (!lrow) return;
+              // base size: every size of this line shifts by the same amount (from its target, else from its length); another size: that size only
+              const from = lrow.target ?? lrow.value;
+              if (isBase && from !== null) ops.setSpecLineTargets(app.doc, it.id, d.index, Object.fromEntries(lrows.map(r => { const b = r.target ?? r.value; return [r.sizeId, r.sizeId === lrow.sizeId ? v : b !== null ? b + (v - from) : null]; }).filter(([, x]) => x !== null)));
+              else ops.setSpecLineTargets(app.doc, it.id, d.index, { [lrow.sizeId]: v });
+              SS.result.delete(lineId);
+            }), { min: 0, blankIfNaN: true, title: `Target for this line alone in size ${lrow?.sizeName ?? ''} (blank = no target of its own). Then Apply on this line.` });
+            lt.classList.add('sp-target', 'sp-ltarget'); lt.dataset.line = lineId; lt.placeholder = d.length === null ? '' : fmt(d.length);
+            const loff = !!lrow && lrow.diff !== null && Math.abs(lrow.diff) > TOL;
+            const lm = (it.parts[d.index].movers ?? ops.defaultSpecMovers({ kind: 'line', parts: [it.parts[d.index]] })).filter(m => m.share !== 0).length;
+            cells = [
+              h('td', {}, d.length === null ? '' : lt),
+              h('td' + (loff ? '.fail' : lrow?.diff != null ? '.pass' : ''), {}, lrow?.diff == null ? '' : (lrow.diff > 0 ? '+' : '') + fmt(lrow.diff)),
+              h('td.sp-acts', {},
+                h('button.btn.sm' + (lrow?.target == null ? '.disabled' : ''), { 'data-act': 'apply-line', 'data-line': lineId, title: lrow?.target == null ? 'Type a target for this line first' : 'Alter the pattern so this line alone hits its target (every size that has one; one undo step)', onclick: (e: Event) => { e.stopPropagation(); if (lrow?.target == null) return; SS.cur = it.id; run('Apply spec', () => apply(app, [lineId], true)); } }, 'Apply'),
+                h('button.btn.sm' + (lm ? '' : '.warnb'), { 'data-act': 'rules-line', 'data-line': lineId, title: 'Rules of this line: which points move when its own target is applied (default: both ends, half each)', onclick: (e: Event) => { e.stopPropagation(); SS.cur = it.id; openRules(app, it.id, d.index); rerender(); } }, `Rules (${lm})`)),
+            ];
+          }
+          t.append(h('tr.sp-det', { 'data-detail': it.id }, h('td', {}, ''), h('td', { title: what }, what), h('td', {}, d.length === null ? h('span.warnc', {}, 'missing') : fmt(d.length)),
+            ...(isLine ? (cells as HTMLElement[]) : [h('td', {}, ''), h('td', {}, ''), h('td', {}, '')]),
+            h('td', { title: d.length === null ? '' : `counts as ${fmt(d.length * d.qty)}` }, q)));
         });
         const modes: [string, string][] = it.kind === 'distance' ? [['diagonal', 'Straight'], ['x', 'X only'], ['y', 'Y only']] : [['contour', 'Along the line'], ['diagonal', 'Straight (end to end)'], ['x', 'X only'], ['y', 'Y only']];
         const modeSel = selectInput(it.mode, modes, v => run('Measure mode', () => { ops.updateSpecItem(app.doc, it.id, { mode: v as MeasureMode }); SS.result.delete(it.id); }));
@@ -264,6 +345,7 @@ export function renderSpecWindow(app: App) {
   win.foot.append(
     h('button.btn.sm' + (cur ? '' : '.disabled') + (SS.allSizes ? '.on' : ''), { 'data-act': 'all-sizes', title: 'Show / hide one line per size for the selected measurement (type targets per size, or paste a column from Excel)', onclick: () => { SS.allSizes = !SS.allSizes; rerender(); } }, SS.allSizes ? '▾ All sizes' : '▸ All sizes'),
     h('button.btn.sm' + (cur ? '' : '.disabled'), { title: 'Set every target of the selected measurement to what the pattern measures now', onclick: () => { if (cur) run('Targets', () => { ops.setSpecTargets(app.doc, cur.id, Object.fromEntries(ops.specRows(app.doc, cur.id).filter(r => r.value !== null).map(r => [r.sizeId, r.value]))); SS.result.delete(cur.id); }); } }, 'Targets = now'),
+    h('button.btn.sm' + (list.length ? '' : '.disabled'), { 'data-act': 'excel', title: 'Save the whole chart as an Excel file: totals, targets and differences in every size, and the piece lines with quantity', onclick: () => { if (list.length) run('Excel', () => exportSpecExcel(app)); } }, 'Excel…'),
     h('span.spacer'),
     h('button.btn.sm' + (cur ? '' : '.disabled'), { 'data-act': 'preview', title: 'Solve the selected measurement without changing the pattern', onclick: () => { if (cur) run('Preview', () => apply(app, [cur.id], false)); } }, 'Preview'),
     h('button.btn.sm' + (cur ? '' : '.disabled'), { 'data-act': 'apply-size', title: 'Apply the selected measurement in the chosen size only', onclick: () => { if (cur) run('Apply spec', () => apply(app, [cur.id], true, [app.activeSize])); } }, 'Apply this size'),
@@ -273,8 +355,19 @@ export function renderSpecWindow(app: App) {
 
 // ───────────────────────── Rules window: the rule maker of one measurement ─────────────────────────
 
-export function openRules(app: App, id: Id) {
-  SS.rulesFor = id; SS.cur = id;
+/** What the Rules window edits: a whole measurement, or one of its lines (its own rules for its own target). */
+interface RuleTarget { item: MeasureSpecItem; line: number | null; name: string; applyId: Id; movers: SpecMover[]; custom: boolean; set(mv: SpecMover[] | null): void; defaults(): SpecMover[] }
+function ruleTarget(app: App): RuleTarget | null {
+  const item = items(app).find(x => x.id === SS.rulesFor); if (!item) return null;
+  const li = SS.rulesLine;
+  if (li === null) return { item, line: null, name: item.name, applyId: item.id, movers: item.movers, custom: true, set: mv => ops.updateSpecItem(app.doc, item.id, { movers: mv ?? ops.defaultSpecMovers(item) }), defaults: () => ops.defaultSpecMovers(item) };
+  const part = item.parts[li]; if (item.kind !== 'line' || !part) return null;
+  const defaults = () => ops.defaultSpecMovers({ kind: 'line', parts: [part] });
+  return { item, line: li, name: `${item.name} · ${partLabel(app, part)}`, applyId: `${item.id}:${li}`, movers: part.movers ?? defaults(), custom: !!part.movers, set: mv => ops.setSpecLineMovers(app.doc, item.id, li, mv), defaults };
+}
+
+export function openRules(app: App, id: Id, line: number | null = null) {
+  SS.rulesFor = id; SS.rulesLine = line; SS.cur = id;
   SS.lastSelKey = app.sel.anchors.map(a => a.anchorId).join(','); // what is selected now is not auto-added: only what gets selected from here on
   renderRulesWindow(app);
 }
@@ -285,31 +378,32 @@ function autoAddSelected(app: App) {
   if (key === SS.lastSelKey) return;
   SS.lastSelKey = key;
   if (!SS.autoAdd || !windowOpen('msrules') || !SS.rulesFor) return;
-  const it = items(app).find(x => x.id === SS.rulesFor); if (!it) return;
+  const it = ruleTarget(app); if (!it) return;
   const add = app.sel.anchors.filter(a => !it.movers.some(m => m.anchorId === a.anchorId));
   if (!add.length) return;
   try {
-    ops.updateSpecItem(app.doc, it.id, { movers: [...it.movers, ...add.map(a => ({ pieceId: a.pieceId, anchorId: a.anchorId, dir: 'with' as const, share: 1 }))] });
-    SS.result.delete(it.id);
+    it.set([...it.movers, ...add.map(a => ({ pieceId: a.pieceId, anchorId: a.anchorId, dir: 'with' as const, share: 1 }))]);
+    SS.result.delete(it.applyId);
     app.status(`Rules of ${it.name}: added ${add.map(a => pointLabel(app, a.pieceId, a.anchorId)).join(', ')} — moves with the line end`);
   } catch (err) { reportError(err, 'Rules'); }
 }
 
 export function renderRulesWindow(app: App) {
-  const it = items(app).find(x => x.id === SS.rulesFor);
+  const it = ruleTarget(app);
   if (!it) { closeWindow('msrules'); return; }
   const W = 560;
   // under the Measure spec window when there is room, else beside it — never on top of it
   const sr = document.querySelector('.fwin[data-win="mspec"]')?.getBoundingClientRect();
   const below = !!sr && sr.bottom + 250 < window.innerHeight;
-  const win = floatingWindow('msrules', `Rules — ${it.name}`, { width: W, x: sr ? (below ? Math.max(40, sr.right - W) : Math.max(40, sr.left - W - 12)) : Math.max(40, window.innerWidth - W - 340), y: sr && below ? sr.bottom + 8 : 80, onClose: () => { SS.rulesFor = null; app.invalidate('canvas'); } });
+  const win = floatingWindow('msrules', `Rules — ${it.name}`, { width: W, x: sr ? (below ? Math.max(40, sr.right - W) : Math.max(40, sr.left - W - 12)) : Math.max(40, window.innerWidth - W - 340), y: sr && below ? sr.bottom + 8 : 80, onClose: () => { SS.rulesFor = null; SS.rulesLine = null; app.invalidate('canvas'); } });
   win.setTitle(`Rules — ${it.name}`);
   win.el.classList.add('specwin', 'ruleswin');
   clear(win.body); clear(win.foot);
   const rerender = () => { renderRulesWindow(app); if (specWindowOpen()) renderSpecWindow(app); app.invalidate('canvas'); };
   const run = (label: string, fn: () => void) => { try { fn(); } catch (err) { reportError(err, label); } rerender(); };
-  const setMovers = (mv: SpecMover[]) => run('Rules', () => { ops.updateSpecItem(app.doc, it.id, { movers: mv }); SS.result.delete(it.id); });
+  const setMovers = (mv: SpecMover[] | null) => run('Rules', () => { it.set(mv); SS.result.delete(it.applyId); });
 
+  if (it.line !== null) win.body.append(h('div.sp-help', {}, h('b', {}, 'Rules of one line. '), `Used when this line's own target is applied${it.custom ? '' : ' (showing the default: both ends, half each)'}.`));
   win.body.append(h('div.dim.sp-help', {}, 'When the target changes, these points move to reach it. Select points on the pattern and add them: “With the line end” makes a point ride along with the end of the measured line.'));
   const mt = h('table.fw-table.sp-rules');
   mt.append(h('tr', {}, h('th', {}, 'Point'), h('th', { title: 'With the line end = same direction and distance as the end of the line · Along the line = lengthens / shortens the line at that point' }, 'How it moves'), h('th', { title: 'Degrees from +X, counter-clockwise (How it moves = Angle)' }, 'Angle°'), h('th', { title: '1 = the whole change · 0.5 = half · −1 = the opposite way · 0 = stays' }, 'Share'), h('th', {}, '')));
@@ -325,7 +419,7 @@ export function renderRulesWindow(app: App) {
       h('td', {}, pointLabel(app, m.pieceId, m.anchorId)), h('td', {}, dir), h('td', {}, ang), h('td', {}, sh),
       h('td', {}, h('button.mini', { title: 'This point no longer moves', onclick: () => setMovers(it.movers.filter((_, k) => k !== i)) }, '×'))));
   });
-  win.body.append(it.movers.length ? mt : h('div.warnline', {}, 'No point is set to move, so Apply cannot change this measurement. Select points and press “+ Add selected points”, or “Reset to line end”.'));
+  win.body.append(it.movers.length ? mt : h('div.warnline', {}, 'No point is set to move, so Apply cannot change this measurement. Select points and press “+ Add selected points”, or “Reset to line ends”.'));
 
   const nSel = app.sel.anchors.filter(a => !it.movers.some(m => m.anchorId === a.anchorId)).length;
   const auto = h('label.chk', { title: 'While this window is open, every point you select on the pattern is added to the rules straight away' }, h('input', { type: 'checkbox', checked: SS.autoAdd, 'data-act': 'auto-add', onchange: (e: Event) => { SS.autoAdd = (e.target as HTMLInputElement).checked; SS.lastSelKey = app.sel.anchors.map(a => a.anchorId).join(','); rerender(); } }), ' Add points as I select them');
@@ -334,13 +428,13 @@ export function renderRulesWindow(app: App) {
       if (!app.sel.anchors.length) throw new Error('Select the point(s) on the pattern first (Select tool: click a point, Shift+click for more), then press this again');
       const add = app.sel.anchors.filter(a => !it.movers.some(m => m.anchorId === a.anchorId)).map(a => ({ pieceId: a.pieceId, anchorId: a.anchorId, dir: 'with' as const, share: 1 }));
       if (!add.length) throw new Error('Those points are already in the rules');
-      ops.updateSpecItem(app.doc, it.id, { movers: [...it.movers, ...add] }); SS.result.delete(it.id);
+      it.set([...it.movers, ...add]); SS.result.delete(it.applyId);
     }) }, nSel ? `+ Add selected points (${nSel})` : '+ Add selected points'),
     auto,
     h('span.spacer'),
-    h('button.btn.sm', { title: 'Back to the default: only the end of the line moves, along the line', onclick: () => setMovers(ops.defaultSpecMovers(it)) }, 'Reset to line end'),
-    h('button.btn.sm', { 'data-act': 'rules-preview', title: 'Solve with these rules without changing the pattern (result in the Measure spec window)', onclick: () => run('Preview', () => apply(app, [it.id], false)) }, 'Preview'),
-    h('button.btn.sm.primary', { 'data-act': 'rules-apply', title: 'Apply this measurement with these rules (one undo step)', onclick: () => run('Apply spec', () => apply(app, [it.id], true)) }, 'Apply'),
+    h('button.btn.sm', { 'data-act': 'rules-reset', title: 'Back to the default: both end points of the line, each with share 0.5 (the line grows equally at both ends)', onclick: () => setMovers(it.line === null ? it.defaults() : null) }, 'Reset to line ends'),
+    h('button.btn.sm', { 'data-act': 'rules-preview', title: 'Solve with these rules without changing the pattern (result in the Measure spec window)', onclick: () => run('Preview', () => apply(app, [it.applyId], false)) }, 'Preview'),
+    h('button.btn.sm.primary', { 'data-act': 'rules-apply', title: 'Apply this measurement with these rules (one undo step)', onclick: () => run('Apply spec', () => apply(app, [it.applyId], true)) }, 'Apply'),
   );
 }
 
@@ -348,7 +442,12 @@ export function renderRulesWindow(app: App) {
 
 registerOverlay('mspec', app => {
   if ((!specWindowOpen() && !windowOpen('msrules')) || !SS.cur) return '';
-  const it = items(app).find(x => x.id === SS.cur); if (!it) return '';
+  let it = items(app).find(x => x.id === SS.cur); if (!it) return '';
+  // Rules of one line open: show that line and its moving points
+  if (windowOpen('msrules') && SS.rulesFor === it.id && SS.rulesLine !== null && it.kind === 'line' && it.parts[SS.rulesLine]) {
+    const part = it.parts[SS.rulesLine];
+    it = { ...it, parts: [part], movers: part.movers ?? ops.defaultSpecMovers({ kind: 'line', parts: [part] }) };
+  }
   let s = '';
   const pos = (pieceId: Id, anchorId: Id) => {
     const p = app.style.pieces.find(x => x.id === pieceId); if (!p) return null;
