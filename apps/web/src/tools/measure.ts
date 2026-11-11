@@ -44,6 +44,9 @@ function shownSizes(app: App, p: Piece): SizeId[] {
   return app.nested ? [a, ...app.doc.sizesOf(p).filter(s => s !== a && !app.nestedHidden.has(s))] : [a];
 }
 
+/** Measure ▸ Line option "Internal lines" (on unless switched off) */
+const internalOn = () => settings.toolState?.measure?.internal !== false;
+
 /** the measurable segment under the cursor, any displayed size */
 export function lineAt(app: App, w: Vec, tolPx = 9): LineHit | null {
   let best: LineHit | null = null;
@@ -55,12 +58,15 @@ export function lineAt(app: App, w: Vec, tolPx = 9): LineHit | null {
       const cs = [p.sew, ...p.internals], rs = [r.sew, ...r.internals];
       cs.forEach((c, ci) => {
         const rc = rs[ci]; if (!rc || rc.pts.length < 2) return;
+        if (ci > 0 && !internalOn()) return; // "Internal lines" option off: only the outline is measured
         const poly = rc.closed ? [...rc.pts, rc.pts[0]] : rc.pts;
         const cp = closestPoint(poly, l);
         const dpx = cp.d * app.view.scale + (sid === app.sizeOf(p) ? 0 : 0.5); // active size wins ties
         if (dpx > tolPx || (best && dpx >= best.dpx)) return;
         let from: Id | undefined, to: Id | undefined;
         if (c.closed) { const k = rc.gradeIdx.length ? segmentIndexAt(rc, cp.s) : -1; ({ from, to } = segmentIds(c, rc, k)); }
+        // an open internal line is measured whole with one click (end to end), however many points it has
+        else if (ci > 0 && c.points.length >= 2) { from = c.points[0].id; to = c.points[c.points.length - 1].id; }
         else { const sg = segmentAt(c, rc, cp.s); if (sg) { from = sg.fromId; to = sg.toId; } }
         if (!from || !to) return;
         best = { piece: p, contour: c, sizeId: sid, from, to, dpx };
@@ -116,7 +122,7 @@ let mode: 'line' | 'distance' = 'line';
 
 function pickLine(app: App, p: Ptr) {
   const hit = lineAt(app, p.w);
-  if (!hit) { app.status('No line under the cursor · click a sew or internal line between two grade points'); return; }
+  if (!hit) { app.status(internalOn() ? 'No line under the cursor · click an outline segment or an internal line' : 'No outline under the cursor · internal lines are off (switch “Internal lines” on above to measure them)'); return; }
   const cut = p.e.altKey !== !!settings.toolState?.measure?.cut;
   if (cut && hit.contour !== hit.piece.sew) { toast('The cut line exists only for sew lines; measuring the internal line', 'warn'); }
   const part = { ref: { pieceId: hit.piece.id, contourId: hit.contour.id, from: hit.from, to: hit.to }, cut: cut && hit.contour === hit.piece.sew ? true : undefined };
@@ -254,12 +260,17 @@ export const measureTool: Tool = {
   ],
   mode: () => mode,
   setMode(app, id) { mode = id as 'line' | 'distance'; (settings.toolState ??= {}).measure = { ...(settings.toolState.measure ?? {}), mode }; saveSettings(); pts = []; hoverHit = null; if (mode === 'line') renderMeasureWindow(app); app.invalidate(); },
-  toggles: () => (mode === 'line' ? [{ id: 'cut', label: 'Cut line', title: 'Measure the cut line instead of the sew line (Alt inverts per click)', on: !!settings.toolState?.measure?.cut }] : []),
-  toggle(app, id) { if (id === 'cut') { (settings.toolState ??= {}).measure = { ...(settings.toolState.measure ?? {}), cut: !settings.toolState?.measure?.cut }; saveSettings(); app.invalidate(); } },
+  toggles: () => (mode === 'line' ? [
+    { id: 'internal', label: 'Internal lines', title: 'On: internal lines can be measured too — one click takes the whole line, end to end. Off: only the outline is picked', on: internalOn() },
+    { id: 'cut', label: 'Cut line', title: 'Measure the cut line instead of the sew line (Alt inverts per click)', on: !!settings.toolState?.measure?.cut },
+  ] : []),
+  toggle(app, id) {
+    if (id === 'internal') { (settings.toolState ??= {}).measure = { ...(settings.toolState.measure ?? {}), internal: !internalOn() }; saveSettings(); hoverHit = null; app.status(internalOn() ? 'Internal lines can be measured (one click = the whole line)' : 'Only the outline is measured'); app.invalidate(); }
+    if (id === 'cut') { (settings.toolState ??= {}).measure = { ...(settings.toolState.measure ?? {}), cut: !settings.toolState?.measure?.cut }; saveSettings(); app.invalidate(); } },
   hint: () => {
     if (mode === 'distance') return result || 'Measure ▸ Distance: click two points · Ctrl-click 3 points = angle · Alt-click a point = per-size position · Tab = Line mode';
     const g = MS.groups[MS.cur];
-    if (!hasOpen()) return 'Measure ▸ Line: click a line (between two grade points) · Shift+click = extend the run · Alt = cut line · another piece / Ctrl = compare · Tab = Distance';
+    if (!hasOpen()) return 'Measure ▸ Line: click an outline segment or an internal line · Shift+click = extend the run · Alt = cut line · another piece / Ctrl = compare · Tab = Distance';
     return `Measure ▸ Line: ${g ? g.name + ' = ' + g.parts.map(p => p.label).join(' + ') : ''} · click to add / click again to remove · Backspace = last off · Ctrl / another piece = new group · Enter / right-click = OK · Esc = cancel`;
   },
   down(app, p) {
