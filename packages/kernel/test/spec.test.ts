@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { makeStyle, makePiece, rectangleContour, makeContour, gradePoint, curvePoint } from '../src/model/factory';
 import { Document } from '../src/model/doc';
-import { addSpecItem, applySpec, specValue, specRows, updateSpecItem, setSpecTargets, removeSpecItem, defaultSpecMovers, specDetails, setSpecQty } from '../src/ops/spec';
+import { addSpecItem, applySpec, specValue, specRows, updateSpecItem, setSpecTargets, removeSpecItem, defaultSpecMovers, specDetails, setSpecQty, specLineRows, setSpecLineTargets, setSpecLineMovers } from '../src/ops/spec';
 import { measureSegment } from '../src/ops/measure';
 import { saveNative, loadNative } from '../src/io/native';
 
@@ -16,28 +16,30 @@ function doc1() {
   const sid = (n: string) => line.sizes.find(x => x.name === n)!.id;
   return { doc, id: p.id, P, ids, sid, sew: p.sew.id };
 }
+const END = (pieceId: string, anchorId: string) => [{ pieceId, anchorId, dir: 'along' as const, share: 1 }];
 const xy = (a: { x: number; y: number }) => [Math.round(a.x * 1e6) / 1e6, Math.round(a.y * 1e6) / 1e6];
 
 describe('Measure Spec', () => {
-  it('a new item takes the current values as targets and the line end as the moving point', () => {
+  it('a new item takes the current values as targets and both line ends (half each) as the moving points', () => {
     const { doc, id, ids, sew, sid } = doc1();
     const k = addSpecItem(doc, { name: 'Hem', kind: 'line', parts: [{ ref: { pieceId: id, contourId: sew, from: ids[0], to: ids[1] } }] });
     const it0 = doc.style.measureSpec.find(x => x.id === k)!;
     const L = measureSegment(doc, id, sew, ids[0], ids[1]);
     expect(it0.targets[sid('M')]).toBeCloseTo(L, 9);
     expect(Object.keys(it0.targets)).toHaveLength(5);
-    expect(it0.movers).toEqual([{ pieceId: id, anchorId: ids[1], dir: 'along', share: 1 }]);
+    // default rule: both ends of the line, half of the change each
+    expect(it0.movers).toEqual([{ pieceId: id, anchorId: ids[0], dir: 'along', share: 0.5 }, { pieceId: id, anchorId: ids[1], dir: 'along', share: 0.5 }]);
     expect(applySpec(doc).written).toBe(false); // already on spec: nothing to do, no undo step
     expect(doc.canUndo()).toBe(true); // only the "add" step
     doc.undo(); expect(doc.style.measureSpec).toHaveLength(0);
   });
 
-  it('raising a line target moves the line end along the line by the difference (offset), other end fixed', () => {
+  it('rule = line end only: raising the target moves that end along the line by the difference (offset), other end fixed', () => {
     const { doc, id, P, ids, sew, sid } = doc1();
     const a0 = xy(P().sew.points[0]), b0 = P().sew.points[1];
     const dirx = Math.sign(b0.x - a0[0]) || 0, diry = Math.sign(b0.y - a0[1]) || 0;
     const L = measureSegment(doc, id, sew, ids[0], ids[1]);
-    const k = addSpecItem(doc, { name: 'Hem', kind: 'line', parts: [{ ref: { pieceId: id, contourId: sew, from: ids[0], to: ids[1] } }] });
+    const k = addSpecItem(doc, { name: 'Hem', kind: 'line', parts: [{ ref: { pieceId: id, contourId: sew, from: ids[0], to: ids[1] } }], movers: END(id, ids[1]) });
     const want = { x: b0.x + 20 * dirx, y: b0.y + 20 * diry };
     setSpecTargets(doc, k, Object.fromEntries(['XS', 'S', 'M', 'L', 'XL'].map(n => [sid(n), L + 20])));
     const before = JSON.stringify(doc.style.pieces);
@@ -86,7 +88,7 @@ describe('Measure Spec', () => {
     const { doc, id, P, ids, sid } = doc1();
     const a = { ...P().sew.points[0] }, c0 = { ...P().sew.points[2] };
     const D = Math.hypot(c0.x - a.x, c0.y - a.y);
-    const k = addSpecItem(doc, { name: 'Diagonal', kind: 'distance', a: { pieceId: id, anchorId: ids[0] }, b: { pieceId: id, anchorId: ids[2] } });
+    const k = addSpecItem(doc, { name: 'Diagonal', kind: 'distance', a: { pieceId: id, anchorId: ids[0] }, b: { pieceId: id, anchorId: ids[2] }, movers: END(id, ids[2]) });
     expect(specValue(doc, k)).toBeCloseTo(D, 9);
     setSpecTargets(doc, k, { [sid('M')]: D + 10 });
     applySpec(doc, [k], { sizes: [sid('M')] });
@@ -107,7 +109,7 @@ describe('Measure Spec', () => {
     const { doc, id, P, sid } = doc1();
     const ic = makeContour([gradePoint(10, 10), curvePoint(40, 30), gradePoint(80, 10)], { closed: false, type: 'internal' });
     doc.transact('ic', () => { P().internals.push(ic); });
-    const k = addSpecItem(doc, { name: 'Pocket line', kind: 'line', parts: [{ ref: { pieceId: id, contourId: ic.id, from: ic.points[0].id, to: ic.points[2].id } }] });
+    const k = addSpecItem(doc, { name: 'Pocket line', kind: 'line', parts: [{ ref: { pieceId: id, contourId: ic.id, from: ic.points[0].id, to: ic.points[2].id } }], movers: END(id, ic.points[2].id) });
     const L = specValue(doc, k)!;
     const cp0 = { ...P().internals[0].points[1] };
     setSpecTargets(doc, k, { [sid('M')]: L + 12 });
@@ -187,7 +189,7 @@ describe('Measure Spec', () => {
     const L = measureSegment(doc, id, sew, ids[0], ids[1]);
     const k = addSpecItem(doc, { name: 'Hem', kind: 'line', parts: [{ ref: { pieceId: id, contourId: sew, from: ids[0], to: ids[1] } }] });
     // the line end (ids[1]) and the corner above it (ids[2]) move together: the side seam stays vertical
-    updateSpecItem(doc, k, { movers: [...defaultSpecMovers(doc.style.measureSpec[0]), { pieceId: id, anchorId: ids[2], dir: 'with', share: 1 }] });
+    updateSpecItem(doc, k, { movers: [...END(id, ids[1]), { pieceId: id, anchorId: ids[2], dir: 'with', share: 1 }] });
     const b0 = { ...P().sew.points[1] }, c0 = { ...P().sew.points[2] }, d0 = { ...P().sew.points[3] };
     setSpecTargets(doc, k, { [sid('M')]: L + 25 });
     applySpec(doc, [k], { sizes: [sid('M')] });
@@ -196,5 +198,56 @@ describe('Measure Spec', () => {
     expect(c.x - c0.x).toBeCloseTo(b.x - b0.x, 6); expect(c.y - c0.y).toBeCloseTo(b.y - b0.y, 6);
     expect(Math.hypot(b.x - b0.x, b.y - b0.y)).toBeCloseTo(25, 5);
     expect([d.x, d.y]).toEqual([d0.x, d0.y]);
+  });
+  it('default rule: both ends move half each; a closed loop back to its start has one point with the whole share', () => {
+    const { doc, id, P, ids, sew, sid } = doc1();
+    const L = measureSegment(doc, id, sew, ids[0], ids[1]);
+    const a0 = { ...P().sew.points[0] }, b0 = { ...P().sew.points[1] };
+    const k = addSpecItem(doc, { name: 'Hem', kind: 'line', parts: [{ ref: { pieceId: id, contourId: sew, from: ids[0], to: ids[1] } }] });
+    setSpecTargets(doc, k, { [sid('M')]: L + 20 });
+    applySpec(doc, [k], { sizes: [sid('M')] });
+    const a = P().sew.points[0], b = P().sew.points[1];
+    expect(Math.hypot(a.x - a0.x, a.y - a0.y)).toBeCloseTo(10, 5);
+    expect(Math.hypot(b.x - b0.x, b.y - b0.y)).toBeCloseTo(10, 5);
+    expect(specValue(doc, k)).toBeCloseTo(L + 20, 5);
+    expect(defaultSpecMovers({ kind: 'line', parts: [{ ref: { pieceId: id, contourId: sew, from: ids[0], to: ids[1] } }, { ref: { pieceId: id, contourId: sew, from: ids[1], to: ids[0] } }] })).toEqual([{ pieceId: id, anchorId: ids[0], dir: 'along', share: 1 }]);
+    expect(defaultSpecMovers({ kind: 'distance', parts: [], a: { pieceId: id, anchorId: ids[0] }, b: { pieceId: id, anchorId: ids[2] } }).map(m => m.share)).toEqual([0.5, 0.5]);
+  });
+
+  it('a line of a measurement has its own target and rules: applying it changes that line only; the item total follows', () => {
+    const { doc, id, P, ids, sew, sid } = doc1();
+    const L1 = measureSegment(doc, id, sew, ids[0], ids[1]), L2 = measureSegment(doc, id, sew, ids[2], ids[3]);
+    const k = addSpecItem(doc, { name: 'Width', kind: 'line', parts: [{ ref: { pieceId: id, contourId: sew, from: ids[0], to: ids[1] } }, { ref: { pieceId: id, contourId: sew, from: ids[2], to: ids[3] } }] });
+    expect(specLineRows(doc, k, 1).every(r => r.target === null)).toBe(true); // no line target until one is typed
+    setSpecLineTargets(doc, k, 1, { [sid('M')]: L2 + 16 });
+    expect(specLineRows(doc, k, 1).find(r => r.sizeId === sid('M'))!.diff).toBeCloseTo(-16, 9);
+    // line rule: only its end (ids[3]) moves
+    setSpecLineMovers(doc, k, 1, END(id, ids[3]));
+    const p0 = P().sew.points.map(a => [a.x, a.y]);
+    const r = applySpec(doc, [`${k}:1`], { sizes: [sid('M')] });
+    expect(r.written).toBe(true); expect(r.items).toHaveLength(1); expect(r.items[0].id).toBe(`${k}:1`);
+    expect(measureSegment(doc, id, sew, ids[2], ids[3])).toBeCloseTo(L2 + 16, 5);
+    expect(measureSegment(doc, id, sew, ids[0], ids[1])).toBeCloseTo(L1, 9); // the other line is untouched
+    const p1 = P().sew.points.map(a => [a.x, a.y]);
+    expect(p1.slice(0, 3)).toEqual(p0.slice(0, 3));
+    expect(Math.hypot(p1[3][0] - p0[3][0], p1[3][1] - p0[3][1])).toBeCloseTo(16, 5);
+    expect(specValue(doc, k)).toBeCloseTo(L1 + L2 + 16, 5); // the total follows …
+    expect(specRows(doc, k).find(r => r.sizeId === sid('M'))!.target).toBeCloseTo(L1 + L2 + 16, 5); // … and so does its target (still on spec)
+    expect(specRows(doc, k).every(r => Math.abs(r.diff!) < 1e-5)).toBe(true); // the base moved, so every size moved: all still on spec
+    expect(doc.undoLabel()).toBe('Apply spec: Width · line 2');
+    // applying the whole item applies its line targets first, then the total
+    setSpecTargets(doc, k, { [sid('M')]: L1 + L2 + 16 });
+    setSpecLineTargets(doc, k, 0, { [sid('M')]: L1 + 6 });
+    setSpecLineMovers(doc, k, 0, null); // default: both ends of line 1, 3 each
+    const all = applySpec(doc, [k], { sizes: [sid('M')] });
+    expect(all.items.map(x => x.id)).toEqual([`${k}:0`, `${k}:1`, k]);
+    // line 1 reached its own target first; then the total (target unchanged) pulled the item's ends back by 6 in all
+    expect(specValue(doc, k)).toBeCloseTo(L1 + L2 + 16, 5);
+    // survives save / load; clearing the last target removes the line spec
+    const re = new Document(loadNative(saveNative(doc)).style);
+    expect(re.style.measureSpec[0].parts[1].targets![sid('M')]).toBeCloseTo(L2 + 16, 9);
+    setSpecLineTargets(doc, k, 1, { [sid('M')]: null });
+    expect(doc.style.measureSpec[0].parts[1].targets).toBeUndefined();
+    expect(() => applySpec(doc, [`${k}:9`])).toThrow(/No such line/);
   });
 });
