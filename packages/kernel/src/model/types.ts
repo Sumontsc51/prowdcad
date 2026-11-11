@@ -450,8 +450,11 @@ export interface MovementProgram {
  */
 export interface SpecMover {
   pieceId: Id; anchorId: Id;
-  /** 'along' = along the measured line at that point (lengthens / shortens it); 'x' / 'y' = that axis only; 'angle' = angleDeg */
-  dir: 'along' | 'x' | 'y' | 'angle';
+  /**
+   * 'with' = moves together with the end of the measured line (same direction and distance: the point rides along);
+   * 'along' = along the measured line at that point (lengthens / shortens it); 'x' / 'y' = that axis only; 'angle' = angleDeg
+   */
+  dir: 'with' | 'along' | 'x' | 'y' | 'angle';
   /** degrees from +X, CCW (dir 'angle') */
   angleDeg?: number;
   /** share of the solved movement this point takes: 1 = full, 0.5 = half, −1 = the opposite way, 0 = stays */
@@ -463,10 +466,12 @@ export interface MeasureSpecItem {
   /** 'line' = internal line(s) / outline segment(s) summed; 'distance' = straight point to point */
   kind: 'line' | 'distance';
   /** line: the measured runs (same shape as a Measure ▸ Line group) */
-  parts: { ref: { pieceId: Id; contourId: Id; from: Id; to: Id; reverse?: boolean }; cut?: boolean }[];
+  parts: { ref: { pieceId: Id; contourId: Id; from: Id; to: Id; reverse?: boolean }; cut?: boolean; /** how many times this line counts in the total (2 for a half piece); default 1 */ qty?: number }[];
   /** distance: the two points */
   a?: { pieceId: Id; anchorId: Id };
   b?: { pieceId: Id; anchorId: Id };
+  /** distance: how many times it counts in the total; default 1 */
+  qty?: number;
   /** how the geometry is measured: along the line, straight, X only, Y only */
   mode: 'contour' | 'diagonal' | 'x' | 'y';
   /** spec value per size (mm); a size without a target is left alone */
