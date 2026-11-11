@@ -357,14 +357,31 @@ export async function importFiles(app: App, files: File[]) {
       const r = await rememberedDialog('import.dxf', {
         title: `Import ${f.name}`, message: rulF ? `Grade rules: ${rulF.name}` : 'No companion .rul selected (select both files together to pair them).',
         fields: [
-          { kind: 'select', key: 'units', label: 'Units', value: 'auto', options: [{ value: 'auto', label: 'Auto ($INSUNITS / heuristic)' }, { value: 'mm', label: 'mm' }, { value: 'cm', label: 'cm' }, { value: 'in', label: 'inch' }] },
+          // never remembered: a unit forced for one file must not silently apply to the next one (a mm file read as inch is 25.4× too big)
+          { kind: 'select', key: 'units', label: 'Units of the file', value: 'auto', remember: false, options: [{ value: 'auto', label: 'Auto (from the file, else by size)' }, { value: 'mm', label: 'mm' }, { value: 'cm', label: 'cm' }, { value: 'in', label: 'inch' }], hint: 'Leave on Auto unless the pieces come in at the wrong size.' },
           { kind: 'checkbox', key: 'flip', label: 'Flip Y (file from a y-down system)', value: false },
           { kind: 'checkbox', key: 'merge', label: 'Merge size blocks into graded pieces', value: true },
           { kind: 'number', key: 'corner', label: 'Corner angle threshold', value: 30, min: 1, max: 179, suffix: '°' },
         ],
       });
       if (!r) continue;
-      const rep = ops.importDXF(await f.text(), { rul: rulF ? await rulF.text() : undefined, units: r.units === 'auto' ? undefined : r.units as 'mm' | 'cm' | 'in', flipY: !!r.flip, mergeSizes: !!r.merge, cornerAngleDeg: r.corner as number });
+      const text = await f.text(), rulText = rulF ? await rulF.text() : undefined;
+      const read = (units?: 'mm' | 'cm' | 'in') => ops.importDXF(text, { rul: rulText, units, flipY: !!r.flip, mergeSizes: !!r.merge, cornerAngleDeg: r.corner as number });
+      let rep = read(r.units === 'auto' ? undefined : r.units as 'mm' | 'cm' | 'in');
+      // sanity check of the size: garment pieces are not metres long or a few mm small. Offer the unit that gives a believable size.
+      const size = largestPieceMm(rep);
+      if (size !== null && (size > MAX_PIECE_MM || size < MIN_PIECE_MM)) {
+        const alts = (['mm', 'cm', 'in'] as const).filter(u => u !== rep.unitsDetected).map(u => { try { const x = read(u); return { u, rep: x, size: largestPieceMm(x) ?? 0 }; } catch { return null; } }).filter((x): x is { u: 'mm' | 'cm' | 'in'; rep: ImportReport; size: number } => !!x && x.size <= MAX_PIECE_MM && x.size >= MIN_PIECE_MM);
+        const best = alts.sort((a, b) => Math.abs(Math.log(a.size / 800)) - Math.abs(Math.log(b.size / 800)))[0];
+        if (best) {
+          const q = await showDialog({
+            title: `${f.name} — check the units`,
+            message: `Read as ${unitName(rep.unitsDetected)}, the largest piece is ${sizeText(size)} ${size > MAX_PIECE_MM ? 'long. That is far too big for a garment piece' : 'across. That is far too small for a garment piece'}.\n\nRead as ${unitName(best.u)} it is ${sizeText(best.size)}.`,
+            okLabel: `Use ${unitName(best.u)} (${sizeText(best.size)})`, cancelLabel: `Keep ${unitName(rep.unitsDetected)}`,
+          });
+          if (q) rep = best.rep;
+        }
+      }
       await commitImport(app, f.name + (rulF ? ` + ${rulF.name}` : ''), rep);
       rulF = undefined;
     }
@@ -391,12 +408,26 @@ export async function importFiles(app: App, files: File[]) {
   } catch (err) { reportError(err, 'Import'); }
 }
 
+const MAX_PIECE_MM = 4000, MIN_PIECE_MM = 25;
+const unitName = (u: string) => (u === 'in' ? 'inch' : u);
+const sizeText = (mm: number) => `${(mm / 25.4).toFixed(1)} in / ${mm >= 1000 ? (mm / 1000).toFixed(2) + ' m' : Math.round(mm) + ' mm'}`;
+/** Longest side of the largest imported piece (base size, mm); null when there is nothing to measure. */
+function largestPieceMm(rep: ImportReport): number | null {
+  let best = 0;
+  for (const p of rep.pieces) {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const a of p.sew.points) { x0 = Math.min(x0, a.x); x1 = Math.max(x1, a.x); y0 = Math.min(y0, a.y); y1 = Math.max(y1, a.y); }
+    if (Number.isFinite(x0)) best = Math.max(best, x1 - x0, y1 - y0);
+  }
+  return best > 0 ? best : null;
+}
+
 /** Import report dialog → add pieces (+ rule library) to the document. */
 async function commitImport(app: App, name: string, rep: ImportReport) {
   const layers = Object.entries(rep.layerMap).map(([l, i]) => `  ${l.padEnd(10)} ${i.role.padEnd(12)} ${i.entities}`).join('\n');
   const msg = [
     `${rep.pieces.length} piece(s): ${rep.pieces.map(p => p.name).join(', ') || '—'}`,
-    `Units: ${rep.unitsDetected} (${rep.unitsSource})${rep.yFlipped ? ' · y flipped' : ''}`,
+    `Units: ${rep.unitsDetected} (${rep.unitsSource})${rep.yFlipped ? ' · y flipped' : ''}${largestPieceMm(rep) !== null ? ` · largest piece ${sizeText(largestPieceMm(rep)!)}` : ''}`,
     `Sizes: ${rep.sizeLine.sizes.map(s => s.name).join(' ')} (base ${rep.sizeLine.sizes.find(s => s.id === rep.sizeLine.baseSizeId)?.name ?? '?'})`,
     rep.ruleLibrary ? `Rule library: ${rep.ruleLibrary.rules.length} rules` : '',
     rep.unresolvedRules?.length ? `Unresolved rules: ${rep.unresolvedRules.join(', ')}` : '',
