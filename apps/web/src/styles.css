@@ -465,3 +465,6 @@ table.sp-list tr.sp-det input.sp-qty { width: 54px; text-align: right; }
 .btn.sm.warnb { border-color: var(--warn); color: var(--warn); }
 .ruleswin .fw-foot { flex-wrap: wrap; row-gap: 6px; }
 table.sp-rules tr { cursor: pointer; }
+table.sp-list tr.sp-det input.sp-ltarget { width: 74px; }
+table.sp-list tr.sp-det input.sp-ltarget::placeholder { color: var(--dim); opacity: .55; }
+table.sp-list tr.sp-det td.pass { color: var(--ok); } table.sp-list tr.sp-det td.fail { color: var(--danger); }
