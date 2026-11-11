@@ -332,7 +332,7 @@ const cases = [
     },
     expect: async h => {
       const now = await hand(h, [['FRONT', 'CF_HEM', 'SS_HEM']]);
-      const errs = [req(h._item.n === 1 && h._item.kind === 'line' && h._item.movers.join() === 'along:1' && h._item.targets === 4, 'new item ' + JSON.stringify(h._item))];
+      const errs = [req(h._item.n === 1 && h._item.kind === 'line' && h._item.movers.join() === 'along:0.5,along:0.5' && h._item.targets === 4, 'new item ' + JSON.stringify(h._item))];
       for (const r of now) { const o = h._hem0.find(x => x.size === r.size).parts[0]; errs.push(req(near(r.parts[0], o + 15, 0.01), `${r.size} hem ${r.parts[0].toFixed(4)} ≠ ${(o + 15).toFixed(4)}`)); }
       errs.push(req(h._sum === 'ok', 'summary ' + h._sum));
       errs.push(req(h._diff.length === 4 && h._diff.every(c => /pass/.test(c)), 'diff cells ' + JSON.stringify(h._diff)));
@@ -349,6 +349,7 @@ const cases = [
       await w.locator('[data-act="from-sel"]').click(); await h.settle(80);
       await w.locator('[data-act="rules"]').first().click(); await h.settle(80);
       h._rulesTitle = await h.page.locator('.fwin[data-win="msrules"] .fw-title').textContent();
+      await h.page.locator('.fwin[data-win="msrules"] table.sp-rules tr[data-mover] button.mini').first().click(); await h.settle(80); // SS_HEM stays: only UA moves
       await h.page.locator('.fwin[data-win="msrules"] table.sp-rules select[data-rule="dir"]').selectOption('y'); await h.settle(80);
       if (!(await w.locator('.sptab').count())) { await w.locator('[data-act="all-sizes"]').click(); await h.settle(80); }
       h._now = await h.ev(() => { const E = window.__e2e; const it = E.app.style.measureSpec[0]; return Object.fromEntries(E.app.sizeLine().sizes.map(s => [s.name, window.prowdcad.ops.specValue(E.app.doc, it.id, s.id)])); });
@@ -367,7 +368,7 @@ const cases = [
     },
   }),
   C('spec-chart-rules', {
-    title: 'Measure spec chart: expand shows piece / length / quantity; quantity 2 doubles the line and the targets follow; Size drop-down; Rules window adds the selected point “with the line end” (and auto-adds); Apply moves both',
+    title: 'Measure spec chart: expand shows piece / length / quantity; quantity 2 doubles the line and the targets follow; Size drop-down; Rules window adds the selected point “with the line end” (and auto-adds); default rule = both ends, half each; Apply moves them',
     pre: async h => { await resetMeasure(h); h._hem0 = await hand(h, [['FRONT', 'CF_HEM', 'SS_HEM']]); h._p0 = await h.ev(() => { const E = window.__e2e; const f = n => { const a = E.findA('FRONT', n); return { x: a.a.x, y: a.a.y }; }; return { hem: f('SS_HEM'), ua: f('UA') }; }); },
     invoke: async h => {
       await h.ev(() => { const E = window.__e2e; const a = E.findA('FRONT', 'CF_HEM'), b = E.findA('FRONT', 'SS_HEM'); E.app.sel = { pieces: [a.p.id], anchors: [], segments: [{ pieceId: a.p.id, contourId: a.c.id, from: a.a.id, to: b.a.id }] }; E.app.invalidate(); });
@@ -387,6 +388,7 @@ const cases = [
       // rule maker: UA rides with the hem end
       await w.locator('[data-act="rules"]').first().click(); await h.settle(80);
       const r = h.page.locator('.fwin[data-win="msrules"]');
+      h._default = await h.ev(() => window.__e2e.app.style.measureSpec[0].movers.map(m => m.dir + ':' + m.share));
       // (selected through the app: the two windows may sit over the point on the sheet)
       await h.ev(() => { const E = window.__e2e; const a = E.findA('FRONT', 'UA'); E.app.selectAnchor({ pieceId: a.p.id, contourId: a.c.id, anchorId: a.a.id }); }); await h.settle(120);
       await r.locator('[data-act="add-movers"]').click(); await h.settle(80);
@@ -409,15 +411,61 @@ const cases = [
         req(near(parseFloat(h._total2), 2 * base0, 0.01), `total with quantity 2: ${h._total2} ≠ ${(2 * base0).toFixed(2)}`),
         req(/pass/.test(h._diff2), 'after the quantity change the row should still be on spec: ' + h._diff2),
         req(h._sizeL === 'L', 'Size drop-down did not switch the size: ' + h._sizeL),
-        req(h._movers.join() === 'along:1,with:1', 'rules after “Add selected points”: ' + h._movers),
-        req(h._auto === 3, 'auto-add did not add the newly selected point: ' + h._auto),
+        req(h._movers.join() === 'along:0.5,along:0.5,with:1', 'rules after “Add selected points”: ' + h._movers),
+        req(h._default.join() === 'along:0.5,along:0.5', 'default rule should be both ends, half each: ' + h._default),
+        req(h._auto === 4, 'auto-add did not add the newly selected point: ' + h._auto),
         req(got.qty === 2, 'quantity not stored: ' + got.qty),
       ];
       // total = 2 × hem; +24 on the total = +12 on the hem; UA moved by the same vector as the hem end
       for (const r of now) { const o = h._hem0.find(x => x.size === r.size).parts[0]; errs.push(req(near(r.parts[0], o + 12, 0.01), `${r.size} hem ${r.parts[0].toFixed(4)} ≠ ${(o + 12).toFixed(4)}`)); }
       const dh = { x: got.hem.x - h._p0.hem.x, y: got.hem.y - h._p0.hem.y }, du = { x: got.ua.x - h._p0.ua.x, y: got.ua.y - h._p0.ua.y };
-      errs.push(req(near(Math.hypot(dh.x, dh.y), 12, 0.01), 'hem end moved ' + JSON.stringify(dh)));
-      errs.push(req(near(du.x, dh.x, 1e-6) && near(du.y, dh.y, 1e-6), `UA did not ride with the line end: ${JSON.stringify(du)} vs ${JSON.stringify(dh)}`));
+      // both ends share the +12 (6 each); UA rides with the line end's direction at share 1 = twice the end's own half share
+      errs.push(req(near(Math.hypot(dh.x, dh.y), 6, 0.01), 'hem end moved ' + JSON.stringify(dh)));
+      errs.push(req(near(du.x, 2 * dh.x, 1e-6) && near(du.y, 2 * dh.y, 1e-6), `UA did not ride with the line end: ${JSON.stringify(du)} vs 2 × ${JSON.stringify(dh)}`));
+      return errs;
+    },
+  }),
+  C('spec-line-target-excel', {
+    title: 'Measure spec: a piece line has its own Target / Apply / Rules (only that line changes, the total target follows); Reset to line ends = both ends 0.5; Excel… saves an .xlsx',
+    pre: async h => { await resetMeasure(h); h._l0 = await hand(h, [['FRONT', 'CF_HEM', 'SS_HEM'], ['FRONT', 'SS_HEM', 'UA']]); },
+    invoke: async h => {
+      await h.ev(() => { const E = window.__e2e; const a = E.findA('FRONT', 'CF_HEM'), b = E.findA('FRONT', 'SS_HEM'), c = E.findA('FRONT', 'UA'); E.app.sel = { pieces: [a.p.id], anchors: [], segments: [{ pieceId: a.p.id, contourId: a.c.id, from: a.a.id, to: b.a.id }, { pieceId: a.p.id, contourId: a.c.id, from: b.a.id, to: c.a.id }] }; E.app.invalidate(); });
+      await h.cmd('measure.spec');
+    },
+    drive: async h => {
+      const w = h.page.locator('.fwin[data-win="mspec"]');
+      await w.locator('[data-act="from-sel"]').click(); await h.settle(80);
+      if (!(await w.locator('tr.sp-det').count())) { await w.locator('[data-act="expand"]').first().click(); await h.settle(80); }
+      h._lineCtl = await h.ev(() => [...document.querySelectorAll('.fwin[data-win="mspec"] tr.sp-det[data-detail]')].map(tr => ({ target: !!tr.querySelector('input.sp-ltarget'), apply: !!tr.querySelector('[data-act="apply-line"]'), rules: !!tr.querySelector('[data-act="rules-line"]'), applyOff: tr.querySelector('[data-act="apply-line"]')?.classList.contains('disabled') })));
+      const hem = h._l0.find(r => r.size === 'M').parts[0];
+      await typeInto(h, w.locator('input.sp-ltarget').first(), String(Math.round((hem + 10) * 1000) / 1000));
+      await w.locator('[data-act="apply-line"]').first().click(); await h.settle(150);
+      h._pomDiff = await h.ev(() => document.querySelector('.fwin[data-win="mspec"] tr.sp-pom td:nth-child(5)').className);
+      // rules of the SECOND line: take one point out, then Reset to line ends → both ends again, 0.5 each
+      await w.locator('[data-act="rules-line"]').nth(1).click(); await h.settle(80);
+      const r = h.page.locator('.fwin[data-win="msrules"]');
+      h._ltitle = await r.locator('.fw-title').textContent();
+      await r.locator('table.sp-rules tr[data-mover] button.mini').first().click(); await h.settle(80);
+      h._one = await r.locator('table.sp-rules tr[data-mover]').count();
+      await r.locator('[data-act="rules-reset"]').click(); await h.settle(80);
+      h._reset = await h.ev(() => [...document.querySelectorAll('.fwin[data-win="msrules"] table.sp-rules tr[data-mover] input[data-rule="share"]')].map(i => i.value));
+      await h.ev(() => { window.__e2e.downloads.length = 0; });
+      await w.locator('[data-act="excel"]').click(); await h.settle(200);
+      h._dl = (await h.downloads()).map(d => ({ name: d.name, size: d.size ?? d.bytes ?? d.length ?? null }));
+      h._sheets = await h.ev(async () => { const m = await import('/src/panels/spec.ts'); return m.specSheets(window.__e2e.app).map(s => ({ name: s.name, rows: s.rows.length, cols: s.rows[0].length, first: s.rows[1] })); });
+    },
+    expect: async h => {
+      const now = await hand(h, [['FRONT', 'CF_HEM', 'SS_HEM'], ['FRONT', 'SS_HEM', 'UA']]);
+      const errs = [
+        req(h._lineCtl.length === 2 && h._lineCtl.every(x => x.target && x.apply && x.rules && x.applyOff), 'each piece line needs Target / Apply (off until a target is typed) / Rules: ' + JSON.stringify(h._lineCtl)),
+        req(/pass/.test(h._pomDiff), 'after a line apply the measurement should still be on spec (its target follows): ' + h._pomDiff),
+        req(/^Rules — .* · /.test(h._ltitle || ''), 'line rules window title: ' + h._ltitle),
+        req(h._one === 1 && h._reset.join() === '0.5,0.5', `Reset to line ends: ${h._one} row before, shares after ${h._reset}`),
+        req(h._dl.length === 1 && /measure spec\.xlsx$/.test(h._dl[0].name), 'Excel download: ' + JSON.stringify(h._dl)),
+        req(h._sheets.map(s => s.name).join() === 'Totals,Targets,Difference,Lines,Line targets' && h._sheets[0].cols === 5 && h._sheets[3].rows === 4, 'sheets ' + JSON.stringify(h._sheets)),
+      ];
+      // the hem (both ends, half each) is +10 in every size; so the side seam that shares SS_HEM changed too, but only through that shared point
+      for (const r of now) { const o = h._l0.find(x => x.size === r.size).parts[0]; errs.push(req(near(r.parts[0], o + 10, 0.01), `${r.size} hem ${r.parts[0].toFixed(4)} ≠ ${(o + 10).toFixed(4)}`)); }
       return errs;
     },
   }),
