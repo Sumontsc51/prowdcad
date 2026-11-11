@@ -433,3 +433,18 @@ kbd { font: 10px var(--mono); color: var(--dim); border: 1px solid var(--line2);
 
 /* keyboard focus is always visible (mouse clicks do not show a ring) */
 button:focus-visible, .to-mode:focus-visible, .menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ───── Measure spec window ───── */
+.specwin .fw-body { display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 170px); overflow-y: auto; }
+.sp-bar, .sp-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sp-geo { color: var(--text); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 380px; }
+table.sp-list td input.sp-name { width: 150px; font-family: var(--sans); }
+table.sp-list td input.sp-target { width: 74px; text-align: right; }
+table.sp-list tr { cursor: pointer; }
+table.sp-list td.pass, table.sp-rules td.pass { color: var(--ok); }
+table.sp-list td.fail { color: var(--danger); }
+table.sp-list td .btn.sm { margin-right: 4px; }
+table.sp-rules td input { width: 64px; text-align: right; }
+table.sp-rules td select { min-width: 120px; }
+.sp-note { font-size: 10px; }
+.warnc { color: var(--warn); }
