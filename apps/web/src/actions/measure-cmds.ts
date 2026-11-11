@@ -19,7 +19,8 @@ import { resolveFor } from '../geometry';
 import { totalLength, perimeter, area } from '@prowdcad/kernel';
 import { reportError } from '../commands';
 import { Cancelled, runOrPick } from '../selection';
-import { renderMeasureWindow, setMeasureHooks } from '../panels/measure-table';
+import { renderMeasureWindow, setMeasureHooks, MS, partName } from '../panels/measure-table';
+import { openSpecWindow, addSpecFromMeasure } from '../panels/spec';
 import { openGradeFit } from '../panels/grade-fit';
 import { settings, saveSettings } from '../settings';
 
@@ -36,6 +37,47 @@ function segLabel(app: App, r: SegRef): string {
   const c = [p.sew, ...p.internals].find(x => x.id === r.contourId);
   const ia = c?.points.findIndex(a => a.id === r.from) ?? -1, ib = c?.points.findIndex(a => a.id === r.to) ?? -1;
   return `${p.name} ${c === p.sew ? 'sew' : 'int'} ${ia + 1}→${ib + 1}${r.reverse ? ' (rev)' : ''}`;
+}
+
+/**
+ * Measure window ▸ Adjust segment…: change the pattern from an open measurement. Pick one of the
+ * measured lines and make it an exact length, or (with two groups) make the difference between the
+ * groups — the ease — a value. All sizes or the active size only; one undo step.
+ */
+async function adjustSegment(app: App) {
+  const all = MS.groups.flatMap((g, gi) => g.parts.filter(p => !p.cut).map(p => ({ g, gi, p })));
+  if (!all.length) throw new Error('Measure a line first (cut lines cannot be adjusted — pick the sew line)');
+  const two = MS.groups.filter(g => g.parts.length).length >= 2;
+  const total = (gi: number, sid: string) => ops.measureGroup(app.doc, MS.groups[gi].parts, 'contour').find(r => r.sizeId === sid)?.total ?? null;
+  const diffAt = (sid: string) => { const a = total(0, sid), b = total(1, sid); return a === null || b === null ? null : MS.diff === 'BA' ? b - a : a - b; };
+  const actName = app.sizeLine().sizes.find(s => s.id === app.activeSize)?.name ?? '';
+  const dNow = two ? diffAt(app.activeSize) : null;
+  const diffLabel = MS.diff === 'BA' ? `${MS.groups[1]?.name} − ${MS.groups[0]?.name}` : `${MS.groups[0]?.name} − ${MS.groups[1]?.name}`;
+  const first = all[0];
+  const r = await showDialog({ title: 'Adjust segment', message: two && dNow !== null ? `Size ${actName}: ${diffLabel} = ${fmt(dNow)} ${unitLabel()}` : `Size ${actName}: ${first.p.label} = ${fmt(ops.measureRef(app.doc, first.p.ref, 'contour', app.activeSize))} ${unitLabel()}`, fields: [
+    { kind: 'select', key: 'seg', label: 'Line to change', value: '0', options: all.map((x, i) => ({ value: String(i), label: `${MS.groups.length > 1 ? x.g.name + ' · ' : ''}${x.p.label} ${partName(app, x.p)}` })) },
+    { kind: 'radio', key: 'how', label: 'Target', value: two ? 'diff' : 'len', options: [...(two ? [{ value: 'diff', label: `Make ${diffLabel} equal to…` }] : []), { value: 'len', label: 'Make this line exactly…' }] },
+    { kind: 'length', key: 'v', label: 'Value', value: two ? MS.ease : ops.measureRef(app.doc, first.p.ref, 'contour', app.activeSize) },
+    { kind: 'select', key: 'm', label: 'How', value: 'moveEnd', options: LENGTH_METHODS },
+    { kind: 'checkbox', key: 'one', label: `Active size only (${actName})`, value: app.activeSize !== app.baseSize() },
+  ] });
+  if (!r) return;
+  const x = all[Number(r.seg)];
+  const sizeId = r.one ? app.activeSize : undefined;
+  const sid = sizeId ?? app.baseSize();
+  const cur = ops.measureRef(app.doc, x.p.ref, 'contour', sid);
+  let target = r.v as number;
+  if (r.how === 'diff') {
+    const d = diffAt(sid); if (d === null) throw new Error('The two groups cannot both be measured in that size');
+    // the chosen line belongs to the group that adds to the difference (+) or subtracts from it (−)
+    const sign = (x.gi === 1) === (MS.diff === 'BA') ? 1 : -1;
+    if (x.gi > 1) throw new Error('Pick a line of the first two groups to set their difference');
+    target = cur + sign * ((r.v as number) - d);
+  }
+  if (!(target > 0)) throw new Error(`That would make the line ${fmt(target)} ${unitLabel()} long`);
+  const out = ops.segmentLengthSetTo(app.doc, x.p.ref.pieceId, x.p.ref.contourId, x.p.ref.from, x.p.ref.to, target, r.m as LengthSetMethod, sizeId, x.p.ref.reverse);
+  if (!out.converged) toast(`Could not reach ${fmt(target)} (best ${fmt(out.length)})`, 'warn'); else toast(`${x.p.label} = ${fmt(out.length)} ${unitLabel()}`, 'ok');
+  renderMeasureWindow(app);
 }
 
 async function walkingCheckFlow(app: App) {
@@ -95,13 +137,18 @@ async function scaleDialog(app: App) {
 }
 
 export function registerMeasure(app: App) {
-  setMeasureHooks({ gradeToSpec: (groups, mode) => openGradeFit(app, groups, mode) });
+  setMeasureHooks({
+    gradeToSpec: (groups, mode) => openGradeFit(app, groups, mode),
+    adjust: () => void adjustSegment(app).catch(err => reportError(err, 'Adjust segment')),
+    addToSpec: () => { try { addSpecFromMeasure(app); openSpecWindow(app); toast('Added to the Measure spec — type a target and Apply', 'ok'); } catch (err) { reportError(err, 'Add to spec'); } },
+  });
   registerCommand({ id: 'measure.tool', title: 'Measure tool', menu: 'Measure', group: 0, hint: 'M', run: () => app.setTool('measure') });
   // no menu entry: Measure tool already opens Line mode with the per-size window; kept for its shortcut and the command finder
   registerCommand({ id: 'measure.line', title: 'Measure line (sum per size)…', hotkey: 'Shift+Alt+L', run: () => {
     (settings.toolState ??= {}).measure = { ...(settings.toolState.measure ?? {}), mode: 'line' }; saveSettings();
     app.setTool('measure'); renderMeasureWindow(app);
   } });
+  registerCommand({ id: 'measure.spec', title: 'Measure spec…', menu: 'Measure', group: 0, hotkey: 'Ctrl+Shift+M', hint: 'Points of measure with targets: the pattern follows the spec', run: () => openSpecWindow(app) });
   registerCommand({ id: 'measure.walk', title: 'Walk tool', menu: 'Measure', group: 0, run: () => app.setTool('walk') });
   registerCommand({ id: 'measure.piece', title: 'Piece info', menu: 'Measure', group: 0, hotkey: 'Ctrl+I', enabled: hasPiece, run: async () => {
     const p = onePiece(app);
