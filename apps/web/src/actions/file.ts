@@ -441,7 +441,13 @@ export async function mergeFromFile(app: App) {
 
 // ───────────── auto-backup / crash recovery ─────────────
 
-export function clearBackup() { store.del(BACKUP_KEY); }
+/**
+ * The backup slot is shared by every tab of the app (same browser storage). A tab only ever removes
+ * a backup it wrote (or restored) itself: saving or cleanly closing one tab must not delete the
+ * unsaved work of another tab.
+ */
+let backupIsMine = false;
+export function clearBackup() { if (backupIsMine) { store.del(BACKUP_KEY); backupIsMine = false; } }
 
 /**
  * "Keep for later" on the recovery question: the backup stays until the user restores or discards it.
@@ -452,20 +458,21 @@ const HELD_KEY = 'prowdcad.web.backup.held';
 
 export function startAutoBackup(app: App) {
   let lastRev = -1, warned = false;
-  const tick = () => {
-    if (!app.isDirty() || app.doc.revision() === lastRev) return;
+  const tick = (force = false) => {
+    if (!app.isDirty() || (!force && app.doc.revision() === lastRev)) return;
     const ok = store.set(BACKUP_KEY, JSON.stringify({ at: new Date().toISOString(), fileName: app.fileName, style: app.doc.style }));
-    if (ok) lastRev = app.doc.revision();
+    if (ok) { lastRev = app.doc.revision(); backupIsMine = true; }
     else if (!warned) {
       // browser storage full / blocked: say so once instead of silently running without a safety net
       warned = true;
       toast('Auto-backup could not be written (browser storage is full or blocked). Save your work to a file regularly.', 'warn', 7000);
     }
   };
-  setInterval(tick, 30_000);
+  setInterval(() => tick(), 30_000);
   store.set(SESSION_KEY, String(Date.now()));
   window.addEventListener('beforeunload', e => {
-    if (app.isDirty()) { tick(); e.preventDefault(); e.returnValue = ''; return; }
+    // closing with unsaved work: always write (another tab may have removed or replaced the backup since the last tick)
+    if (app.isDirty()) { tick(true); e.preventDefault(); e.returnValue = ''; return; }
     store.del(SESSION_KEY); clearBackup();
   });
 }
@@ -495,6 +502,7 @@ export async function offerRecovery(app: App): Promise<boolean> {
   }
   // a restored held backup becomes this session's live backup (the restored style is unsaved)
   if (key === HELD_KEY) { store.set(BACKUP_KEY, raw); store.del(HELD_KEY); }
+  backupIsMine = true; // this tab now owns the restored backup: saving it clears the slot
   app.doc.load(data.style);
   app.fileName = data.fileName; app.fileHandle = null;
   app.savedRev = -1;
