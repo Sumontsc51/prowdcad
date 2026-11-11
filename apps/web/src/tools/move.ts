@@ -194,6 +194,13 @@ function groupRefs(app: App): AnchorRef[] {
   const refs = app.sel.anchors.filter(r => !app.hiddenPieces.has(r.pieceId));
   return refs.some(r => r.anchorId === pick.anchorId) ? refs : [...refs, pick];
 }
+/** Group points that really move: points of a locked internal line are left out, the lock moves them with the outline. */
+function groupMovers(app: App): AnchorRef[] {
+  const all = groupRefs(app);
+  const free = all.filter(g => !lockBlock(app, g.pieceId, g.contourId, g.anchorId, 'point'));
+  if (!free.length) { const why = lockBlock(app, all[0].pieceId, all[0].contourId, all[0].anchorId, 'point'); throw new Error(why ?? 'Nothing to move'); }
+  return free;
+}
 function mpPieceIds(app: App): Id[] {
   if (!MP.pick) return [];
   return mpMode() === 'group' ? [...new Set(groupRefs(app).map(r => r.pieceId))] : [MP.pick.ref.pieceId];
@@ -227,7 +234,7 @@ function mpApply(app: App, d: Document, spec: MPSpec) {
   const piece = d.piece(r.pieceId);
   if (piece.locked) throw new Error(lockedMsg(piece));
   const mode = mpMode();
-  for (const g of mode === 'group' ? groupRefs(app) : [r]) { const why = lockBlock(app, g.pieceId, g.contourId, g.anchorId, 'point'); if (why) throw new Error(why); }
+  if (mode !== 'group') { const why = lockBlock(app, r.pieceId, r.contourId, r.anchorId, 'point'); if (why) throw new Error(why); }
   const cur = () => ops.pointPos(d, r, sid ?? d.baseSize(piece));
   switch (mode) {
     case 'single': case 'h': case 'v': {
@@ -255,7 +262,7 @@ function mpApply(app: App, d: Document, spec: MPSpec) {
       const dLocal = spec.kind === 'abs' ? { x: spec.p.x - cur().x, y: spec.p.y - cur().y } : spec.d;
       const dWorld = dirToWorld(piece, dLocal);
       const by = new Map<Id, AnchorRef[]>();
-      for (const g of groupRefs(app)) { const l = by.get(g.pieceId) ?? []; l.push(g); by.set(g.pieceId, l); }
+      for (const g of groupMovers(app)) { const l = by.get(g.pieceId) ?? []; l.push(g); by.set(g.pieceId, l); }
       for (const [pid, refs] of by) {
         const pc = d.piece(pid);
         if (pc.locked) throw new Error(lockedMsg(pc));
