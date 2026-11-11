@@ -36,7 +36,8 @@ export function inputBoxOpen(): boolean { return !!live; }
 export function inputBoxCommit(): void { live?.ok(); }
 export function inputBoxCancel(): void { live?.cancel(); }
 
-const fmtVal = (f: IBField) => f.kind === 'length' ? fmt(f.value) : String(Math.round(f.value * 1e6) / 1e6);
+/** A zero value opens as an empty field (it reads as 0), so a value can be typed straight away. */
+const fmtVal = (f: IBField) => Math.abs(f.value) < 1e-9 ? '' : f.kind === 'length' ? fmt(f.value) : String(Math.round(f.value * 1e6) / 1e6);
 
 export function openInputBox(o: IBOptions): Promise<IBResult | null> {
   live?.cancel();
@@ -54,6 +55,7 @@ export function openInputBox(o: IBOptions): Promise<IBResult | null> {
       const v: Record<string, number> = {};
       for (const f of mode.fields) {
         const t = inputs.get(f.key)!.value;
+        if (!t.trim()) { v[f.key] = 0; continue; }
         const n = f.kind === 'length' ? parseLen(t) : parseNum(t);
         if (!Number.isFinite(n)) return `${f.label}: not a valid ${f.kind === 'length' ? 'length' : 'number'}`;
         v[f.key] = n;
@@ -66,7 +68,7 @@ export function openInputBox(o: IBOptions): Promise<IBResult | null> {
       clear(rows);
       inputs.clear();
       mode.fields.forEach((f, i) => {
-        const inp = h('input', { type: 'text', value: i === 0 && first && o.typed != null ? o.typed : fmtVal(f), 'data-key': f.key, autocomplete: 'off', spellcheck: 'false' }) as HTMLInputElement;
+        const inp = h('input', { type: 'text', value: i === 0 && first && o.typed != null ? o.typed : fmtVal(f), 'data-key': f.key, placeholder: '0', autocomplete: 'off', spellcheck: 'false' }) as HTMLInputElement;
         inp.addEventListener('input', () => {
           // "12,5" in the first of two fields → both fields
           if (i === 0 && mode.fields.length > 1 && /^[^,]+,[^,]+$/.test(inp.value)) {
