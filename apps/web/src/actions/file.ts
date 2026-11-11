@@ -362,11 +362,12 @@ export async function importFiles(app: App, files: File[]) {
           { kind: 'checkbox', key: 'flip', label: 'Flip Y (file from a y-down system)', value: false },
           { kind: 'checkbox', key: 'merge', label: 'Merge size blocks into graded pieces', value: true },
           { kind: 'number', key: 'corner', label: 'Corner angle threshold', value: 30, min: 1, max: 179, suffix: '°' },
+          { kind: 'checkbox', key: 'curves', label: 'Rebuild curves from sparse points', value: true, hint: 'For files that write a curve as only a few points and no curve points (TUKAcad and similar): a shallow bend becomes a smooth point, so the curve comes back instead of a polygon. Files that mark their curve points are not changed.' },
         ],
       });
       if (!r) continue;
       const text = await f.text(), rulText = rulF ? await rulF.text() : undefined;
-      const read = (units?: 'mm' | 'cm' | 'in') => ops.importDXF(text, { rul: rulText, units, flipY: !!r.flip, mergeSizes: !!r.merge, cornerAngleDeg: r.corner as number });
+      const read = (units?: 'mm' | 'cm' | 'in') => ops.importDXF(text, { rul: rulText, units, flipY: !!r.flip, mergeSizes: !!r.merge, cornerAngleDeg: r.corner as number, sparseCurves: r.curves !== false });
       let rep = read(r.units === 'auto' ? undefined : r.units as 'mm' | 'cm' | 'in');
       // sanity check of the size: garment pieces are not metres long or a few mm small. Offer the unit that gives a believable size.
       const size = largestPieceMm(rep);
@@ -429,6 +430,7 @@ async function commitImport(app: App, name: string, rep: ImportReport) {
     `${rep.pieces.length} piece(s): ${rep.pieces.map(p => p.name).join(', ') || '—'}`,
     `Units: ${rep.unitsDetected} (${rep.unitsSource})${rep.yFlipped ? ' · y flipped' : ''}${largestPieceMm(rep) !== null ? ` · largest piece ${sizeText(largestPieceMm(rep)!)}` : ''}`,
     `Sizes: ${rep.sizeLine.sizes.map(s => s.name).join(' ')} (base ${rep.sizeLine.sizes.find(s => s.id === rep.sizeLine.baseSizeId)?.name ?? '?'})`,
+    (() => { const all = rep.pieces.flatMap(p => p.sew.points); const sm = all.filter(a => a.smooth).length; return `Points: ${all.length} on the outlines, ${sm} smooth (on a curve), ${all.length - sm} corner / straight`; })(),
     rep.ruleLibrary ? `Rule library: ${rep.ruleLibrary.rules.length} rules` : '',
     rep.unresolvedRules?.length ? `Unresolved rules: ${rep.unresolvedRules.join(', ')}` : '',
     layers ? `Layers:\n${layers}` : '',
