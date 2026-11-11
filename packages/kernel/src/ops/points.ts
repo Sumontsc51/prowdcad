@@ -201,6 +201,39 @@ export function addPointAt(doc: Document, pieceId: Id, contourId: Id, pt: Vec, k
 
 // ───────────────────────── move ─────────────────────────
 
+/**
+ * Make the smooth grade points next to `anchorId` work as a split before that point is moved: the handle on
+ * their far side is written out (so the line beyond the grade point keeps its exact shape), the near side stays
+ * automatic and follows the move. A side that an earlier call wrote and nobody edited since is released first.
+ */
+export function holdShapeAcrossGrade(doc: Document, pieceId: Id, anchorId: Id): void {
+  doc.transact('Hold shape', () => {
+    const piece = piecesHas(doc, pieceId), line = doc.sizeLine(piece);
+    const { contour, index } = findAnchorIn(piece, anchorId);
+    const P = contour.points, n = P.length;
+    if (n < 3) return;
+    const at = (j: number) => contour.closed ? ((j % n) + n) % n : j < 0 || j >= n ? -1 : j;
+    const same = (a?: Vec, b?: Vec) => !!a && !!b && Math.abs(a.x - b.x) < 1e-9 && Math.abs(a.y - b.y) < 1e-9;
+    const release = (a: Anchor, side: 'hIn' | 'hOut') => {
+      if (!a.hHold?.[side]) return;
+      if (same(a[side], a.hHold[side])) delete a[side];
+      delete a.hHold[side]; if (!a.hHold.hIn && !a.hHold.hOut) delete a.hHold;
+    };
+    // the moved point itself becomes automatic again on both sides
+    release(P[index], 'hIn'); release(P[index], 'hOut');
+    for (const d of [-1, 1] as const) { const j = at(index + d); if (j >= 0 && j !== index) release(P[j], d < 0 ? 'hOut' : 'hIn'); }
+    const rc = resolveBase(contour, line);
+    for (const d of [-1, 1] as const) {
+      const j = at(index + d); if (j < 0 || j === index) continue;
+      const a = P[j]; if (a.kind !== 'grade' || !a.smooth) continue;
+      const far = d < 0 ? 'hIn' : 'hOut';
+      const beyond = at(j + d); if (beyond < 0 || beyond === index || a[far]) continue;
+      const hv = sub(rc.handles[j][far], rc.anchorPos[j]);
+      a[far] = { ...hv }; (a.hHold ??= {})[far] = { ...hv };
+    }
+  });
+}
+
 export type PointMoveSpec = { dx: number; dy: number } | { x: number; y: number };
 
 /**
