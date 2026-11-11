@@ -77,6 +77,9 @@ const origSetTool = app.setTool.bind(app);
 app.setTool = (id: string) => { origSetTool(id); renderPalette(); };
 
 // ───────────── context menu (when the tool doesn't use right-click) ─────────────
+// every canvas right-click menu starts with the way back to the Select tool
+const ctxMenu = (x: number, y: number, ids: (string | '-')[], extra: { label: string; run: () => void }[] = []) =>
+  openContextMenu(x, y, ids, [{ label: app.tool?.id === 'select' ? 'Select tool  ✓' : 'Select tool', run: () => app.setTool('select') }, ...extra]);
 canvas.onContext = p => {
   const h = p.hit;
   let sub: ReturnType<typeof candidatesAt>[number] | undefined;
@@ -84,27 +87,27 @@ canvas.onContext = p => {
   if (h.kind === 'anchor' && h.pieceId) {
     if (!app.isAnchorSelected({ anchorId: h.anchorId! })) app.selectAnchor({ pieceId: h.pieceId, contourId: h.contourId!, anchorId: h.anchorId! });
     const isSewGrade = (() => { const q = app.resolveRef({ pieceId: h.pieceId!, contourId: h.contourId!, anchorId: h.anchorId! }); return !!q && q.contour === q.piece.sew && q.anchor.kind === 'grade'; })();
-    openContextMenu(e.clientX, e.clientY, ['point.toggleSmooth', 'point.toggleKind', 'point.pin', 'point.unpin', 'point.breakHandle', 'point.joinHandle', 'point.lock', 'point.startPoint', '-', 'move.single', 'move.smooth', 'move.group', 'point.moveXY', 'point.moveAlong', 'move.curve', 'point.setAngle', 'point.round', '-', 'seam.segment', 'seam.trimCorner', 'notch.atPoint', 'notch.corner', 'dart.add', '-', 'grade.copy', 'grade.paste', 'grade.smartPaste', 'grade.zero', '-', 'point.delete'],
+    ctxMenu(e.clientX, e.clientY, ['point.toggleSmooth', 'point.toggleKind', 'point.pin', 'point.unpin', 'point.breakHandle', 'point.joinHandle', 'point.lock', 'point.startPoint', '-', 'move.single', 'move.smooth', 'move.group', 'point.moveXY', 'point.moveAlong', 'move.curve', 'point.setAngle', 'point.round', '-', 'seam.segment', 'seam.trimCorner', 'notch.atPoint', 'notch.corner', 'dart.add', '-', 'grade.copy', 'grade.paste', 'grade.smartPaste', 'grade.zero', '-', 'point.delete'],
       isSewGrade ? [{ label: 'Corner type…', run: () => void cornerGallery(app, { pieceId: h.pieceId!, contourId: h.contourId!, anchorId: h.anchorId! }, { x: e.clientX, y: e.clientY }) }] : []);
   } else if (h.kind === 'live' && h.pieceId && h.liveKind && h.liveId) {
     selectLive(app, { kind: h.liveKind, pieceId: h.pieceId, id: h.liveId });
     const ids = h.liveKind === 'dart'
       ? ['dart.edit', 'dart.flipFold', 'dart.toggle', 'dart.reopenWidth', 'dart.fix', 'dart.cutting', '-', 'dart.transfer', 'dart.rotateCenter', 'dart.multi', '-', 'dart.copy', 'dart.paste', 'dart.remove', '-', 'dart.change']
       : h.liveKind === 'pleat' ? ['pleat.edit', 'pleat.open', 'pleat.close', 'pleat.openAll', 'pleat.closeAll', '-', 'pleat.delete'] : ['fullness.edit', 'fullness.delete'];
-    openContextMenu(e.clientX, e.clientY, ids);
+    ctxMenu(e.clientX, e.clientY, ids);
   } else if ((sub = candidatesAt(app, p.w, 'all', { kinds: ['segment', 'internal', 'notch', 'mark'] })[0]) && h.kind !== 'handle') {
     // segment / internal line / notch / drill / text: select it (keep a multi-selection that contains it)
     if (!app.isSelected(sub.item)) app.applySel(sub.item, 'replace');
     const k = sub.item.k;
-    openContextMenu(e.clientX, e.clientY, k === 'segment'
+    ctxMenu(e.clientX, e.clientY, k === 'segment'
       ? ['move.line', 'move.lineParallel', 'move.curve', '-', 'seg.length', 'seg.rotate', 'point.add', 'point.cutTool', 'point.splineSupport', '-', 'seam.segment', 'seg.copy', 'seg.paste', '-', 'grade.pasteAround']
       : k === 'internal' ? ['move.line', 'move.lineParallel', 'move.curve', 'point.cutTool', '-', 'internal.lock', 'internal.unlock', '-', 'seg.swap', 'seg.dashed', 'seg.trim', '-', 'edit.delete']
         : ['edit.delete']);
   } else if (h.kind === 'piece' && h.pieceId) {
     if (!app.sel.pieces.includes(h.pieceId)) app.selectPiece(h.pieceId);
-    openContextMenu(e.clientX, e.clientY, ['move.piece', 'move.pieceRotate', 'piece.flipH', 'piece.flipV', '-', 'piece.rename', 'piece.lock', 'edit.duplicate', 'piece.saveAsNew', '-', 'piece.rotate90', 'piece.rotate', 'piece.grain', 'piece.rotateToGrain', '-', 'seam.piece', 'seam.reseam', 'seam.lockGrading', 'seam.noSeam', '-', 'piece.scale', 'notch.grid', 'measure.piece', 'view.fitSel', '-', 'piece.delete']);
+    ctxMenu(e.clientX, e.clientY, ['move.piece', 'move.pieceRotate', 'piece.flipH', 'piece.flipV', '-', 'piece.rename', 'piece.lock', 'edit.duplicate', 'piece.saveAsNew', '-', 'piece.rotate90', 'piece.rotate', 'piece.grain', 'piece.rotateToGrain', '-', 'seam.piece', 'seam.reseam', 'seam.lockGrading', 'seam.noSeam', '-', 'piece.scale', 'notch.grid', 'measure.piece', 'view.fitSel', '-', 'piece.delete']);
   } else {
-    openContextMenu(e.clientX, e.clientY, ['view.fit', 'view.zoom100', '-', 'view.grid', 'view.rulers', 'grade.nested', '-', 'edit.selectAll', 'edit.deselect', 'edit.prefs', '-', 'file.new']);
+    ctxMenu(e.clientX, e.clientY, ['view.fit', 'view.zoom100', '-', 'view.grid', 'view.rulers', 'grade.nested', '-', 'edit.selectAll', 'edit.deselect', 'edit.prefs', '-', 'file.new']);
   }
 };
 
