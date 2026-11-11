@@ -54,6 +54,9 @@ export interface Anchor {
   /** Explicit Bézier handles, RELATIVE offsets from (x,y). When absent, centripetal Catmull-Rom supplies the tangent. */
   hIn?: Vec;
   hOut?: Vec;
+  /** Handles written by Move Point to keep the far side's shape at a smooth grade point (the point works as a split).
+   *  Holds the value that was written; the side is released again only while the handle still equals it. */
+  hHold?: { hIn?: Vec; hOut?: Vec };
   name?: string;
   /** incremental grading: inc[size_i] = abs[size_i] − abs[size_{i−1}] in size-line order (first size = 0; abs[base] = 0). Missing entry = {0,0}. */
   grade: Record<SizeId, GradeInc>;
