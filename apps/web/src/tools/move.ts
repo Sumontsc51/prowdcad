@@ -232,6 +232,8 @@ function mpApply(app: App, d: Document, spec: MPSpec) {
   switch (mode) {
     case 'single': case 'h': case 'v': {
       if (spec.kind === 'along') return;
+      // a smooth grade point next to the moved point works as a split: the line beyond it keeps its shape
+      ops.holdShapeAcrossGrade(d, r.pieceId, r.anchorId);
       ops.movePoint(d, r.pieceId, r.anchorId, spec.kind === 'abs' ? { x: spec.p.x, y: spec.p.y } : { dx: spec.d.x, dy: spec.d.y }, { sizeId: sid });
       return;
     }
@@ -328,6 +330,7 @@ function insApply(d: Document, ins: NonNullable<typeof MP.ins>): Id {
   const piece = d.piece(ins.pieceId);
   if (piece.locked) throw new Error(lockedMsg(piece));
   const id = ops.addPointAt(d, ins.pieceId, ins.contourId, ins.at, 'curve');
+  ops.holdShapeAcrossGrade(d, ins.pieceId, id);
   const dl = dirToLocal(piece, ins.dW);
   if (Math.hypot(dl.x, dl.y) > 1e-9) ops.movePoint(d, ins.pieceId, id, { dx: dl.x, dy: dl.y });
   return id;
@@ -345,7 +348,7 @@ function mpBoxModes(app: App, cur: Vec, d0: Vec): IBMode[] {
   const mode = mpMode();
   const L = Math.hypot(d0.x, d0.y), A = Math.atan2(d0.y, d0.x) * 180 / Math.PI;
   if (mode === 'along') {
-    const last = MP.last.along?.v.s ?? 0;
+    const last = 0;
     return [{ id: 's', label: 'Along', fields: [{ key: 's', label: 'Distance along (+ = contour direction)', kind: 'length', value: MP.op?.spec?.kind === 'along' ? MP.op.spec.dist : last }] }];
   }
   if (mode === 'h') return [{ id: 'rel', label: 'dX', fields: [{ key: 'dx', label: 'dX', kind: 'length', value: d0.x }] }, { id: 'abs', label: 'Absolute X', fields: [{ key: 'x', label: 'X', kind: 'length', value: cur.x }] }];
@@ -374,8 +377,8 @@ async function mpInput(app: App, typed?: string) {
   const op = MP.op;
   if (op) { op.kind = 'carry'; }
   MP.frozen = true;
-  const lastRel = MP.last[mpMode()]?.mode === 'rel' ? MP.last[mpMode()]!.v : null;
-  const d0 = op ? dirToLocal(piece, op.dW) : lastRel ? { x: lastRel.dx, y: lastRel.dy } : { x: 0, y: 0 };
+  // the box opens blank when nothing is being dragged (Enter on the canvas repeats the last move)
+  const d0 = op ? dirToLocal(piece, op.dW) : { x: 0, y: 0 };
   const badge = sizeBadge(app, sid);
   const res = await openInputBox({
     title: `Move Point · ${MP_NAME[mpMode()]}`, modes: mpBoxModes(app, cur, d0), mode: mpMode() === 'along' ? 's' : 'rel', at: lastClient, typed,
@@ -465,7 +468,7 @@ export const movePointTool: Tool = {
       return `${head} · ${v} · ${MP.op.kind === 'carry' ? 'click to place' : 'release to place'} · type a value or right-click = input box · Shift H/V/45° · Alt no snap · Esc cancel${extra}${follow}${MP.op.err ? ' · ⚠ ' + MP.op.err : ''}`;
     }
     const what = m === 'group' ? `Group: ${groupRefs(app).length} point(s) · drag one of them (drag on the empty sheet = box select)` : m === 'smooth' ? 'Drag the point (tacks fix the blended range; drag a tack to change it)' : m === 'along' ? 'Drag along the line' : m === 'single' ? 'Drag the point (or click it, then click the new spot) · drag a line = new point' : 'Drag the point, or click it then click the new spot';
-    return `${head} · ${what} · type dX dY or right-click = input box · arrows nudge · ⌫ undo pick · Esc = Select${extra}`;
+    return `${head} · ${what} · type dX dY or right-click the point = input box · arrows nudge · ⌫ undo pick · Esc = Select${extra}`;
   },
 
   down(app, p) {
@@ -598,7 +601,11 @@ export const movePointTool: Tool = {
     trackClient(p);
     if (inputBoxOpen()) { inputBoxCommit(); return true; }
     if (MP.tackDrag) { MP.tackDrag = null; app.invalidate(); return true; }
-    if (mpValid(app) && (MP.op || app.isSelected({ k: 'point', ref: MP.pick!.ref }))) { void mpInput(app); return true; }
+    // the movement box opens only on a selected point (or during a move); elsewhere the canvas menu opens
+    if (mpValid(app) && MP.op) { void mpInput(app); return true; }
+    const hit = pointUnder(app, p);
+    if (hit && mpValid(app) && app.isSelected({ k: 'point', ref: hit.ref }) && (mpMode() === 'group' || hit.ref.anchorId === MP.pick!.ref.anchorId)) { void mpInput(app); return true; }
+    if (hit && app.isSelected({ k: 'point', ref: hit.ref })) { mpSetPick(app, hit.ref, hit.sizeId, true); void mpInput(app); return true; }
     return false;
   },
   key(app, e) {
@@ -777,7 +784,7 @@ async function mlInput(app: App, typed?: string) {
   const pk = ML.pick!; const pc = app.doc.piece(mlPieceId(pk));
   if (ML.op) ML.op.kind = 'carry';
   ML.frozen = true;
-  const d0 = ML.op ? dirToLocal(pc, ML.op.dW) : ML.last ? { x: ML.last.v.dx ?? 0, y: ML.last.v.dy ?? 0 } : { x: 0, y: 0 };
+  const d0 = ML.op ? dirToLocal(pc, ML.op.dW) : { x: 0, y: 0 }; // blank unless a drag is in progress (Enter repeats the last move)
   const nW = mlNormal(app, pk), nL = dirToLocal(pc, nW);
   const off0 = d0.x * nL.x + d0.y * nL.y;
   const modes: IBMode[] = mlMode() === 'parallel'
@@ -856,7 +863,13 @@ export const moveLineTool: Tool = {
   context(app, p) {
     trackClient(p);
     if (inputBoxOpen()) { inputBoxCommit(); return true; }
-    if (mlValid(app)) { void mlInput(app); return true; }
+    // the movement box opens only on the selected line (or during a move); elsewhere the canvas menu opens
+    if (mlValid(app) && ML.op) { void mlInput(app); return true; }
+    if (mlValid(app)) {
+      const want = mlItem(ML.pick!);
+      const on = candidatesAt(app, p.w, 'all', { kinds: ['segment', 'internal'] }).some(c => JSON.stringify(c.item) === JSON.stringify(want));
+      if (on) { void mlInput(app); return true; }
+    }
     return false;
   },
   key(app, e) {
@@ -1045,7 +1058,9 @@ export const pieceTool: Tool = {
   context(app, p) {
     trackClient(p);
     if (inputBoxOpen()) { inputBoxCommit(); return true; }
-    if (PCS.op || (pcMode() !== 'flip' && app.sel.pieces.length)) { void pcInput(app); return true; }
+    // the movement box opens only on a selected piece (or during a move); elsewhere the canvas menu opens
+    const under = PCS.op ? null : pcPieceAt(app, p.w);
+    if (PCS.op || (pcMode() !== 'flip' && under && app.sel.pieces.includes(under.id))) { void pcInput(app); return true; }
     return false;
   },
   key(app, e) {
