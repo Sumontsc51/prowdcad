@@ -48,20 +48,22 @@ function anchorLocal(doc: Document, p: { pieceId: Id; anchorId: Id }, line: Size
   return anchorPositions(hit.contour.points, doc.sizeLine(piece), ps, hit.contour.closed)[hit.index];
 }
 
+const qtyOf = (q: number | undefined) => (q !== undefined && Number.isFinite(q) && q > 0 ? q : 1);
+
 function measureItem(doc: Document, item: MeasureSpecItem, line: SizeLine, sid: SizeId): number | null {
   if (item.kind === 'distance') {
     if (!item.a || !item.b) throw new Error(`Spec “${item.name}” needs two points`);
     const a = anchorLocal(doc, item.a, line, sid), b = anchorLocal(doc, item.b, line, sid);
     if (!a || !b) return null;
     const d = sub(b, a);
-    return item.mode === 'x' ? Math.abs(d.x) : item.mode === 'y' ? Math.abs(d.y) : Math.hypot(d.x, d.y);
+    return qtyOf(item.qty) * (item.mode === 'x' ? Math.abs(d.x) : item.mode === 'y' ? Math.abs(d.y) : Math.hypot(d.x, d.y));
   }
   if (!item.parts.length) throw new Error(`Spec “${item.name}” has no lines`);
   let v = 0;
   for (const p of item.parts) {
     const ps = matchingSize(doc, doc.piece(p.ref.pieceId), line, sid);
     if (ps === undefined) return null;
-    v += measurePart(doc, p as MeasurePart, item.mode as MeasureMode, ps);
+    v += qtyOf(p.qty) * measurePart(doc, p as MeasurePart, item.mode as MeasureMode, ps);
   }
   return v;
 }
@@ -73,6 +75,44 @@ export function specValue(doc: Document, itemOrId: MeasureSpecItem | Id, sizeId?
     const line = specSizeLine(doc, item);
     return measureItem(doc, item, line, sizeId ?? line.baseSizeId);
   } catch { return null; }
+}
+
+export interface SpecDetail { index: number; pieceId: Id; pieceName: string; length: number | null; qty: number }
+/**
+ * The lines behind a spec item in one size, one row per measured line (TUKA "details by pieces"):
+ * piece, its length, and the quantity it counts with. Total = Σ length × quantity.
+ */
+export function specDetails(doc: Document, itemOrId: MeasureSpecItem | Id, sizeId?: SizeId): SpecDetail[] {
+  const item = typeof itemOrId === 'string' ? specItem(doc, itemOrId) : itemOrId;
+  let line: SizeLine; try { line = specSizeLine(doc, item); } catch { return []; }
+  const sid = sizeId ?? line.baseSizeId;
+  const nameOf = (pid: Id) => doc.style.pieces.find(p => p.id === pid)?.name ?? '?';
+  if (item.kind === 'distance') {
+    let v: number | null = null; try { v = measureItem(doc, { ...item, qty: 1 }, line, sid); } catch { v = null; }
+    return item.a ? [{ index: 0, pieceId: item.a.pieceId, pieceName: nameOf(item.a.pieceId), length: v, qty: qtyOf(item.qty) }] : [];
+  }
+  return item.parts.map((p, index) => {
+    let v: number | null = null;
+    try { const ps = matchingSize(doc, doc.piece(p.ref.pieceId), line, sid); v = ps === undefined ? null : measurePart(doc, p as MeasurePart, item.mode as MeasureMode, ps); } catch { v = null; }
+    return { index, pieceId: p.ref.pieceId, pieceName: nameOf(p.ref.pieceId), length: v, qty: qtyOf(p.qty) };
+  });
+}
+
+/** Quantity of one measured line of an item (index into its parts; 0 for a distance). Targets follow the change of the total. */
+export function setSpecQty(doc: Document, id: Id, index: number, qty: number): void {
+  if (!(qty > 0) || !Number.isFinite(qty)) throw new Error('Quantity must be more than 0');
+  doc.transact('Spec quantity', () => {
+    const it = specItem(doc, id);
+    // a quantity change redefines the measurement, it does not put the pattern off spec:
+    // every target moves by the change of the total in its size
+    const before = specRows(doc, it);
+    if (it.kind === 'distance') { if (qty === 1) delete it.qty; else it.qty = qty; }
+    else { const p = it.parts[index]; if (!p) throw new Error('No such line in this measurement'); if (qty === 1) delete p.qty; else p.qty = qty; }
+    for (const r of specRows(doc, it)) {
+      const b = before.find(x => x.sizeId === r.sizeId);
+      if (b && b.value !== null && r.value !== null && it.targets[r.sizeId] !== undefined) it.targets[r.sizeId] += r.value - b.value;
+    }
+  });
 }
 
 export interface SpecRow { sizeId: SizeId; sizeName: string; value: number | null; target: number | null; diff: number | null }
@@ -175,6 +215,11 @@ function moverDir(doc: Document, item: MeasureSpecItem, m: SpecMover, line: Size
   if (m.dir === 'y') return { x: 0, y: 1 };
   if (m.dir === 'angle') { const a = (m.angleDeg ?? 0) * Math.PI / 180; return { x: Math.cos(a), y: Math.sin(a) }; }
   const unit = (v: Vec): Vec => (Math.hypot(v.x, v.y) < 1e-12 ? { x: 1, y: 0 } : norm(v));
+  if (m.dir === 'with') {
+    // rides with the end of the measured line: the direction the line end itself takes
+    const end = defaultSpecMovers(item)[0];
+    return end ? moverDir(doc, item, { ...end, dir: 'along' }, line, sid) : { x: 1, y: 0 };
+  }
   if (item.kind === 'distance') {
     const a = anchorLocal(doc, item.a!, line, sid), b = anchorLocal(doc, item.b!, line, sid);
     if (!a || !b) return { x: 1, y: 0 };
