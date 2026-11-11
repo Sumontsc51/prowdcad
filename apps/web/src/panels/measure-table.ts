@@ -145,7 +145,7 @@ export function measureTSV(app: App, rec?: MRecord): string {
   return gridTSV(t.rows, t.cols);
 }
 
-let hooks: { onOK?: () => void; onCancel?: () => void; gradeToSpec?: (groups: MGroupUI[], mode: MeasureMode) => void } = {};
+let hooks: { onOK?: () => void; onCancel?: () => void; gradeToSpec?: (groups: MGroupUI[], mode: MeasureMode) => void; adjust?: () => void; addToSpec?: () => void } = {};
 export function setMeasureHooks(h2: typeof hooks) { hooks = { ...hooks, ...h2 }; }
 
 export function measureWindowOpen() { return windowOpen('mline'); }
@@ -225,6 +225,8 @@ export function renderMeasureWindow(app: App) {
   win.foot.append(
     h('button.btn.sm' + (hasOpen() ? '' : '.disabled'), { 'data-act': 'copy', title: 'Copy the table as TSV (Excel): rows = sizes', onclick: () => run('Copy', () => { if (!hasOpen()) return; void copyText(measureTSV(app)).then(ok => toast(ok ? 'Copied (TSV, rows = sizes)' : 'Copy refused by the browser', ok ? 'ok' : 'warn')); }) }, 'Copy TSV'),
     h('button.btn.sm' + (hasOpen() ? '' : '.disabled'), { 'data-act': 'spec', title: 'Grade the selected points so this measurement hits a spec per size', onclick: () => { if (hasOpen()) hooks.gradeToSpec?.(liveGroups(app, MS.groups), MS.mode); } }, 'Grade to spec…'),
+    h('button.btn.sm' + (hasOpen() ? '' : '.disabled'), { 'data-act': 'adjust', title: 'Change the pattern: make one of these lines an exact length, or make the difference between two groups (ease) a value', onclick: () => { if (hasOpen()) hooks.adjust?.(); } }, 'Adjust segment…'),
+    h('button.btn.sm' + (hasOpen() || MS.history.length ? '' : '.disabled'), { 'data-act': 'tospec', title: 'Keep this measurement in the style as a point of measure with a target per size (Measure spec)', onclick: () => { if (hasOpen() || MS.history.length) hooks.addToSpec?.(); } }, 'Add to spec'),
     h('span.spacer'),
     h('button.btn.sm', { 'data-act': 'cancel', title: 'Cancel (Esc)', onclick: () => { cancelMeasure(); hooks.onCancel?.(); rerender(); } }, 'Cancel'),
     h('button.btn.sm.primary' + (hasOpen() ? '' : '.disabled'), { 'data-act': 'ok', title: 'OK (Enter / right-click): keep it in the list below', onclick: () => { const r = commitMeasure(); if (r) toast(`Kept “${r.name}”`, 'ok'); hooks.onOK?.(); rerender(); } }, 'OK'),

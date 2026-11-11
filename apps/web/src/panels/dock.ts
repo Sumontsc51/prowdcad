@@ -8,6 +8,7 @@ import { renderSizes } from './sizes';
 import { renderGrading } from './grading';
 import { settings, saveSettings } from '../settings';
 import { ruleWindowOpen, refreshRuleWindow } from './rules';
+import { specWindowOpen, refreshSpecWindow } from './spec';
 
 export function mountDocks(app: App, right: HTMLElement, bottom: HTMLElement, zoomTo: (ids: string[]) => void) {
   const piecesBody = h('div'), sizesBody = h('div'), inspBody = h('div.insp'), gradBody = h('div');
@@ -33,6 +34,7 @@ export function mountDocks(app: App, right: HTMLElement, bottom: HTMLElement, zo
     rPieces(); rSizes(); rInsp();
     if (settings.panels.grading) rGrad();
     if (ruleWindowOpen()) refreshRuleWindow();
+    if (specWindowOpen()) refreshSpecWindow(app);
   };
   app.setRenderer('panels', render);
   render();
