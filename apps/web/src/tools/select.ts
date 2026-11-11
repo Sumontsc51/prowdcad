@@ -1,11 +1,15 @@
 /**
- * Select tool (V): selection ONLY. It never moves or reshapes geometry (unless the opt-in
- * preference "Allow drag-move in Select" is on: then a drag moves only what you grab).
+ * Select tool (V): selection, plus moving whole pieces on the sheet. It never moves points or
+ * lines and never reshapes anything (unless the opt-in preference "Allow drag-move in Select" is
+ * on: then a drag on a point / handle moves only that).
+ *
+ *  drag a piece by its inside   move the piece (with the other selected pieces); Shift = straight
+ *  Shift / Ctrl / Alt + drag    always a box select, also when it starts inside a piece
  *
  *  click                    replace the selection with the object under the cursor
  *  Shift+click              add          Ctrl+click   toggle
  *  click empty sheet        clear (Esc clears too)
- *  drag (anywhere)          box select: left → right = window (fully inside), right → left = crossing
+ *  drag (empty sheet / line)  box select: left → right = window (fully inside), right → left = crossing
  *                           (touching). Shift+drag adds, Ctrl+drag toggles. "All" boxes points.
  *  several objects here     Tab cycles through them (status bar lists them)
  *  double-click a piece     select all its points
@@ -35,7 +39,7 @@ interface Press { w: Vec; s: Vec; cands: Cand[]; mode: Mode; hit: Ptr['hit']; e:
 type Drag =
   | { type: 'marquee'; a: Vec; b: Vec; as: Vec; bs: Vec; mode: Mode }
   | { type: 'point'; item: Extract<SelItem, { k: 'point' }>; startW: Vec; grabW: Vec; sizeId?: string; err: string | null; dl: Vec | null }
-  | { type: 'piece'; id: string; startW: Vec; base: { x: number; y: number } }
+  | { type: 'piece'; ids: string[]; startW: Vec; base: Map<string, { x: number; y: number }>; d: Vec }
   | { type: 'handle' };
 
 let press: Press | null = null;
@@ -89,13 +93,13 @@ export const selectTool: Tool = {
   modes: () => FILTERS.map(f => ({ id: f.id, label: f.label, title: f.title })),
   mode: () => settings.selFilter ?? 'all',
   setMode(app, id) { setSelFilter(app, id as SelFilter); },
-  badge: () => settings.selectDragMove ? { text: 'Drag-move ON (moves only what you grab)', amber: true } : null,
+  badge: () => settings.selectDragMove ? { text: 'Point drag ON (a drag on a point moves only that point)', amber: true } : null,
   hint(app) {
     if (drag?.type === 'marquee') return drag.bs.x < drag.as.x ? 'Select · Crossing select (touching) · release to select' : 'Select · Window select (fully inside) · release to select';
     const d = describe(app);
     const f = filterLabel();
-    if (!d) return `Select · [${f}] · Click to select · Shift add · Ctrl toggle · drag = box (→ window, ← crossing) · 0–5 filter · G Move Point · Shift+G Move Line`;
-    return `Select · [${f}] · ${d} selected · G Move Point · Shift+G Move Line · Ctrl+Shift+G Piece · right-click = menu · Esc clear`;
+    if (!d) return `Select · [${f}] · Click to select · Shift add · Ctrl toggle · drag a piece = move it · drag elsewhere (or Alt+drag) = box (→ window, ← crossing) · 0–5 filter · G Move Point · Shift+G Move Line`;
+    return `Select · [${f}] · ${d} selected · drag a piece = move it · G Move Point · Shift+G Move Line · right-click = menu · Esc clear`;
   },
 
   down(app, p) {
@@ -125,13 +129,18 @@ export const selectTool: Tool = {
     if (drag?.type === 'piece') {
       const d = { x: p.w.x - drag.startW.x, y: p.w.y - drag.startW.y };
       const dd = e.shiftKey ? constrain45({ x: 0, y: 0 }, d) : d;
-      const pc = app.beginPreview(drag.id); pc.layout = { ...layoutOf(pc), x: drag.base.x + dd.x, y: drag.base.y + dd.y };
-      app.status(`Move piece ΔX ${fmt(dd.x)} ΔY ${fmt(dd.y)} ${unitLabel()}`); app.invalidate('canvas'); return;
+      drag.d = dd;
+      for (const id of drag.ids) { const b = drag.base.get(id)!; const pc = app.beginPreview(id); pc.layout = { ...layoutOf(pc), x: b.x + dd.x, y: b.y + dd.y }; }
+      app.status(`Move ${drag.ids.length > 1 ? drag.ids.length + ' pieces' : 'piece'} ΔX ${fmt(dd.x)} ΔY ${fmt(dd.y)} ${unitLabel()} · Shift = straight · Esc = cancel`); app.invalidate('canvas'); return;
     }
     if (press) {
       if (Math.hypot(p.s.x - press.s.x, p.s.y - press.s.y) < 3) return;
       const top = press.cands[0];
-      if (settings.selectDragMove && top && (top.item.k === 'point' || top.item.k === 'piece')) {
+      // Dragging a piece by its inside moves the piece (its position on the sheet only: the shape, points and
+      // lines never change). Shift / Ctrl / Alt + drag is always a box select, also when it starts inside a piece.
+      const pe = press.e;
+      const pieceDrag = top?.item.k === 'piece' && !pe.shiftKey && !pe.ctrlKey && !pe.metaKey && !pe.altKey;
+      if (top && (pieceDrag || (settings.selectDragMove && top.item.k === 'point'))) {
         if (top.item.k === 'point') {
           const r = top.item.ref; const pc = app.doc.piece(r.pieceId);
           if (pc.locked) { toast(`${pc.name} is locked (Ctrl+L to unlock)`, 'warn'); press = null; return; }
@@ -140,15 +149,19 @@ export const selectTool: Tool = {
           app.applySel(top.item, 'replace');
           const pos = ops.pointPos(app.doc, r, sid ?? app.doc.baseSize(pc));
           drag = { type: 'point', item: top.item, startW: press.w, grabW: toWorld(pc, pos), sizeId: sid, err: null, dl: null };
-        } else {
+        } else if (top.item.k === 'piece') {
           const pc = app.doc.piece(top.item.pieceId);
-          if (pc.locked) { toast(`${pc.name} is locked (Ctrl+L to unlock)`, 'warn'); press = null; return; }
-          app.applySel(top.item, 'replace');
-          const L = layoutOf(pc); drag = { type: 'piece', id: pc.id, startW: press.w, base: { x: L.x, y: L.y } };
+          // a piece that is part of a pieces-only selection takes the other selected pieces along
+          const together = app.sel.pieces.includes(pc.id) && !app.hasSubSelection() && app.sel.pieces.length > 1;
+          const ids = together ? app.sel.pieces.slice() : [pc.id];
+          const locked = ids.map(id => app.doc.piece(id)).find(x => x.locked);
+          if (locked) { toast(`${locked.name} is locked (Ctrl+L to unlock)`, 'warn'); press = null; return; }
+          if (!together) app.applySel(top.item, 'replace');
+          drag = { type: 'piece', ids, startW: press.w, base: new Map(ids.map(id => { const L = layoutOf(app.doc.piece(id)); return [id, { x: L.x, y: L.y }]; })), d: { x: 0, y: 0 } };
         }
         press = null; selectTool.move!(app, p); return;
       }
-      // Select never moves geometry: any drag is a box select
+      // anything else: a box select (Select never moves points or lines)
       drag = { type: 'marquee', a: press.w, b: p.w, as: press.s, bs: p.s, mode: press.mode };
       press = null; app.invalidate('canvas', 'status'); return;
     }
@@ -168,8 +181,8 @@ export const selectTool: Tool = {
       return;
     }
     if (d?.type === 'piece') {
-      const pv = app.preview.get(d.id); app.preview.clear();
-      if (pv?.layout) { const L = pv.layout; const dx = L.x - d.base.x, dy = L.y - d.base.y; if (dx || dy) ops.transformPieceLayouts(app.doc, [d.id], { dx, dy }, 'Move piece'); }
+      app.preview.clear();
+      if (d.d.x || d.d.y) { ops.transformPieceLayouts(app.doc, d.ids, { dx: d.d.x, dy: d.d.y }, d.ids.length > 1 ? 'Move pieces' : 'Move piece'); app.status(`Moved ${d.ids.length > 1 ? d.ids.length + ' pieces' : 'piece'} ΔX ${fmt(d.d.x)} ΔY ${fmt(d.d.y)} ${unitLabel()}`); }
       app.invalidate(); return;
     }
     if (d?.type === 'marquee') {
