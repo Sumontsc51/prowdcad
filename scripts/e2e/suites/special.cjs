@@ -217,6 +217,35 @@ async function dragsHead(h, fixtures) {
   await T('Move Point: Esc during the drag cancels, selection kept', async () => { await h.key('g'); const w = await h.W('FRONT', 'UA'); const s0 = await h.stable(); await h.dragW(w, { x: w.x + 30, y: w.y }, { beforeUp: () => h.page.keyboard.press('Escape') }); const s1 = await h.stable(); const sel = await h.sel(); return { got: `doc changed ${s0 !== s1}; selection ${JSON.stringify(sel.anchors)}`, pass: s0 === s1 && sel.anchors.length === 1 }; });
   await T('Move Point: snaps onto another point within 8 px', async () => { await h.key('g'); const w = await h.W('FRONT', 'UA'); const t = await h.W('FRONT', 'SS_HEM'); await h.dragW(w, { x: t.x + 3 / 0.9, y: t.y + 120 }, { steps: 10 }); const a = await ua(); return { got: `UA (${Q.r4(a.x)},${Q.r4(a.y)})`, pass: true, info: 'informational' }; });
   await T('Move Point · Group: all selected points move together', async () => { await h.selectA('FRONT', 'SS_HEM'); await h.selectA('FRONT', 'UA', true); await h.cmd('move.group'); const w = await h.W('FRONT', 'UA'); await h.dragW(w, { x: w.x + 20, y: w.y }, { steps: 10 }); const st = await h.state(); return { got: `SS_HEM.x ${Q.r4(an(st, 'FRONT', 'SS_HEM').x)} UA.x ${Q.r4(an(st, 'FRONT', 'UA').x)}`, pass: near(an(st, 'FRONT', 'SS_HEM').x - 260, an(st, 'FRONT', 'UA').x - 260, 1e-6) && an(st, 'FRONT', 'UA').x > 270 }; });
+  await T('Move Point · Group: drag a box on the sheet selects the points inside, then they move together', async () => {
+    await h.cmd('move.group'); const a = await h.W('FRONT', 'SS_HEM'), b = await h.W('FRONT', 'UA');
+    await h.dragW({ x: Math.min(a.x, b.x) - 25, y: Math.min(a.y, b.y) - 25 }, { x: Math.max(a.x, b.x) + 25, y: Math.max(a.y, b.y) + 25 }, { steps: 8 });
+    const n = await h.ev(() => window.__e2e.app.sel.anchors.length); const s0 = await h.state(); const r0 = await rev();
+    await h.dragW(b, { x: b.x + 20, y: b.y }, { steps: 10 }); const st = await h.state();
+    const d1 = an(st, 'FRONT', 'SS_HEM').x - an(s0, 'FRONT', 'SS_HEM').x, d2 = an(st, 'FRONT', 'UA').x - an(s0, 'FRONT', 'UA').x;
+    return { got: `${n} point(s) boxed; SS_HEM dx ${Q.r4(d1)} UA dx ${Q.r4(d2)}; ${await rev() - r0} undo step(s)`, pass: n >= 2 && d2 > 10 && near(d1, d2, 1e-6) && await rev() - r0 === 1 };
+  });
+  await T('Move Point · Group: Shift+box adds to the selection; a click on the sheet changes nothing', async () => {
+    await h.cmd('move.group'); const a = await h.W('FRONT', 'SS_HEM'), b = await h.W('FRONT', 'HPS');
+    await h.dragW({ x: a.x - 20, y: a.y - 20 }, { x: a.x + 20, y: a.y + 20 }, { steps: 6 }); const n1 = await h.ev(() => window.__e2e.app.sel.anchors.length);
+    await h.dragW({ x: b.x - 15, y: b.y + 40 }, { x: b.x + 15, y: b.y - 15 }, { steps: 6, mods: ['Shift'] }); const n2 = await h.ev(() => window.__e2e.app.sel.anchors.length);
+    const s0 = await h.stable(); await h.clickW({ x: a.x + 300, y: a.y - 200 }); const n3 = await h.ev(() => window.__e2e.app.sel.anchors.length);
+    return { got: `box ${n1}, Shift+box ${n2}, after click ${n3}; doc changed ${s0 !== await h.stable()}`, pass: n1 >= 1 && n2 > n1 && n3 === n2 && s0 === await h.stable() };
+  });
+  await T('Move Point · Single: drag a line where it has no point adds a point there and moves it (one undo step)', async () => {
+    await h.key('g'); const np = () => h.ev(() => window.__e2e.P('FRONT').sew.points.length); const n0 = await np(); const r0 = await rev();
+    const w = await h.along('FRONT', 'SS_HEM', 'UA', 0.5);
+    await h.dragW(w, { x: w.x + 18, y: w.y + 3 }, { steps: 10, mods: ['Alt'] });
+    const n1 = await np(); const steps = await rev() - r0;
+    const pos = await h.ev(() => { const E = window.__e2e, a = E.app.sel.anchors[0]; return a ? E.ops.pointPos(E.app.doc, a, E.app.doc.baseSize(E.P('FRONT'))) : null; });
+    await h.key('Control+z'); const n2 = await np();
+    return { got: `points ${n0} → ${n1} → undo ${n2}; ${steps} undo step(s); new point at ${pos ? Q.r4(pos.x) + ', ' + Q.r4(pos.y) : 'none'}`, pass: n1 === n0 + 1 && steps === 1 && n2 === n0 && !!pos };
+  });
+  await T('Move Point · Single: a click on a line (no drag) adds nothing', async () => {
+    await h.key('g'); const s0 = await h.stable(); const r0 = await rev();
+    await h.clickW(await h.along('FRONT', 'SS_HEM', 'UA', 0.4));
+    return { got: `doc changed ${s0 !== await h.stable()}; ${await rev() - r0} undo step(s)`, pass: s0 === await h.stable() && await rev() === r0 };
+  });
   await T('Move Point · Single with a multi-selection moves only the grabbed point', async () => { await h.selectA('FRONT', 'SS_HEM'); await h.selectA('FRONT', 'UA', true); await h.key('g'); const w = await h.W('FRONT', 'UA'); await h.dragW(w, { x: w.x + 20, y: w.y }, { steps: 10 }); const st = await h.state(); return { got: `SS_HEM.x ${Q.r4(an(st, 'FRONT', 'SS_HEM').x)} UA.x ${Q.r4(an(st, 'FRONT', 'UA').x)}`, pass: near(an(st, 'FRONT', 'SS_HEM').x, 260, 1e-3) && an(st, 'FRONT', 'UA').x > 270 }; });
   await T('Curve tool: handle drag reshapes, opposite handle mirrored', async () => { await h.key('Shift+C'); await h.clickA('FRONT', 'AH1'); const w = await h.ev(() => window.__e2e.handleW('FRONT', 'AH1', 'out')); const st0 = await h.state(); await h.dragW(w, { x: w.x + 8, y: w.y + 10 }, { steps: 8 }); const st1 = await h.state(); const a = an(st1, 'FRONT', 'AH1'); const others = anchorDiff(st0, st1, 'FRONT').filter(d => d.name !== 'AH1'); const col = a.hIn && a.hOut ? Math.abs(a.hIn.x * a.hOut.y - a.hIn.y * a.hOut.x) / (Math.hypot(a.hIn.x, a.hIn.y) * Math.hypot(a.hOut.x, a.hOut.y)) : 1; return { got: `hOut ${JSON.stringify(a.hOut)} hIn ${JSON.stringify(a.hIn)} sin=${col.toFixed(4)} others ${others.length}`, pass: !!a.hOut && col < 1e-3 && !others.length }; });
   await T('Curve tool: Alt+handle drag breaks the pair', async () => { await h.key('Shift+C'); await h.clickA('FRONT', 'AH1'); const w = await h.ev(() => window.__e2e.handleW('FRONT', 'AH1', 'out')); await h.dragW(w, { x: w.x + 8, y: w.y + 10 }, { steps: 8, mods: ['Alt'] }); const a = an(await h.state(), 'FRONT', 'AH1'); return { got: `smooth=${a.smooth}`, pass: a.smooth === false }; });
