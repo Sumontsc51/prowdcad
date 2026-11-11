@@ -195,7 +195,20 @@ async function dragsHead(h, fixtures) {
   const rev = () => h.ev(() => window.__e2e.app.doc.revision());
   const ua = async () => an(await h.state(), 'FRONT', 'UA');
   await T('Select: dragging a point never changes the document (box select instead)', async () => { const s0 = await h.stable(); const w = await h.W('FRONT', 'UA'); await h.dragW(w, { x: w.x + 30, y: w.y + 10 }); const s1 = await h.stable(); return { got: `doc changed ${s0 !== s1}; selection ${JSON.stringify((await h.sel()).anchors)}`, pass: s0 === s1 }; });
-  await T('Select: drag a piece never moves it', async () => { const s0 = await h.stable(); const w = await h.local2world('BACK', { x: 520, y: 300 }); await h.dragW(w, { x: w.x + 50, y: w.y }); return { got: `doc changed ${s0 !== await h.stable()}`, pass: s0 === await h.stable() }; });
+  await T('Select: dragging a piece by its inside moves the piece (layout only, one undo step); the shape does not change', async () => {
+    const shape = () => h.ev(() => JSON.stringify(window.__e2e.app.style.pieces.map(p => [p.sew, p.internals])));
+    const lay = () => h.ev(() => { const p = window.__e2e.app.style.pieces.find(x => x.name === 'BACK'); return { x: p.layout?.x ?? 0, y: p.layout?.y ?? 0 }; });
+    const g0 = await shape(), l0 = await lay(), r0 = await rev();
+    const w = await h.local2world('BACK', { x: 520, y: 300 }); await h.dragW(w, { x: w.x + 50, y: w.y + 20 }, { steps: 8 });
+    const l1 = await lay(), steps = (await rev()) - r0, same = g0 === await shape();
+    await h.key('Control+z'); const l2 = await lay();
+    return { got: `layout ${JSON.stringify(l0)} → ${JSON.stringify(l1)}; ${steps} undo step(s); shape unchanged ${same}; after undo ${JSON.stringify(l2)}`, pass: Math.abs(l1.x - l0.x - 50) < 0.5 && Math.abs(l1.y - l0.y - 20) < 0.5 && steps === 1 && same && Math.abs(l2.x - l0.x) < 1e-6 };
+  });
+  await T('Select: Alt+drag that starts inside a piece is a box select; nothing moves', async () => {
+    const s0 = await h.stable(); const w = await h.local2world('BACK', { x: 520, y: 300 });
+    await h.page.keyboard.down('Alt'); await h.dragW(w, { x: w.x + 50, y: w.y + 20 }, { steps: 6 }); await h.page.keyboard.up('Alt');
+    return { got: `doc changed ${s0 !== await h.stable()}`, pass: s0 === await h.stable() };
+  });
   await T('Move Point: press on an UNSELECTED grade point and drag', async () => { await h.key('g'); const w = await h.W('FRONT', 'UA'); await h.dragW(w, { x: w.x + 20, y: w.y }, { steps: 10 }); const a = await ua(); return { got: `UA.x ${Q.r4(a.x)}`, pass: a.x > 270 }; });
   await T('Move Point: click a point then drag it straight away (< 450 ms)', async () => { await h.key('g'); const w = await h.W('FRONT', 'UA'); const r0 = await rev(); await h.clickW(w); await h.dragW(w, { x: w.x + 20, y: w.y }, { steps: 10 }); const a = await ua(); const lbl = await h.ev(() => window.__e2e.app.doc.undoLabel()) + ` (${(await rev()) - r0} undo step(s); status "${await h.ev(() => window.__e2e.app.statusMsg)}")`; return { got: `UA.x ${Q.r4(a.x)} smooth=${a.smooth}; last undo "${lbl}"`, pass: a.x > 265 && !a.smooth, info: 'click = pick up (carry); the next press puts it down' }; });
   await T('Move Point: drag an unselected CURVE point (AH1)', async () => { await h.key('g'); const w = await h.W('FRONT', 'AH1'); await h.dragW(w, { x: w.x + 20, y: w.y }, { steps: 10 }); const st = await h.state(); return { got: `AH1.x ${Q.r4(an(st, 'FRONT', 'AH1').x)} (was 222); FRONT layout ${JSON.stringify(pc(st, 'FRONT').layout || null)}`, pass: an(st, 'FRONT', 'AH1').x > 230 }; });
