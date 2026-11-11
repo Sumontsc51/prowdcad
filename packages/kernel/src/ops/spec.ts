@@ -127,11 +127,23 @@ export function specRows(doc: Document, itemOrId: MeasureSpecItem | Id): SpecRow
   });
 }
 
-/** The default rule: the END of the measurement moves along the line (the other end stays). */
-export function defaultSpecMovers(item: Pick<MeasureSpecItem, 'kind' | 'parts' | 'a' | 'b'>): SpecMover[] {
-  if (item.kind === 'distance') return item.b ? [{ pieceId: item.b.pieceId, anchorId: item.b.anchorId, dir: 'along', share: 1 }] : [];
+/** The end of the measurement: the last point of the last line (the second point of a distance). */
+export function specLineEnd(item: Pick<MeasureSpecItem, 'kind' | 'parts' | 'a' | 'b'>): { pieceId: Id; anchorId: Id } | null {
+  if (item.kind === 'distance') return item.b ? { pieceId: item.b.pieceId, anchorId: item.b.anchorId } : null;
   const last = item.parts[item.parts.length - 1];
-  return last ? [{ pieceId: last.ref.pieceId, anchorId: last.ref.to, dir: 'along', share: 1 }] : [];
+  return last ? { pieceId: last.ref.pieceId, anchorId: last.ref.to } : null;
+}
+
+/**
+ * The default rule: BOTH ends of the measurement move along the line, half of the change each
+ * (the start of the first line and the end of the last one; the two points of a distance).
+ * A measurement that starts and ends on the same point has that one point, with the whole share.
+ */
+export function defaultSpecMovers(item: Pick<MeasureSpecItem, 'kind' | 'parts' | 'a' | 'b'>): SpecMover[] {
+  const end = specLineEnd(item); if (!end) return [];
+  const start = item.kind === 'distance' ? (item.a ? { pieceId: item.a.pieceId, anchorId: item.a.anchorId } : null) : (item.parts[0] ? { pieceId: item.parts[0].ref.pieceId, anchorId: item.parts[0].ref.from } : null);
+  if (!start || start.anchorId === end.anchorId) return [{ ...end, dir: 'along', share: 1 }];
+  return [{ ...start, dir: 'along', share: 0.5 }, { ...end, dir: 'along', share: 0.5 }];
 }
 
 export interface SpecItemInit {
@@ -185,6 +197,41 @@ export function removeSpecItem(doc: Document, id: Id): void {
   doc.transact('Remove spec measurement', s => { const it = specItem(doc, id); s.measureSpec = items(doc).filter(x => x !== it); });
 }
 
+// ───────────────────────────── one line of a measurement ─────────────────────────────
+
+/**
+ * One measured line of an item as a measurement of its own (id "<item>:<index>"): its length without
+ * the quantity, its own targets and its own rules (default: both ends of that line, half each).
+ */
+export function specLineItem(item: MeasureSpecItem, index: number): MeasureSpecItem {
+  const p = item.parts[index];
+  if (item.kind !== 'line' || !p) throw new Error('No such line in this measurement');
+  const part = { ref: { ...p.ref }, cut: p.cut };
+  return { id: `${item.id}:${index}`, name: `${item.name} · line ${index + 1}`, kind: 'line', parts: [part], mode: item.mode, targets: { ...(p.targets ?? {}) }, movers: deepClone(p.movers ?? defaultSpecMovers({ kind: 'line', parts: [part] })) };
+}
+/** Per size: length, target and difference of one line of an item (target null until one is typed). */
+export function specLineRows(doc: Document, id: Id, index: number): SpecRow[] {
+  return specRows(doc, specLineItem(specItem(doc, id), index));
+}
+/** Set (or with null clear) targets of one line of an item. */
+export function setSpecLineTargets(doc: Document, id: Id, index: number, targets: Record<SizeId, number | null>): void {
+  doc.transact('Line target', () => {
+    const p = specItem(doc, id).parts[index]; if (!p) throw new Error('No such line in this measurement');
+    const t = (p.targets ??= {});
+    for (const [sid, v] of Object.entries(targets)) { if (v === null || !Number.isFinite(v)) delete t[sid]; else t[sid] = v; }
+    if (!Object.keys(t).length) delete p.targets;
+  });
+}
+/** The rules of one line of an item (null = back to the default: both ends, half each). */
+export function setSpecLineMovers(doc: Document, id: Id, index: number, movers: SpecMover[] | null): void {
+  doc.transact('Line rules', () => {
+    const p = specItem(doc, id).parts[index]; if (!p) throw new Error('No such line in this measurement');
+    if (movers === null) { delete p.movers; return; }
+    for (const m of movers) findRef(doc.piece(m.pieceId), m.anchorId);
+    p.movers = deepClone(movers);
+  });
+}
+
 // ───────────────────────────── apply ─────────────────────────────
 
 export interface SpecApplyRow {
@@ -217,8 +264,8 @@ function moverDir(doc: Document, item: MeasureSpecItem, m: SpecMover, line: Size
   const unit = (v: Vec): Vec => (Math.hypot(v.x, v.y) < 1e-12 ? { x: 1, y: 0 } : norm(v));
   if (m.dir === 'with') {
     // rides with the end of the measured line: the direction the line end itself takes
-    const end = defaultSpecMovers(item)[0];
-    return end ? moverDir(doc, item, { ...end, dir: 'along' }, line, sid) : { x: 1, y: 0 };
+    const end = specLineEnd(item);
+    return end ? moverDir(doc, item, { ...end, dir: 'along', share: 1 }, line, sid) : { x: 1, y: 0 };
   }
   if (item.kind === 'distance') {
     const a = anchorLocal(doc, item.a!, line, sid), b = anchorLocal(doc, item.b!, line, sid);
@@ -309,31 +356,50 @@ function applyOne(doc: Document, scratch: Document, item: MeasureSpecItem, opt: 
 
 /**
  * Apply spec measurements (all, or the given ids) in list order: later ones see the earlier ones'
- * changes. One undo step. `write:false` previews. An item whose geometry is gone reports `error`
- * and is skipped; the others still apply.
+ * changes. An id "<item>:<index>" applies one line of an item to that line's own targets (the item's
+ * total targets then move by the change of the total). For a
+ * whole item, its lines that have targets of their own are applied first, then the item's total.
+ * One undo step. `write:false` previews. An entry whose geometry is gone reports `error` and is
+ * skipped; the others still apply.
  */
 export function applySpec(doc: Document, ids?: Id[], opt: SpecApplyOptions = {}): { items: SpecApplyResult[]; written: boolean } {
-  const list = ids ? ids.map(id => specItem(doc, id)) : items(doc).slice();
+  const jobs: MeasureSpecItem[] = [];
+  const names: string[] = [];
+  /** items one of whose lines is applied on its own: their total targets follow the change of the total */
+  const follow = new Set<Id>();
+  for (const id of ids ?? items(doc).map(x => x.id)) {
+    const m = /^(.*):(\d+)$/.exec(id);
+    if (m && !items(doc).some(x => x.id === id)) { const v = specLineItem(specItem(doc, m[1]), Number(m[2])); jobs.push(v); names.push(v.name); follow.add(m[1]); continue; }
+    const it = specItem(doc, id);
+    names.push(it.name);
+    if (it.kind === 'line') it.parts.forEach((p, i) => { if (p.targets && Object.keys(p.targets).length) jobs.push(specLineItem(it, i)); });
+    jobs.push(deepClone(it));
+  }
   const Doc = doc.constructor as new (s: Style) => Document;
   const scratch = new Doc(deepClone(doc.style));
   const out: SpecApplyResult[] = [];
   const touched = new Set<Id>();
-  for (const it of list) {
-    const sIt = (scratch.style.measureSpec ?? []).find(x => x.id === it.id)!;
+  for (const job of jobs) {
     const keep = JSON.stringify(scratch.style.pieces);
     try {
-      const r = applyOne(doc, scratch, sIt, opt);
+      const r = applyOne(doc, scratch, job, opt);
       out.push(r);
-      if (r.changed) for (const m of sIt.movers) touched.add(m.pieceId);
+      if (r.changed) for (const m of job.movers) touched.add(m.pieceId);
     } catch (err) {
-      scratch.style.pieces = JSON.parse(keep) as Piece[]; // a failed item leaves no half-moved points behind
-      out.push({ id: it.id, name: it.name, rows: [], maxResidual: 0, changed: false, error: (err as Error).message });
+      scratch.style.pieces = JSON.parse(keep) as Piece[]; // a failed entry leaves no half-moved points behind
+      out.push({ id: job.id, name: job.name, rows: [], maxResidual: 0, changed: false, error: (err as Error).message });
     }
   }
   let written = false;
   if (opt.write !== false && touched.size) {
-    doc.transact(list.length === 1 ? `Apply spec: ${list[0].name}` : 'Apply measure spec', s => {
+    doc.transact(names.length === 1 ? `Apply spec: ${names[0]}` : 'Apply measure spec', s => {
+      const before = new Map([...follow].map(id => [id, specRows(doc, id)] as const));
       s.pieces = s.pieces.map(p => { if (!touched.has(p.id)) return p; const n = scratch.style.pieces.find(x => x.id === p.id); if (!n) return p; n.updatedAt = new Date().toISOString(); return deepClone(n); });
+      // a line changed on purpose: the measurement's total target moves with it, so the row stays as far from spec as it was
+      for (const [id, rows0] of before) {
+        const it = specItem(doc, id);
+        for (const r of specRows(doc, it)) { const b = rows0.find(x => x.sizeId === r.sizeId); if (b && b.value !== null && r.value !== null && it.targets[r.sizeId] !== undefined) it.targets[r.sizeId] += r.value - b.value; }
+      }
     });
     written = true;
   }
