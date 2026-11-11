@@ -46,10 +46,10 @@ export function registerMoveCmds(app: App) {
 
   // ───── Edit: selection ─────
   for (const f of FILTERS) registerCommand({ id: 'sel.filter.' + f.id, title: `${f.label}`, menu: 'Edit/Selection filter', checked: () => settings.selFilter === f.id, run: () => setSelFilter(app, f.id as SelFilter) });
-  registerCommand({ id: 'edit.selectDragMove', title: 'Allow drag-move in Select (moves only what you grab)', menu: 'Edit', group: 4, checked: () => settings.selectDragMove, run: () => { settings.selectDragMove = !settings.selectDragMove; saveSettings(); app.status(`Drag-move in Select ${settings.selectDragMove ? 'ON: a drag moves only what you grab' : 'OFF: Select only selects'}`); } });
+  registerCommand({ id: 'edit.selectDragMove', title: 'Allow dragging points in Select (moves only the point you grab)', menu: 'Edit', group: 4, checked: () => settings.selectDragMove, run: () => { settings.selectDragMove = !settings.selectDragMove; saveSettings(); app.status(`Dragging points in Select ${settings.selectDragMove ? 'ON: a drag on a point or handle moves only that' : 'OFF: Select moves whole pieces only'}`); } });
   registerCommand({ id: 'edit.prefs', title: 'Preferences…', menu: 'Edit', group: 4, run: async () => {
     const r = await showDialog({ title: 'Preferences', fields: [
-      { kind: 'checkbox', key: 'dm', label: 'Allow drag-move in Select (moves only what you grab)', value: settings.selectDragMove, hint: 'Off (default): the Select tool only selects; points, lines and pieces move with the Move tools (G, Shift+G, Ctrl+Shift+G).' },
+      { kind: 'checkbox', key: 'dm', label: 'Allow dragging points in Select (moves only the point you grab)', value: settings.selectDragMove, hint: 'Off (default): in Select a drag on a piece moves the whole piece; points and lines move only with the Move tools (G, Shift+G).' },
       { kind: 'number', key: 'pr', label: 'Pick radius', value: settings.pickRadiusPx, min: 4, max: 20, suffix: 'px' },
       { kind: 'length', key: 'nu', label: 'Arrow-key nudge step (Move tools; Shift = ×10)', value: settings.nudgeMm, min: 0.001 },
       { kind: 'checkbox', key: 'al', label: 'Internal line: lock ends drawn on the outline to their segment', value: settings.autoLockInternal, hint: 'On (default): like CLO / AccuMark attach, an end on the outline keeps its proportional position when the segment changes. Right-click the line ▸ Unlock to free it.' },
