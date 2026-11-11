@@ -332,7 +332,7 @@ function interiorIdx(contour: Contour, ia: number, ib: number, reverse: boolean)
 }
 
 /** Bracket-then-bisect on g(t) = f(t) − target, with g(0) ≠ 0. */
-function solve(f: (t: number) => number, target: number, guess: number, tol = 1e-6): { t: number; value: number; converged: boolean; iterations: number } {
+export function solveScalar(f: (t: number) => number, target: number, guess: number, tol = 1e-6): { t: number; value: number; converged: boolean; iterations: number } {
   const g = (t: number) => f(t) - target;
   const g0 = g(0);
   let iterations = 1;
@@ -417,7 +417,7 @@ export function segmentLengthSetTo(doc: Document, pieceId: Id, contourId: Id, fr
   };
   const f = (t: number) => { const c = clone(prepared); apply(c, t); return measure(c); };
   const guess = method === 'curveBlend' ? 0.25 * (Math.sign(target - L0) || 1) : target - L0;
-  const res = solve(f, target, guess);
+  const res = solveScalar(f, target, guess);
   if (!res.converged) return { converged: false, length: L0, param: 0, iterations: res.iterations };
   const final = clone(prepared); apply(final, res.t);
   doc.transact('Segment length set to', () => { findContour(doc.piece(pieceId), contourId).points = final.points; });
@@ -608,7 +608,7 @@ export function gradeByMeasurement(doc: Document, input: GradeFitInput): { rows:
     if (before === null) { row.note = 'size not cut'; rows.push(row); continue; }
     if (s.id === line.baseSizeId) { row.note = 'base size: grading cannot change it (adjust the base pattern)'; rows.push(row); continue; }
     const f = (t: number) => { setT(s.id, t); return measureOn(scratch, s.id) ?? NaN; };
-    const res = solve(f, target, target - before, tol);
+    const res = solveScalar(f, target, target - before, tol);
     const t = res.converged ? res.t : 0;
     const after = f(t);
     row.t = t; row.after = after; row.residual = after - target; row.solved = res.converged;

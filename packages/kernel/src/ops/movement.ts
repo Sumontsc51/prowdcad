@@ -114,7 +114,7 @@ function applyMoves(doc: Document, moves: { pieceId: Id; anchorId: Id; dx: numbe
  * points before the first / after the last grade anchor of an open contour follow their only
  * neighbour rigidly. Curve points the program moves itself are left alone.
  */
-function carryCurvePoints(before: Map<Contour, Vec[]>, explicit: Set<Id>) {
+export function carryCurvePoints(before: Map<Contour, Vec[]>, explicit: Set<Id>) {
   for (const [c, old] of before) {
     const P = c.points, n = P.length;
     if (n !== old.length) continue;
