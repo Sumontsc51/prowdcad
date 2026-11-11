@@ -27,7 +27,7 @@ import { ops, type AnchorRef } from '../ops-bridge';
 import { settings, saveSettings, type Settings } from '../settings';
 import { constrain45, toWorld, toLocal, dirToLocal, dirToWorld, resolveFor, contourById, deepClone, layoutOf, pieceWorldBox } from '../geometry';
 import { snapPoint, SNAP_LABEL } from '../canvas/snap';
-import { candidatesAt, itemHighlight, SEL_COLOR } from '../selpick';
+import { candidatesAt, gatherInBox, itemHighlight, SEL_COLOR } from '../selpick';
 import { contourNear } from '../hitkit';
 import { sizeNameOf } from '../selection';
 import { openInputBox, inputBoxOpen, inputBoxCommit, inputBoxCancel, type IBMode } from '../ui/inputbox';
@@ -168,7 +168,11 @@ const MP: {
   frozen: boolean;
   hover: AnchorRef | null;
   last: Partial<Record<MPMode, { mode: string; v: Record<string, number> }>>;
-} = { pick: null, before: null, tacks: null, op: null, tackDrag: null, frozen: false, hover: null, last: {} };
+  /** Group: selection box being dragged on the empty sheet */
+  box: { a: Vec; b: Vec; as: Vec; bs: Vec; mode: 'replace' | 'add' | 'toggle' } | null;
+  /** Single: a line was grabbed where it has no point; a new point is added there and moved (one undo step) */
+  ins: { pieceId: Id; contourId: Id; at: Vec; grabW: Vec; startW: Vec; s: Vec; dW: Vec; moved: boolean; err: string | null; snap?: string } | null;
+} = { pick: null, before: null, tacks: null, op: null, tackDrag: null, frozen: false, hover: null, last: {}, box: null, ins: null };
 
 const mpMode = (): MPMode => settings.movePointMode ?? 'single';
 function mpPiece(app: App): Piece | null { return MP.pick ? app.doc.style.pieces.find(p => p.id === MP.pick!.ref.pieceId) ?? null : null; }
@@ -317,7 +321,25 @@ function mpCommit(app: App, spec: MPSpec, label = mpLabel()): boolean {
   return ok;
 }
 
-function mpCancelOp(app: App) { MP.op = null; MP.frozen = false; app.cancelPreview(); }
+function mpCancelOp(app: App) { MP.op = null; MP.box = null; MP.ins = null; MP.frozen = false; app.cancelPreview(); }
+
+/** Single: add a curve point where the line was grabbed and move it by the drag (base coordinates). Returns the new point. */
+function insApply(d: Document, ins: NonNullable<typeof MP.ins>): Id {
+  const piece = d.piece(ins.pieceId);
+  if (piece.locked) throw new Error(lockedMsg(piece));
+  const id = ops.addPointAt(d, ins.pieceId, ins.contourId, ins.at, 'curve');
+  const dl = dirToLocal(piece, ins.dW);
+  if (Math.hypot(dl.x, dl.y) > 1e-9) ops.movePoint(d, ins.pieceId, id, { dx: dl.x, dy: dl.y });
+  return id;
+}
+function insDrag(app: App, ins: NonNullable<typeof MP.ins>, w: Vec, e: MouseEvent | PointerEvent) {
+  let target = { x: ins.grabW.x + w.x - ins.startW.x, y: ins.grabW.y + w.y - ins.startW.y };
+  ins.snap = undefined;
+  if (e.shiftKey) target = constrain45(ins.grabW, target);
+  else if (!e.altKey) { const sn = snapPoint(app, target, { exclude: new Set<Id>(), from: ins.grabW }); target = sn.p; ins.snap = SNAP_LABEL[sn.kind]; }
+  ins.dW = { x: target.x - ins.grabW.x, y: target.y - ins.grabW.y };
+  ins.err = previewWith(app, [ins.pieceId], d => { insApply(d, ins); });
+}
 
 function mpBoxModes(app: App, cur: Vec, d0: Vec): IBMode[] {
   const mode = mpMode();
@@ -418,7 +440,7 @@ export const movePointTool: Tool = {
   id: 'movePoint', title: 'Move Point', group: 'move', hotkey: 'G', icon: ICON.movePoint, cursor: 'crosshair',
   activate(app) { MP.op = null; MP.frozen = false; MP.tackDrag = null; mpAdopt(app); },
   deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); mpCancelOp(app); MP.tackDrag = null; MP.hover = null; },
-  busy: () => !!MP.op || !!MP.tackDrag || apexBusy(),
+  busy: () => !!MP.op || !!MP.tackDrag || !!MP.box || !!MP.ins || apexBusy(),
   modes: () => MP_MODES,
   mode: () => mpMode(),
   setMode(app, id) { settings.movePointMode = id as MPMode; saveSettings(); mpCancelOp(app); if (MP.pick) MP.tacks = defaultTacks(app, MP.pick.ref); app.invalidate(); },
@@ -428,7 +450,9 @@ export const movePointTool: Tool = {
     const m = mpMode(); const head = `Move Point · ${MP_NAME[m]}`;
     const ah = apexHint(); if (ah) return ah;
     if (MP.tackDrag) return `${head} · Release on a point of the same line to put the tack there · Esc cancel`;
-    if (!mpValid(app)) return `${head} · Select point to move · Tab = mode · Esc = back to Select`;
+    if (MP.box) return `${head} · ${MP.box.bs.x < MP.box.as.x ? 'Crossing' : 'Window'} box: release to select the points inside · Shift adds · Ctrl toggles · Esc cancel`;
+    if (MP.ins) return `${head} · New point on the line · ${fmtV(dirToLocal(app.doc.piece(MP.ins.pieceId), MP.ins.dW))} · release to place · Shift H/V/45° · Alt no snap · Esc cancel${MP.ins.err ? ' · ⚠ ' + MP.ins.err : ''}`;
+    if (!mpValid(app)) return `${head} · ${m === 'group' ? 'Drag a box around the points to move, or click a point' : m === 'single' ? 'Drag a point, or drag a line to add a point there and shape it' : 'Select point to move'} · Tab = mode · Esc = back to Select`;
     const piece = mpPiece(app)!;
     const conn = m === 'single' || m === 'h' || m === 'v' ? connectionsOf(piece, MP.pick!.ref.anchorId).length : 0;
     const nl = MP.pick!.ref.contourId === piece.sew.id ? lockedCount(piece) : 0;
@@ -440,7 +464,7 @@ export const movePointTool: Tool = {
       const follow = fl ? ` · ${fl.idx.length} curve point${fl.idx.length > 1 ? 's' : ''} follow${fl.idx.length > 1 ? '' : 's'} (no own grading) — use Move Point ▸ Single on ${fl.idx.length > 1 ? 'them' : 'it'} to fix ${fl.idx.length > 1 ? 'them' : 'it'}, or Point ▸ Pin curve point` : '';
       return `${head} · ${v} · ${MP.op.kind === 'carry' ? 'click to place' : 'release to place'} · type a value or right-click = input box · Shift H/V/45° · Alt no snap · Esc cancel${extra}${follow}${MP.op.err ? ' · ⚠ ' + MP.op.err : ''}`;
     }
-    const what = m === 'group' ? `Group: ${groupRefs(app).length} point(s) · drag one of them` : m === 'smooth' ? 'Drag the point (tacks fix the blended range; drag a tack to change it)' : m === 'along' ? 'Drag along the line' : 'Drag the point, or click it then click the new spot';
+    const what = m === 'group' ? `Group: ${groupRefs(app).length} point(s) · drag one of them (drag on the empty sheet = box select)` : m === 'smooth' ? 'Drag the point (tacks fix the blended range; drag a tack to change it)' : m === 'along' ? 'Drag along the line' : m === 'single' ? 'Drag the point (or click it, then click the new spot) · drag a line = new point' : 'Drag the point, or click it then click the new spot';
     return `${head} · ${what} · type dX dY or right-click = input box · arrows nudge · ⌫ undo pick · Esc = Select${extra}`;
   },
 
@@ -467,7 +491,23 @@ export const movePointTool: Tool = {
     }
     const hit = pointUnder(app, p);
     if (!hit && apexDown(app, p)) return;
-    if (!hit) { app.status('Nothing to pick here: click a point (or press on a dart apex and drag)'); return; }
+    if (!hit && mpMode() === 'group') {
+      // Group: a drag that starts off the points is a selection box (Shift adds, Ctrl toggles)
+      MP.box = { a: p.w, b: p.w, as: p.s, bs: p.s, mode: p.e.shiftKey ? 'add' : p.e.ctrlKey || p.e.metaKey ? 'toggle' : 'replace' };
+      return;
+    }
+    if (!hit && mpMode() === 'single') {
+      // Single: grab a line where it has no point: a new point is added there and dragged (one undo step)
+      const ch = contourNear(app, p.w, { tolPx: 7 });
+      if (ch) {
+        if (ch.piece.locked) { toast(lockedMsg(ch.piece), 'warn'); return; }
+        if (editSid(app, ch.piece)) { toast('A new point is added on the base size: switch to the base size (Ctrl+B)', 'warn'); return; }
+        MP.ins = { pieceId: ch.piece.id, contourId: ch.contour.id, at: ch.local, grabW: ch.world, startW: p.w, s: p.s, dW: { x: 0, y: 0 }, moved: false, err: null };
+        app.status('Drag to add a point here and shape the line (a click adds nothing)');
+        app.invalidate(); return;
+      }
+    }
+    if (!hit) { app.status(mpMode() === 'single' ? 'Nothing to pick here: press on a point, or on a line to add a point and drag it' : 'Nothing to pick here: click a point (or press on a dart apex and drag)'); return; }
     const piece = app.doc.piece(hit.ref.pieceId);
     if (piece.locked) { toast(lockedMsg(piece), 'warn'); return; }
     const why = mpMode() === 'group' ? null : lockBlock(app, hit.ref.pieceId, hit.ref.contourId, hit.ref.anchorId, 'point');
@@ -486,6 +526,12 @@ export const movePointTool: Tool = {
       const c = candidatesAt(app, p.w, 'points', { kinds: ['point'] }).find(x => x.item.k === 'point' && x.item.ref.contourId === r.contourId && x.item.ref.pieceId === r.pieceId && x.item.ref.anchorId !== r.anchorId);
       MP.tackDrag.hover = c && c.item.k === 'point' ? c.item.ref.anchorId : null;
       app.invalidate('canvas', 'status'); return;
+    }
+    if (MP.box) { MP.box.b = p.w; MP.box.bs = p.s; app.invalidate('canvas', 'status'); return; }
+    if (MP.ins) {
+      const ins = MP.ins;
+      if (!ins.moved && Math.hypot(p.s.x - ins.s.x, p.s.y - ins.s.y) < THRESH_PX) return;
+      ins.moved = true; insDrag(app, ins, p.w, p.e); app.invalidate('status'); return;
     }
     if (!MP.op && apexMove(app, p)) return;
     const op = MP.op;
@@ -516,6 +562,29 @@ export const movePointTool: Tool = {
       }
       app.invalidate(); return;
     }
+    if (MP.box) {
+      const b = MP.box; MP.box = null;
+      if (Math.hypot(b.bs.x - b.as.x, b.bs.y - b.as.y) < THRESH_PX) { app.status('Group: drag a box around the points to move, or click a point'); app.invalidate(); return; }
+      const box = { minX: Math.min(b.a.x, b.b.x), maxX: Math.max(b.a.x, b.b.x), minY: Math.min(b.a.y, b.b.y), maxY: Math.max(b.a.y, b.b.y) };
+      const crossing = b.bs.x < b.as.x;
+      const items = gatherInBox(app, box, crossing, 'points').filter(it => it.k === 'point' && !app.doc.piece(it.ref.pieceId).locked);
+      if (b.mode === 'replace') { app.sel = { pieces: [], anchors: [] }; app.liveSel = null; }
+      for (const it of items) app.applySel(it, b.mode === 'toggle' ? 'toggle' : 'add');
+      MP.before = null; mpAdopt(app);
+      const n = app.sel.anchors.length;
+      app.status(n ? `Group: ${n} point(s) selected · drag one of them to move them all · Shift+drag a box adds` : 'No points in the box');
+      app.invalidate(); return;
+    }
+    if (MP.ins) {
+      const ins = MP.ins; MP.ins = null;
+      if (!ins.moved || Math.hypot(ins.dW.x, ins.dW.y) * app.view.scale < 1) { app.cancelPreview(); app.status('No point added (drag the line to add a point and shape it)'); app.invalidate(); return; }
+      let id: Id | null = null;
+      if (commitWith(app, [ins.pieceId], 'Add point and move', d => { id = insApply(d, ins); }) && id) {
+        mpSetPick(app, { pieceId: ins.pieceId, contourId: ins.contourId, anchorId: id });
+        app.status('Point added and moved · drag it again to refine · Ctrl+Z removes it');
+      }
+      app.invalidate(); return;
+    }
     const op = MP.op; if (!op || MP.frozen) return;
     if (op.kind === 'press' && op.again) { mpCancelOp(app); app.status('Put back (clicked the picked-up point again)'); app.invalidate(); return; }
     if (op.kind === 'press') {
@@ -537,6 +606,8 @@ export const movePointTool: Tool = {
     if (e.key === 'Escape') {
       if (apexCancel(app)) return true;
       if (MP.tackDrag) { MP.tackDrag = null; app.invalidate(); return true; }
+      if (MP.box) { MP.box = null; app.status('Box select cancelled'); app.invalidate(); return true; }
+      if (MP.ins) { mpCancelOp(app); app.status('No point added'); app.invalidate(); return true; }
       if (MP.op) { mpCancelOp(app); app.status('Move cancelled'); return true; }
       app.setTool('select'); return true;
     }
@@ -572,6 +643,17 @@ export const movePointTool: Tool = {
   overlay(app) {
     const out: string[] = [apexOverlay(app)];
     if (MP.hover && !MP.op) out.push(itemHighlight(app, { k: 'point', ref: MP.hover }, 0.5));
+    if (MP.box) {
+      const a = app.view.toScreen(MP.box.a), b = app.view.toScreen(MP.box.b);
+      const crossing = MP.box.bs.x < MP.box.as.x;
+      out.push(`<rect x="${fs(Math.min(a.x, b.x))}" y="${fs(Math.min(a.y, b.y))}" width="${fs(Math.abs(a.x - b.x))}" height="${fs(Math.abs(a.y - b.y))}" fill="${crossing ? 'rgba(46,204,113,0.08)' : 'rgba(78,161,255,0.08)'}" stroke="${crossing ? '#27ae60' : '#4ea1ff'}"${crossing ? ' stroke-dasharray="5 4"' : ''}/>`);
+    }
+    if (MP.ins) {
+      const a = app.view.toScreen(MP.ins.grabW), b = app.view.toScreen({ x: MP.ins.grabW.x + MP.ins.dW.x, y: MP.ins.grabW.y + MP.ins.dW.y });
+      out.push(`<circle cx="${fs(a.x)}" cy="${fs(a.y)}" r="4" fill="none" stroke="${SEL_COLOR}" stroke-width="1.4"/>`);
+      if (MP.ins.moved) out.push(`<path d="M${fs(a.x)} ${fs(a.y)}L${fs(b.x)} ${fs(b.y)}" stroke="${SEL_COLOR}" stroke-width="1" stroke-dasharray="3 3"/><circle cx="${fs(b.x)}" cy="${fs(b.y)}" r="6" fill="none" stroke="${SEL_COLOR}" stroke-width="2"/>` + (MP.ins.snap ? `<text x="${fs(b.x + 9)}" y="${fs(b.y - 9)}" class="tool-note snap-note">${MP.ins.snap}</text>` : ''));
+      return out.join('');
+    }
     if (!mpValid(app)) return out.join('');
     const r = MP.pick!.ref; const sid = MP.pick!.sizeId;
     const piece = app.piece(r.pieceId)!;
