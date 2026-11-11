@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { makeStyle, makePiece, rectangleContour, makeContour, gradePoint, curvePoint } from '../src/model/factory';
 import { Document } from '../src/model/doc';
-import { addSpecItem, applySpec, specValue, specRows, updateSpecItem, setSpecTargets, removeSpecItem, defaultSpecMovers } from '../src/ops/spec';
+import { addSpecItem, applySpec, specValue, specRows, updateSpecItem, setSpecTargets, removeSpecItem, defaultSpecMovers, specDetails, setSpecQty } from '../src/ops/spec';
 import { measureSegment } from '../src/ops/measure';
 import { saveNative, loadNative } from '../src/io/native';
 
@@ -157,5 +157,44 @@ describe('Measure Spec', () => {
     removeSpecItem(doc, k);
     expect(doc.style.measureSpec).toHaveLength(0);
     expect(defaultSpecMovers({ kind: 'line', parts: [], a: undefined, b: undefined })).toEqual([]);
+  });
+  it('quantity: a line counted twice doubles the total; the target is the total; details list piece / length / quantity', () => {
+    const { doc, id, P, ids, sew, sid } = doc1();
+    const L = measureSegment(doc, id, sew, ids[0], ids[1]);
+    const L2 = measureSegment(doc, id, sew, ids[1], ids[2]);
+    const k = addSpecItem(doc, { name: 'Waist', kind: 'line', parts: [{ ref: { pieceId: id, contourId: sew, from: ids[0], to: ids[1] } }, { ref: { pieceId: id, contourId: sew, from: ids[1], to: ids[2] } }] });
+    expect(specValue(doc, k)).toBeCloseTo(L + L2, 9);
+    setSpecQty(doc, k, 0, 2);
+    expect(specValue(doc, k)).toBeCloseTo(2 * L + L2, 9);
+    expect(specRows(doc, k).every(r => Math.abs(r.diff!) < 1e-9)).toBe(true); // targets followed the new total: still on spec
+    expect(specDetails(doc, k).map(d => [d.pieceName, Math.round(d.length! * 1000) / 1000, d.qty])).toEqual([['A', L, 2], ['A', L2, 1]]);
+    expect(() => setSpecQty(doc, k, 0, 0)).toThrow(/more than 0/);
+    // only the first line's end moves (it is counted twice): +20 on the total = +10 on that line
+    updateSpecItem(doc, k, { movers: [{ pieceId: id, anchorId: ids[0], dir: 'along', share: 1 }] });
+    const a0 = { ...P().sew.points[0] };
+    setSpecTargets(doc, k, { [sid('M')]: 2 * L + L2 + 20 });
+    applySpec(doc, [k], { sizes: [sid('M')] });
+    expect(specValue(doc, k)).toBeCloseTo(2 * L + L2 + 20, 5);
+    const a = P().sew.points[0];
+    expect(Math.hypot(a.x - a0.x, a.y - a0.y)).toBeCloseTo(10, 5);
+    // survives save / load
+    const re = new Document(loadNative(saveNative(doc)).style);
+    expect(specDetails(re, k)[0].qty).toBe(2);
+  });
+
+  it('rule "with": an added point rides with the line end (same direction and distance)', () => {
+    const { doc, id, P, ids, sew, sid } = doc1();
+    const L = measureSegment(doc, id, sew, ids[0], ids[1]);
+    const k = addSpecItem(doc, { name: 'Hem', kind: 'line', parts: [{ ref: { pieceId: id, contourId: sew, from: ids[0], to: ids[1] } }] });
+    // the line end (ids[1]) and the corner above it (ids[2]) move together: the side seam stays vertical
+    updateSpecItem(doc, k, { movers: [...defaultSpecMovers(doc.style.measureSpec[0]), { pieceId: id, anchorId: ids[2], dir: 'with', share: 1 }] });
+    const b0 = { ...P().sew.points[1] }, c0 = { ...P().sew.points[2] }, d0 = { ...P().sew.points[3] };
+    setSpecTargets(doc, k, { [sid('M')]: L + 25 });
+    applySpec(doc, [k], { sizes: [sid('M')] });
+    const b = P().sew.points[1], c = P().sew.points[2], d = P().sew.points[3];
+    expect(specValue(doc, k)).toBeCloseTo(L + 25, 5);
+    expect(c.x - c0.x).toBeCloseTo(b.x - b0.x, 6); expect(c.y - c0.y).toBeCloseTo(b.y - b0.y, 6);
+    expect(Math.hypot(b.x - b0.x, b.y - b0.y)).toBeCloseTo(25, 5);
+    expect([d.x, d.y]).toEqual([d0.x, d0.y]);
   });
 });
