@@ -324,8 +324,10 @@ const cases = [
       h._item = await h.ev(() => { const it = window.__e2e.app.style.measureSpec[0]; return { n: window.__e2e.app.style.measureSpec.length, kind: it.kind, movers: it.movers.map(m => m.dir + ':' + m.share), targets: Object.keys(it.targets).length }; });
       const base = h._hem0.find(r => r.size === 'M').parts[0];
       await typeInto(h, w.locator('table.sp-list input.sp-target').first(), String(Math.round((base + 15) * 1000) / 1000));
-      await w.locator('.fw-foot [data-act="apply"]').click(); await h.settle(150);
+      h._tool = await h.ev(() => window.__e2e.app.tool.id);
+      await w.locator('[data-act="apply-one"]').first().click(); await h.settle(150);
       h._sum = await w.locator('[data-spec]').getAttribute('data-spec');
+      if (!(await w.locator('.sptab').count())) { await w.locator('[data-act="all-sizes"]').click(); await h.settle(80); }
       h._diff = await h.ev(() => [...document.querySelectorAll('.fwin[data-win="mspec"] td[data-col="diff"]')].map(td => td.className));
     },
     expect: async h => {
@@ -334,6 +336,7 @@ const cases = [
       for (const r of now) { const o = h._hem0.find(x => x.size === r.size).parts[0]; errs.push(req(near(r.parts[0], o + 15, 0.01), `${r.size} hem ${r.parts[0].toFixed(4)} ≠ ${(o + 15).toFixed(4)}`)); }
       errs.push(req(h._sum === 'ok', 'summary ' + h._sum));
       errs.push(req(h._diff.length === 4 && h._diff.every(c => /pass/.test(c)), 'diff cells ' + JSON.stringify(h._diff)));
+      errs.push(req(h._tool === 'select', 'opening Measure spec did not switch to the Select tool: ' + h._tool));
       return errs;
     },
   }),
@@ -344,20 +347,92 @@ const cases = [
     drive: async h => {
       const w = h.page.locator('.fwin[data-win="mspec"]');
       await w.locator('[data-act="from-sel"]').click(); await h.settle(80);
-      await w.locator('table.sp-rules select[data-rule="dir"]').selectOption('y'); await h.settle(80);
+      await w.locator('[data-act="rules"]').first().click(); await h.settle(80);
+      h._rulesTitle = await h.page.locator('.fwin[data-win="msrules"] .fw-title').textContent();
+      await h.page.locator('.fwin[data-win="msrules"] table.sp-rules select[data-rule="dir"]').selectOption('y'); await h.settle(80);
+      if (!(await w.locator('.sptab').count())) { await w.locator('[data-act="all-sizes"]').click(); await h.settle(80); }
       h._now = await h.ev(() => { const E = window.__e2e; const it = E.app.style.measureSpec[0]; return Object.fromEntries(E.app.sizeLine().sizes.map(s => [s.name, window.prowdcad.ops.specValue(E.app.doc, it.id, s.id)])); });
       h._want = { S: h._now.S + 4, M: h._now.M + 10, L: h._now.L + 17, XL: h._now.XL + 25 };
       await pasteInto(h, '.fwin[data-win="mspec"] input[data-size="S"][data-col="target"]', ['S', 'M', 'L', 'XL'].map(k => h._want[k].toFixed(4)).join('\n'));
-      await w.locator('.fw-foot [data-act="apply"]').click(); await h.settle(150);
+      await h.page.locator('.fwin[data-win="msrules"] [data-act="rules-apply"]').click(); await h.settle(150);
     },
     expect: async h => {
       const got = await h.ev(() => { const E = window.__e2e; const it = E.app.style.measureSpec[0]; const f = n => { const a = E.findA('FRONT', n); return { x: a.a.x, y: a.a.y }; }; return { v: Object.fromEntries(E.app.sizeLine().sizes.map(s => [s.name, window.prowdcad.ops.specValue(E.app.doc, it.id, s.id)])), kind: it.kind, rule: it.movers.map(m => m.dir).join(), hem: f('SS_HEM'), ua: f('UA') }; });
       const errs = [req(got.kind === 'distance' && got.rule === 'y', 'item ' + got.kind + ' / ' + got.rule)];
+      errs.push(req(/^Rules — /.test(h._rulesTitle || ''), 'Rules is not its own window: ' + h._rulesTitle));
       for (const k of ['S', 'M', 'L', 'XL']) errs.push(req(near(got.v[k], h._want[k], 0.01), `${k} distance ${got.v[k].toFixed(4)} ≠ ${h._want[k].toFixed(4)}`));
       errs.push(req(near(got.hem.x, h._p0.hem.x, 1e-6) && near(got.hem.y, h._p0.hem.y, 1e-6), 'the fixed point SS_HEM moved'));
       errs.push(req(near(got.ua.x, h._p0.ua.x, 1e-6) && !near(got.ua.y, h._p0.ua.y, 1), `UA should move in Y only: ${JSON.stringify(got.ua)} from ${JSON.stringify(h._p0.ua)}`));
       return errs;
     },
+  }),
+  C('spec-chart-rules', {
+    title: 'Measure spec chart: expand shows piece / length / quantity; quantity 2 doubles the line and the targets follow; Size drop-down; Rules window adds the selected point “with the line end” (and auto-adds); Apply moves both',
+    pre: async h => { await resetMeasure(h); h._hem0 = await hand(h, [['FRONT', 'CF_HEM', 'SS_HEM']]); h._p0 = await h.ev(() => { const E = window.__e2e; const f = n => { const a = E.findA('FRONT', n); return { x: a.a.x, y: a.a.y }; }; return { hem: f('SS_HEM'), ua: f('UA') }; }); },
+    invoke: async h => {
+      await h.ev(() => { const E = window.__e2e; const a = E.findA('FRONT', 'CF_HEM'), b = E.findA('FRONT', 'SS_HEM'); E.app.sel = { pieces: [a.p.id], anchors: [], segments: [{ pieceId: a.p.id, contourId: a.c.id, from: a.a.id, to: b.a.id }] }; E.app.invalidate(); });
+      await h.cmd('measure.spec');
+    },
+    drive: async h => {
+      const w = h.page.locator('.fwin[data-win="mspec"]');
+      await w.locator('[data-act="from-sel"]').click(); await h.settle(80);
+      await w.locator('[data-act="expand"]').first().click(); await h.settle(80);
+      h._det = await h.ev(() => [...document.querySelectorAll('.fwin[data-win="mspec"] tr.sp-det[data-detail]')].map(tr => ({ piece: tr.children[1].textContent, len: tr.children[2].textContent, qty: tr.querySelector('input.sp-qty')?.value })));
+      await typeInto(h, w.locator('input.sp-qty').first(), '2');
+      h._total2 = await w.locator('td.sp-total').first().textContent();
+      h._diff2 = await h.ev(() => document.querySelector('.fwin[data-win="mspec"] tr.sp-pom td:nth-child(5)').className);
+      await w.locator('select.sp-size').selectOption({ label: 'L' }); await h.settle(80);
+      h._sizeL = await h.ev(() => { const a = window.__e2e.app; return a.sizeLine().sizes.find(s => s.id === a.activeSize).name; });
+      await w.locator('select.sp-size').selectOption({ index: 1 }); await h.settle(80); // back to M (base)
+      // rule maker: UA rides with the hem end
+      await w.locator('[data-act="rules"]').first().click(); await h.settle(80);
+      const r = h.page.locator('.fwin[data-win="msrules"]');
+      // (selected through the app: the two windows may sit over the point on the sheet)
+      await h.ev(() => { const E = window.__e2e; const a = E.findA('FRONT', 'UA'); E.app.selectAnchor({ pieceId: a.p.id, contourId: a.c.id, anchorId: a.a.id }); }); await h.settle(120);
+      await r.locator('[data-act="add-movers"]').click(); await h.settle(80);
+      h._movers = await h.ev(() => window.__e2e.app.style.measureSpec[0].movers.map(m => m.dir + ':' + m.share));
+      // auto-add: the next selected point joins by itself (kept: it rides along too; the runner allows 6 undo steps)
+      await r.locator('[data-act="auto-add"]').check(); await h.settle(60);
+      await h.ev(() => { const E = window.__e2e; const a = E.findA('FRONT', 'SH'); E.app.selectAnchor({ pieceId: a.p.id, contourId: a.c.id, anchorId: a.a.id }); }); await h.settle(150);
+      h._auto = await h.ev(() => window.__e2e.app.style.measureSpec[0].movers.length);
+      await r.locator('[data-act="auto-add"]').uncheck(); await h.settle(60);
+      const base = h._hem0.find(x => x.size === 'M').parts[0];
+      await typeInto(h, w.locator('table.sp-list input.sp-target').first(), String(Math.round((2 * base + 24) * 1000) / 1000));
+      await r.locator('[data-act="rules-apply"]').click(); await h.settle(150);
+    },
+    expect: async h => {
+      const now = await hand(h, [['FRONT', 'CF_HEM', 'SS_HEM']]);
+      const got = await h.ev(() => { const E = window.__e2e; const f = n => { const a = E.findA('FRONT', n); return { x: a.a.x, y: a.a.y }; }; return { hem: f('SS_HEM'), ua: f('UA'), qty: E.app.style.measureSpec[0].parts[0].qty }; });
+      const base0 = h._hem0.find(x => x.size === 'M').parts[0];
+      const errs = [
+        req(h._det.length === 1 && /FRONT/.test(h._det[0].piece) && h._det[0].qty === '1' && near(parseFloat(h._det[0].len), base0, 0.01), 'details ' + JSON.stringify(h._det)),
+        req(near(parseFloat(h._total2), 2 * base0, 0.01), `total with quantity 2: ${h._total2} ≠ ${(2 * base0).toFixed(2)}`),
+        req(/pass/.test(h._diff2), 'after the quantity change the row should still be on spec: ' + h._diff2),
+        req(h._sizeL === 'L', 'Size drop-down did not switch the size: ' + h._sizeL),
+        req(h._movers.join() === 'along:1,with:1', 'rules after “Add selected points”: ' + h._movers),
+        req(h._auto === 3, 'auto-add did not add the newly selected point: ' + h._auto),
+        req(got.qty === 2, 'quantity not stored: ' + got.qty),
+      ];
+      // total = 2 × hem; +24 on the total = +12 on the hem; UA moved by the same vector as the hem end
+      for (const r of now) { const o = h._hem0.find(x => x.size === r.size).parts[0]; errs.push(req(near(r.parts[0], o + 12, 0.01), `${r.size} hem ${r.parts[0].toFixed(4)} ≠ ${(o + 12).toFixed(4)}`)); }
+      const dh = { x: got.hem.x - h._p0.hem.x, y: got.hem.y - h._p0.hem.y }, du = { x: got.ua.x - h._p0.ua.x, y: got.ua.y - h._p0.ua.y };
+      errs.push(req(near(Math.hypot(dh.x, dh.y), 12, 0.01), 'hem end moved ' + JSON.stringify(dh)));
+      errs.push(req(near(du.x, dh.x, 1e-6) && near(du.y, dh.y, 1e-6), `UA did not ride with the line end: ${JSON.stringify(du)} vs ${JSON.stringify(dh)}`));
+      return errs;
+    },
+  }),
+  C('context-select-tool', {
+    title: 'Right-click menu on the sheet: “Select tool” is the first item and switches to it',
+    change: false,
+    invoke: async h => { await h.key('g'); },
+    drive: async h => {
+      const box = await h.page.locator('svg.sheet').boundingBox();
+      await h.page.mouse.click(box.x + 14, box.y + 14, { button: 'right' }); await h.settle(80);
+      h._first = await h.page.locator('.ctx-menu .menu-item').first().textContent();
+      await h.page.locator('.ctx-menu .menu-item').first().click(); await h.settle(60);
+      h._tool = await h.ev(() => window.__e2e.app.tool.id);
+    },
+    expect: async h => [req(/^Select tool/.test(h._first || ''), 'first item: ' + h._first), req(h._tool === 'select', 'tool ' + h._tool)],
   }),
   C('adjust-segment', {
     title: 'Measure window ▸ Adjust segment…: FRONT hem made exactly 300 (all sizes follow the base)',
