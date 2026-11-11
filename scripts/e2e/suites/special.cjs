@@ -246,6 +246,30 @@ async function dragsHead(h, fixtures) {
     await h.clickW(await h.along('FRONT', 'SS_HEM', 'UA', 0.4));
     return { got: `doc changed ${s0 !== await h.stable()}; ${await rev() - r0} undo step(s)`, pass: s0 === await h.stable() && await rev() === r0 };
   });
+  await T('Move Point: right-click on the selected point opens the movement box with blank fields; on a blank area the canvas menu', async () => {
+    await h.selectA('FRONT', 'UA'); await h.key('g'); const w = await h.W('FRONT', 'UA');
+    await h.clickW({ x: w.x + 300, y: w.y + 150 }, { button: 'right' }); const box1 = await h.page.locator('.ibox').count(), menu1 = await h.page.locator('.ctx-menu').count();
+    await h.page.keyboard.press('Escape'); await h.settle(40);
+    await h.selectA('FRONT', 'UA'); await h.key('g');
+    await h.clickW(w, { button: 'right' }); await h.page.waitForSelector('.ibox', { timeout: 2000 });
+    const vals = await h.page.locator('.ibox input[type=text]').evaluateAll(els => els.map(e => e.value));
+    await h.page.keyboard.press('Escape'); await h.settle(40);
+    return { got: `blank area: box ${box1}, canvas menu ${menu1}; fields on the point ${JSON.stringify(vals)}`, pass: box1 === 0 && menu1 === 1 && vals.length >= 2 && vals.every(v => v === '') };
+  });
+  await T('Move Point · Single: a smooth grade point is a split, the line beyond it keeps its shape', async () => {
+    await h.ev(() => { const E = window.__e2e; E.app.doc.transact('smooth SH', () => { E.findA('FRONT', 'SH').a.smooth = true; }); E.app.invalidate(); });
+    const far = () => h.ev(() => { const E = window.__e2e; const o = E.handleW('FRONT', 'SH', 'out'); return `${E.segLen('FRONT', 'SH', 'HPS').toFixed(6)} ${o.x.toFixed(6)} ${o.y.toFixed(6)}`; });
+    const near = () => h.ev(() => window.__e2e.segLen('FRONT', 'UA', 'SH'));
+    const f0 = await far(), n0 = await near(); const r0 = await rev();
+    await h.key('g'); const w = await h.W('FRONT', 'AH2'); await h.dragW(w, { x: w.x + 14, y: w.y + 5 }, { steps: 8, mods: ['Alt'] });
+    const f1 = await far(), n1 = await near(); const held = await h.ev(() => !!window.__e2e.findA('FRONT', 'SH').a.hHold?.hOut);
+    return { got: `beyond SH ${f0} → ${f1}; armhole ${Q.r4(n0)} → ${Q.r4(n1)}; SH holds its far side ${held}; ${await rev() - r0} undo step(s)`, pass: f0 === f1 && Math.abs(n1 - n0) > 0.5 && held && await rev() - r0 === 1 };
+  });
+  await T('Handles are drawn for the last selected point only', async () => {
+    await h.selectA('FRONT', 'AH1'); const one = await h.page.locator('[data-hit="handle"]').count();
+    await h.selectA('FRONT', 'AH2', true); const two = await h.page.locator('[data-hit="handle"]').count();
+    return { got: `1 point: ${one} handle(s); 2 points: ${two} handle(s)`, pass: one === 2 && two === 2 };
+  });
   await T('Move Point · Single with a multi-selection moves only the grabbed point', async () => { await h.selectA('FRONT', 'SS_HEM'); await h.selectA('FRONT', 'UA', true); await h.key('g'); const w = await h.W('FRONT', 'UA'); await h.dragW(w, { x: w.x + 20, y: w.y }, { steps: 10 }); const st = await h.state(); return { got: `SS_HEM.x ${Q.r4(an(st, 'FRONT', 'SS_HEM').x)} UA.x ${Q.r4(an(st, 'FRONT', 'UA').x)}`, pass: near(an(st, 'FRONT', 'SS_HEM').x, 260, 1e-3) && an(st, 'FRONT', 'UA').x > 270 }; });
   await T('Curve tool: handle drag reshapes, opposite handle mirrored', async () => { await h.key('Shift+C'); await h.clickA('FRONT', 'AH1'); const w = await h.ev(() => window.__e2e.handleW('FRONT', 'AH1', 'out')); const st0 = await h.state(); await h.dragW(w, { x: w.x + 8, y: w.y + 10 }, { steps: 8 }); const st1 = await h.state(); const a = an(st1, 'FRONT', 'AH1'); const others = anchorDiff(st0, st1, 'FRONT').filter(d => d.name !== 'AH1'); const col = a.hIn && a.hOut ? Math.abs(a.hIn.x * a.hOut.y - a.hIn.y * a.hOut.x) / (Math.hypot(a.hIn.x, a.hIn.y) * Math.hypot(a.hOut.x, a.hOut.y)) : 1; return { got: `hOut ${JSON.stringify(a.hOut)} hIn ${JSON.stringify(a.hIn)} sin=${col.toFixed(4)} others ${others.length}`, pass: !!a.hOut && col < 1e-3 && !others.length }; });
   await T('Curve tool: Alt+handle drag breaks the pair', async () => { await h.key('Shift+C'); await h.clickA('FRONT', 'AH1'); const w = await h.ev(() => window.__e2e.handleW('FRONT', 'AH1', 'out')); await h.dragW(w, { x: w.x + 8, y: w.y + 10 }, { steps: 8, mods: ['Alt'] }); const a = an(await h.state(), 'FRONT', 'AH1'); return { got: `smooth=${a.smooth}`, pass: a.smooth === false }; });
