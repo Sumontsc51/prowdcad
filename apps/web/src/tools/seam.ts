@@ -12,7 +12,8 @@ import type { App } from '../app';
 import { ICON, type Tool } from './tool';
 import { anchorNear, pieceUnder, runWorld, screenPath } from '../hitkit';
 import { ops } from '../ops-bridge';
-import { rememberedDialog } from '../ui/dialog';
+import { rememberedDialog, showDialog } from '../ui/dialog';
+import { settings, saveSettings } from '../settings';
 import { DoubleClick } from '../ui/dom';
 import { reportError } from '../commands';
 import { screenMarker } from './common';
@@ -32,7 +33,18 @@ export async function seamDialog(app: App, title: string, current: number): Prom
     ],
   });
   if (!r) return null;
-  return (r.dir === 'in' ? -1 : 1) * (r.v as number);
+  const v = r.v as number;
+  // a value typed in the wrong unit ("20" meant as mm while the unit is inch = 508 mm): ask before making a 20-inch seam
+  if (v > 76.2) {
+    const typed = settings.unit === 'mm' ? null : settings.unit === 'in' ? v / 25.4 : v / 10; // the number as typed
+    const ok = await showDialog({
+      title: 'Very wide seam allowance',
+      message: `${fmt(v)} ${unitLabel()} is ${Math.round(v)} mm (${(v / 25.4).toFixed(2)} in). Seam allowances are usually under 3 in / 75 mm.${typed !== null ? `\n\nIf you meant ${Math.round(typed * 100) / 100} mm, press Cancel and type “${Math.round(typed * 100) / 100}mm”. A unit after the number always wins.` : ''}`,
+      okLabel: `Use ${fmt(v)} ${unitLabel()}`,
+    });
+    if (!ok) { delete settings.last['seam.value']; saveSettings(); return null; }
+  }
+  return (r.dir === 'in' ? -1 : 1) * v;
 }
 
 async function applyRun(app: App, pieceId: Id, from: Id, to: Id) {
