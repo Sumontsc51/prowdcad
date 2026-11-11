@@ -444,6 +444,36 @@ export interface MovementProgram {
   moves: { pieceId: Id; anchorId: Id; dx: number; dy: number }[]; // per +1 mm
 }
 
+/**
+ * Measure Spec: one point of measure (POM). A named measurement tied to pattern geometry, with a
+ * target per size and the rule that says which points move, and how, to reach the target.
+ */
+export interface SpecMover {
+  pieceId: Id; anchorId: Id;
+  /** 'along' = along the measured line at that point (lengthens / shortens it); 'x' / 'y' = that axis only; 'angle' = angleDeg */
+  dir: 'along' | 'x' | 'y' | 'angle';
+  /** degrees from +X, CCW (dir 'angle') */
+  angleDeg?: number;
+  /** share of the solved movement this point takes: 1 = full, 0.5 = half, −1 = the opposite way, 0 = stays */
+  share: number;
+}
+export interface MeasureSpecItem {
+  id: Id;
+  name: string;
+  /** 'line' = internal line(s) / outline segment(s) summed; 'distance' = straight point to point */
+  kind: 'line' | 'distance';
+  /** line: the measured runs (same shape as a Measure ▸ Line group) */
+  parts: { ref: { pieceId: Id; contourId: Id; from: Id; to: Id; reverse?: boolean }; cut?: boolean }[];
+  /** distance: the two points */
+  a?: { pieceId: Id; anchorId: Id };
+  b?: { pieceId: Id; anchorId: Id };
+  /** how the geometry is measured: along the line, straight, X only, Y only */
+  mode: 'contour' | 'diagonal' | 'x' | 'y';
+  /** spec value per size (mm); a size without a target is left alone */
+  targets: Record<SizeId, number>;
+  movers: SpecMover[];
+}
+
 export interface MeasurementSet {
   id: Id;
   name: string;
@@ -473,6 +503,8 @@ export interface Style {
   ruleLibraries: RuleLibrary[];
   movementPrograms: MovementProgram[];
   measurementSets: MeasurementSet[];
+  /** Measure Spec: points of measure with targets and movement rules */
+  measureSpec: MeasureSpecItem[];
   /** archived piece versions (Replace Old / Save Active As New) */
   pieceArchive: Piece[];
   /** named layouts (Save/Restore Layout) */

@@ -97,7 +97,7 @@ export function makeStyle(name = 'Untitled', sizeNames = ['XS', 'S', 'M', 'L', '
   return {
     schema: 'prowdcad/2', id: newId('st'), name, units: 'mm', fractionDenominator: 8,
     pieces: [], sizeTables: [table], activeSizeTableId: table.id,
-    ruleLibraries: [], movementPrograms: [], measurementSets: [], pieceArchive: [], layouts: {},
+    ruleLibraries: [], movementPrograms: [], measurementSets: [], measureSpec: [], pieceArchive: [], layouts: {},
     settings: { autoReseam: true, pointConnectionOnSnap: 'always', textMinMm: 3, textMaxMm: 50, notchSetup: { ...DEFAULT_NOTCH_SETUP } },
     meta: {}, createdAt: t, updatedAt: t,
   };
