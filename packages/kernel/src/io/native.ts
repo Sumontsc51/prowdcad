@@ -156,7 +156,7 @@ export function validateStyle(s: any): string[] {
 /** Fill optional collections that older prowdcad/2 writers may have omitted. */
 function normalize(s: Style): Style {
   const d = makeStyle();
-  s.ruleLibraries ??= []; s.movementPrograms ??= []; s.measurementSets ??= []; s.pieceArchive ??= []; s.layouts ??= {};
+  s.ruleLibraries ??= []; s.movementPrograms ??= []; s.measurementSets ??= []; s.measureSpec ??= []; s.pieceArchive ??= []; s.layouts ??= {};
   s.meta ??= {}; s.settings ??= d.settings; s.settings.notchSetup ??= { ...DEFAULT_NOTCH_SETUP };
   s.createdAt ??= now(); s.updatedAt ??= s.createdAt;
   for (const p of s.pieces) {
