@@ -37,7 +37,7 @@ export const KERNEL_GROUPS = {
   'ops/measure': ['measureRef', 'measureSegment', 'pointPos', 'measureXY', 'measureAngle', 'measureAcrossSizes', 'compareLengths', 'walkingCheck', 'segmentLengthSetTo', 'notchesOnSegment',
     'measurePart', 'cutPolyline', 'measureGroup', 'compareGroups', 'matchingSize', 'gradeByMeasurement'],
   'ops/scale': ['scalePiece', 'pctToFactor'],
-  'ops/points': ['addPointOnSegment', 'addPointAt', 'movePoint', 'moveAlongContour', 'moveProportional', 'multiMove', 'alignPoints', 'cornerAngle', 'setAngle',
+  'ops/points': ['addPointOnSegment', 'addPointAt', 'movePoint', 'holdShapeAcrossGrade', 'moveAlongContour', 'moveProportional', 'multiMove', 'alignPoints', 'cornerAngle', 'setAngle',
     'roundCorner', 'addSplineSupportPoints', 'pointsCleanup', 'deletePoint', 'togglePointKind', 'setSmooth', 'breakHandle', 'joinHandle', 'setStartPoint',
     'pinCurvePoints', 'curvePointFollows', 'addPointsOnSegment', 'cutPointDistances'],
   'ops/segments': ['copySegment', 'pasteSegment', 'rotateSegmentPreservingLength', 'swapSegment', 'divideContour', 'joinContours', 'contourToDashedLines',
