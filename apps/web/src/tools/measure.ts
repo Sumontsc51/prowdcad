@@ -30,7 +30,7 @@ import { h, clear } from '../ui/dom';
 import { reportError } from '../commands';
 import { resolveFor, toWorld, toLocal } from '../geometry';
 import { segmentAt, label as svgLabel } from './livekit';
-import { MS, addPart, removePart, removeLast, hasOpen, commitMeasure, cancelMeasure, renderMeasureWindow, groupColor, sameRef, partName, setMeasureHooks } from '../panels/measure-table';
+import { closeMeasureWindow, MS, addPart, removePart, removeLast, hasOpen, commitMeasure, cancelMeasure, renderMeasureWindow, groupColor, sameRef, partName, setMeasureHooks } from '../panels/measure-table';
 import { settings, saveSettings } from '../settings';
 import { toast } from '../ui/toast';
 
@@ -252,7 +252,8 @@ export const measureTool: Tool = {
     if (mode === 'line') renderMeasureWindow(app);
     setMeasureHooks({ onOK: () => app.invalidate('canvas'), onCancel: () => app.invalidate('canvas') });
   },
-  deactivate(app) { pts = []; hover = null; hoverHit = null; app.invalidate('canvas'); },
+  // leaving the Measure tool closes its window (it reopens with the tool; open and kept measurements are not lost)
+  deactivate(app) { pts = []; hover = null; hoverHit = null; closeMeasureWindow(); app.invalidate('canvas'); },
   busy: () => (mode === 'line' ? hasOpen() : pts.length > 0 && pts.length < (angleMode ? 3 : 2)),
   modes: () => [
     { id: 'line', label: 'Line', title: 'Measure Line (AccuMark Line Length): click lines, they add up per size; another piece = comparison' },
