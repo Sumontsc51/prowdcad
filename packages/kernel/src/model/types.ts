@@ -466,7 +466,9 @@ export interface MeasureSpecItem {
   /** 'line' = internal line(s) / outline segment(s) summed; 'distance' = straight point to point */
   kind: 'line' | 'distance';
   /** line: the measured runs (same shape as a Measure ▸ Line group) */
-  parts: { ref: { pieceId: Id; contourId: Id; from: Id; to: Id; reverse?: boolean }; cut?: boolean; /** how many times this line counts in the total (2 for a half piece); default 1 */ qty?: number }[];
+  parts: { ref: { pieceId: Id; contourId: Id; from: Id; to: Id; reverse?: boolean }; cut?: boolean; /** how many times this line counts in the total (2 for a half piece); default 1 */ qty?: number;
+    /** this line's own spec: target length per size (quantity not applied) and the points that move for it (absent = both ends, half each) */
+    targets?: Record<SizeId, number>; movers?: SpecMover[] }[];
   /** distance: the two points */
   a?: { pieceId: Id; anchorId: Id };
   b?: { pieceId: Id; anchorId: Id };
