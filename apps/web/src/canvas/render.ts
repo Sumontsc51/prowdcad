@@ -229,6 +229,8 @@ export function renderOverlay(app: App): string {
   const anchorsOut: string[] = [];
   const hitAnchors: string[] = [];
   const handlesOut: string[] = [];
+  // handles are drawn for one point only: the last selected one (not on every selected point)
+  const primaryAnchor = app.sel.anchors[app.sel.anchors.length - 1]?.anchorId ?? null;
   const hitHandles: string[] = [];
   const hitLive: string[] = [];
   const curLive = app.currentLive();
@@ -333,7 +335,7 @@ export function renderOverlay(app: App): string {
           // ~9 px anchor hit target
           hitAnchors.push(`<circle cx="${fs(s.x)}" cy="${fs(s.y)}" r="9" fill="transparent" data-hit="anchor" data-piece="${p.id}" data-contour="${c.id}" data-anchor="${a.id}" data-size="${sid}" style="cursor:move"><title>${esc(anchorTip(a, ai))}</title></circle>`);
           // handles for selected anchors (active size, smooth or explicit)
-          if (selA && (a.smooth || a.hIn || a.hOut)) {
+          if (selA && primaryAnchor === a.id && (a.smooth || a.hIn || a.hOut)) {
             const hh = rc.handles[ai];
             const n = c.points.length;
             const hasIn = c.closed || ai > 0, hasOut = c.closed || ai < n - 1;
