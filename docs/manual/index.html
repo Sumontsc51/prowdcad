@@ -502,6 +502,18 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       </ol>
       <p><strong>Compare.</strong> Click a line on <em>another</em> piece while a measurement is open (or <kbd>Ctrl</kbd>+click to force a new group on the same piece): a second group B starts. The window then shows Σ A, Σ B and the difference B − A in every size (the button flips it to A − B). Type a <em>target ease</em> and a tolerance: each size turns green if it is within tolerance, red if not. Example: A = front armhole + back armhole, B = sleeve cap, target ease 15 ± 3 mm. Name a group by typing in its chip.</p>
       <p>The <em>Measure</em> box in the window switches between length along the line, straight distance, dX only and dY only. In nested view (<kbd>Alt+N</kbd>) you can click the outline of any size shown. Each row always uses that size's own pattern.</p>
+      <p><strong>Internal lines.</strong> The <em>Internal lines</em> option in the strip under the menus is on by default: one click on an internal line measures the whole line, end to end. Switch it off to pick only the outline.</p>
+      <p><strong>Adjust segment.</strong> With a measurement open, <em>Adjust segment…</em> in the Measure window changes the pattern: make one measured line an exact length, or (with two groups) make the difference between the groups, the ease, a value. All sizes or the active size only.</p>
+      <p>The Measure window belongs to the Measure tool: it closes when you choose another tool and comes back with <kbd>M</kbd>. Open and kept measurements are not lost.</p>
+      <h3>Measure spec <kbd>Ctrl+Shift+M</kbd></h3>
+      <p>The spec is the style's list of points of measure. Each one is tied to the pattern and has a target per size. Change a target, press <em>Apply</em>, and the pattern follows.</p>
+      <ol class="steps">
+        <li><div><strong>Add a measurement.</strong> Select an outline segment or an internal line (or exactly two points for a straight distance) and press <em>+ From selection</em>. Or measure with the Measure tool and press <em>Add to spec</em>. The targets start as what the pattern measures now.</div></li>
+        <li><div><strong>Type the target.</strong> In the list you edit the active size. Changing the <em>base</em> size shifts every size by the same amount, so the grading is kept. Select the row to see one line per size, where every cell is on its own and a column pasted from Excel fills the sizes.</div></li>
+        <li><div><strong>Apply.</strong> By default the end of the line moves along the line by the difference, like an offset at the line end. The base size moves the pattern itself and every size follows; another size changes only that size's grading. One undo step.</div></li>
+        <li><div><strong>Rules.</strong> Under the list, <em>Rules</em> says which points move: add points with <em>+ Selected points</em>, and for each one choose the direction (along the line, X only, Y only, or an angle) and its share (1 = the whole change, 0.5 = half, −1 = the other way, 0 = stays). Two ends with 0.5 each grow the line equally at both ends.</div></li>
+      </ol>
+      <p><em>Preview</em> solves without changing anything. A target that cannot be reached with the chosen rules is reported and the pattern is left as it was. The spec is saved in the style file.</p>
       <div class="tbl"><table>
         <thead><tr><th>Tool</th><th>What you get</th></tr></thead>
         <tbody>
