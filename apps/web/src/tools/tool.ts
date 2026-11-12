@@ -95,4 +95,6 @@ export const ICON = {
   movePiece: '<path d="M5 6h9l3 5-3 7H5z"/><path d="M19 3a4 4 0 010 6" /><path d="M19 9l-2 0M19 9l0-2"/>',
   curve: '<path d="M4 19C6 8 14 6 20 6"/><path d="M4 19l5-11"/><circle cx="9" cy="8" r="1.8"/><circle cx="4" cy="19" r="1.4"/>',
   pick: '<path d="M12 3v6M12 15v6M3 12h6M15 12h6"/><circle cx="12" cy="12" r="2"/>',
+  rotate: '<path d="M6 9h8l3 4-3 6H6z"/><path d="M14 5a6 6 0 016 6"/><path d="M20 11l-2.4-1M20 11l1-2.4"/><circle cx="6" cy="19" r="1.4" fill="currentColor" stroke="none"/>',
+  flip: '<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7L3 17h6z"/><path d="M15 7l6 10h-6z" opacity=".55"/>',
 };

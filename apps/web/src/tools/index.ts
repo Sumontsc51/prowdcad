@@ -11,25 +11,27 @@ import { walkTool } from './walk';
 import { smoothTool, slashTool, traceTool } from './construct';
 import { pickTool } from './pick';
 import { dartTool, pleatTool, fullnessTool } from './live';
-import { movePointTool, moveLineTool, pieceTool, curveTool } from './move';
+import { movePointTool, moveLineTool, rotateTool, flipTool, curveTool } from './move';
 import { cutPointTool } from './cutpoint';
 
 /** Palette order. Tools sharing `group` form one flyout button. */
 export const TOOLS: Tool[] = [
   selectTool,
-  movePointTool, moveLineTool, pieceTool, curveTool,
-  penTool, internalTool, smoothTool,
+  movePointTool, moveLineTool, curveTool,
+  rotateTool, flipTool,
+  internalTool, smoothTool,
   rectTool, circleTool, polygonTool, roundRectTool,
   seamTool,
   notchTool, drillTool, textTool,
   cutPointTool,
   dartTool, pleatTool, fullnessTool,
   slashTool, traceTool,
+  penTool, // not offered to the user (hidden, no key, no menu): kept for the automated test fixture
   measureTool, walkTool,
   handTool, zoomTool,
   pickTool,
 ];
 
 export const GROUP_TITLES: Record<string, string> = {
-  select: 'Select', move: 'Move', pen: 'Pens', shape: 'Shapes', seam: 'Seam', marks: 'Notch / Drill / Text', cutpoint: 'Cut Point', live: 'Dart / Pleat', cut: 'Cut / Trace', measure: 'Measure / Walk', view: 'Navigate',
+  select: 'Select', movepoint: 'Move Point', moveline: 'Move / Copy Line', curve: 'Curve / Handle', rotate: 'Rotate', flip: 'Flip', pen: 'Internal line', smooth: 'Smooth run', trace: 'Trace Piece', shape: 'Shapes', seam: 'Seam', marks: 'Notch / Drill / Text', cutpoint: 'Cut Point', live: 'Dart / Pleat', cut: 'Cut / Trace', measure: 'Measure / Walk', view: 'Navigate',
 };

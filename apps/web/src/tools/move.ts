@@ -28,11 +28,12 @@ import { settings, saveSettings, type Settings } from '../settings';
 import { constrain45, toWorld, toLocal, dirToLocal, dirToWorld, resolveFor, contourById, deepClone, layoutOf, pieceWorldBox } from '../geometry';
 import { snapPoint, SNAP_LABEL } from '../canvas/snap';
 import { candidatesAt, gatherInBox, itemHighlight, SEL_COLOR } from '../selpick';
-import { contourNear } from '../hitkit';
+import { contourNear, runWorld } from '../hitkit';
 import { sizeNameOf } from '../selection';
 import { openInputBox, inputBoxOpen, inputBoxCommit, inputBoxCancel, type IBMode } from '../ui/inputbox';
 import { fmt, unitLabel } from '../units-ui';
 import { toast } from '../ui/toast';
+import { confirmDialog } from '../ui/dialog';
 import { reportError } from '../commands';
 import { fs, screenMarker } from './common';
 import { DoubleClick } from '../ui/dom';
@@ -47,7 +48,7 @@ const THRESH_PX = 3;
 let lastClient = { x: 200, y: 200 };
 function trackClient(p: Ptr) { const e = p.e as MouseEvent; if (typeof e.clientX === 'number') lastClient = { x: e.clientX, y: e.clientY }; }
 
-function scratchDoc(app: App, ids: Id[]): Document {
+export function scratchDoc(app: App, ids: Id[]): Document {
   const set = new Set(ids);
   const style = { ...app.doc.style, pieces: app.doc.style.pieces.map(p => (set.has(p.id) ? deepClone(p) : p)) };
   const d = new Document(style);
@@ -447,7 +448,7 @@ function mpFollowOverlay(app: App): string {
 }
 
 export const movePointTool: Tool = {
-  id: 'movePoint', title: 'Move Point', group: 'move', hotkey: 'G', icon: ICON.movePoint, cursor: 'crosshair',
+  id: 'movePoint', title: 'Move Point', group: 'movepoint', hotkey: 'G', icon: ICON.movePoint, cursor: 'crosshair',
   activate(app) { MP.op = null; MP.frozen = false; MP.tackDrag = null; mpAdopt(app); },
   deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); mpCancelOp(app); MP.tackDrag = null; MP.hover = null; },
   busy: () => !!MP.op || !!MP.tackDrag || !!MP.box || !!MP.ins || apexBusy(),
@@ -713,13 +714,40 @@ function tack(s: Vec, active: boolean): string {
 
 type LPick = { kind: 'segment'; seg: SegSel } | { kind: 'internal'; c: ContourSel };
 interface LOp { kind: 'press' | 'drag' | 'carry'; startW: Vec; s: Vec; dW: Vec; lastW: Vec; err: string | null; again?: boolean }
-const ML: { pick: LPick | null; before: ReturnType<App['snapshotSel']> | null; op: LOp | null; frozen: boolean; hover: SelItem | null; last: { mode: string; v: Record<string, number> } | null } =
-  { pick: null, before: null, op: null, frozen: false, hover: null, last: null };
-const mlMode = (): Settings['moveLineMode'] => settings.moveLineMode ?? 'translate';
-const ML_MODES = [
-  { id: 'translate', label: 'Translate', title: 'Move Line: both end points and the curve points between them move by the same delta' },
-  { id: 'parallel', label: 'Parallel', title: 'Move Parallel / Offset: motion locked to the line normal' },
+const ML: {
+  pick: LPick | null; before: ReturnType<App['snapshotSel']> | null; op: LOp | null; frozen: boolean; hover: SelItem | null; last: { mode: string; v: Record<string, number> } | null;
+  /** Copy internal: the picked line is stuck to the mouse (world polyline, grab point, cursor) */
+  carry: { pk: LPick; pts: Vec[]; grabW: Vec; cur: Vec; add: Vec } | null;
+} = { pick: null, before: null, op: null, frozen: false, hover: null, last: null, carry: null };
+type MLMode = Settings['moveLineMode'];
+const mlMode = (): MLMode => settings.moveLineMode ?? 'translate';
+const mlCopy = () => !!settings.moveLineCopy && mlMode() !== 'copyTo';
+const ML_MODES: { id: MLMode; label: string; title: string }[] = [
+  { id: 'translate', label: 'Free', title: 'The line moves freely: its end points and the curve points between them move by the same amount' },
+  { id: 'h', label: 'Horizontal', title: 'The line moves left / right only' },
+  { id: 'v', label: 'Vertical', title: 'The line moves up / down only' },
+  { id: 'parallel', label: 'Parallel', title: 'The line moves at a right angle to itself (offset)' },
+  { id: 'prop', label: 'Follow shape', title: 'Proportional: the ends slide along the lines they are attached to. A leg hem moved outward follows the leg and gets narrower, inward it gets wider' },
+  { id: 'copyTo', label: 'Copy internal', title: 'Copy the picked line onto any panel as an internal line: right-click the line, OK, then click where it goes' },
 ];
+const ML_NAME: Record<MLMode, string> = { translate: 'Free', h: 'Horizontal', v: 'Vertical', parallel: 'Parallel', prop: 'Follow shape', copyTo: 'Copy internal' };
+const mlHead = () => `${mlMode() === 'copyTo' ? 'Copy Line' : mlCopy() ? 'Copy Line' : 'Move Line'} · ${ML_NAME[mlMode()]}`;
+function mlRef(pk: LPick): { pieceId: Id; contourId: Id; from?: Id; to?: Id } {
+  return pk.kind === 'segment' ? { pieceId: pk.seg.pieceId, contourId: pk.seg.contourId, from: pk.seg.from, to: pk.seg.to } : { pieceId: pk.c.pieceId, contourId: pk.c.contourId };
+}
+/** World polyline of the picked line (active size). */
+function mlWorld(app: App, pk: LPick): Vec[] {
+  const pc = app.doc.piece(mlPieceId(pk));
+  if (pk.kind === 'segment') { const c = contourById(pc, pk.seg.contourId); return c ? runWorld(app, pc, c, pk.seg.from, pk.seg.to) : []; }
+  const ci = pc.internals.findIndex(c => c.id === pk.c.contourId); if (ci < 0) return [];
+  const rc = resolveFor(app.doc, pc, app.sizeOf(pc)).internals[ci]; if (!rc) return [];
+  return (rc.closed ? [...rc.pts, rc.pts[0]] : rc.pts).map(q => toWorld(pc, q));
+}
+/** A copy that ends on the outline is attached to it (as the Internal line tool does). */
+function mlLockCopy(d: Document, pieceId: Id, contourId: Id) {
+  if (!settings.autoLockInternal) return;
+  try { const pc = d.piece(pieceId); const c = pc.internals.find(x => x.id === contourId); if (c && ops.lockableEnds(pc, d.sizeLine(pc), c, { tol: 0.05 }).length) ops.lockInternalEnds(d, pieceId, contourId, { tol: 0.05 }); } catch { /* a free line */ }
+}
 function mlItem(p: LPick): SelItem { return p.kind === 'segment' ? { k: 'segment', seg: p.seg } : { k: 'internal', c: p.c }; }
 function mlPieceId(p: LPick) { return p.kind === 'segment' ? p.seg.pieceId : p.c.pieceId; }
 function mlValid(app: App): boolean {
@@ -754,22 +782,73 @@ function mlSid(app: App, pk: LPick) { return editSid(app, app.doc.piece(mlPieceI
 function mlApply(app: App, d: Document, pk: LPick, dLocal: Vec) {
   const pid = mlPieceId(pk); const pc = d.piece(pid);
   if (pc.locked) throw new Error(lockedMsg(pc));
-  if (pk.kind === 'internal') { const why = lockBlock(app, pid, pk.c.contourId, null, 'line'); if (why) throw new Error(why); }
+  const copy = mlCopy(), mode = mlMode();
+  if (pk.kind === 'internal' && !copy) { const why = lockBlock(app, pid, pk.c.contourId, null, 'line'); if (why) throw new Error(why); }
+  if (mode === 'prop') {
+    if (mlSid(app, pk)) throw new Error('Follow shape works on the base size: switch to the base size (Ctrl+B)');
+    const r = ops.lineFollowShape(d, mlRef(pk), dLocal, { copy });
+    if (r.contourId) mlLockCopy(d, pid, r.contourId);
+    return;
+  }
+  if (copy) { const id = ops.copyLineTo(d, mlRef(pk), pid, { a: 1, b: 0, c: 0, d: 1, e: dLocal.x, f: dLocal.y }); mlLockCopy(d, pid, id); return; }
   ops.multiMove(d, mlTargets(app, pk).map(anchorId => ({ pieceId: pid, anchorId })), dLocal, { sizeId: mlSid(app, pk) });
 }
 function mlDeltaFromCursor(app: App, op: LOp, w: Vec, e: MouseEvent | PointerEvent): Vec {
   let dW = { x: w.x - op.startW.x, y: w.y - op.startW.y };
-  if (mlMode() === 'parallel') { const n = mlNormal(app, ML.pick!); const k = dW.x * n.x + dW.y * n.y; dW = { x: n.x * k, y: n.y * k }; }
+  const m = mlMode();
+  if (m === 'parallel' || m === 'prop') { const n = mlNormal(app, ML.pick!); const k = dW.x * n.x + dW.y * n.y; dW = { x: n.x * k, y: n.y * k }; }
+  else if (m === 'h') dW = { x: dW.x, y: 0 };
+  else if (m === 'v') dW = { x: 0, y: dW.y };
   else if (e.shiftKey) dW = constrain45({ x: 0, y: 0 }, dW);
   op.dW = dW;
   return dirToLocal(app.doc.piece(mlPieceId(ML.pick!)), dW);
 }
-function mlCommit(app: App, dLocal: Vec, label = 'Move line'): boolean {
+function mlCommit(app: App, dLocal: Vec, label = mlCopy() ? 'Copy line' : 'Move line'): boolean {
   const pk = ML.pick!; ML.op = null;
   if (Math.hypot(dLocal.x, dLocal.y) < 1e-9) { app.cancelPreview(); app.status('Not moved (zero distance)'); return false; }
   const ok = commitWith(app, [mlPieceId(pk)], label, d => mlApply(app, d, pk, dLocal));
-  if (ok) { ML.last = { mode: 'rel', v: { dx: dLocal.x, dy: dLocal.y } }; app.status(`Line moved ${fmt(dLocal.x)}, ${fmt(dLocal.y)} ${unitLabel()}`); }
+  if (ok) { ML.last = { mode: 'rel', v: { dx: dLocal.x, dy: dLocal.y } }; app.status(`Line ${mlCopy() ? 'copied (the copy is an internal line)' : 'moved'} ${fmt(dLocal.x)}, ${fmt(dLocal.y)} ${unitLabel()}${mlMode() === 'prop' ? ' · ends followed the shape' : ''}`); }
   return ok;
+}
+/** Copy internal: put the carried line onto the piece under `atW` (its grab point lands on atW). */
+function mlPaste(app: App, atW: Vec): boolean {
+  const cy = ML.carry; if (!cy) return false;
+  const target = pcPieceAt(app, atW) ?? pcPieceAt(app, cy.cur);
+  if (!target) { app.status('Copy internal: click on a panel (piece) to put the line there'); return false; }
+  if (target.locked) { toast(lockedMsg(target), 'warn'); return false; }
+  const src = app.doc.piece(mlPieceId(cy.pk));
+  const dW = { x: atW.x - cy.grabW.x, y: atW.y - cy.grabW.y };
+  const f = (q: Vec) => { const w = toWorld(src, q); return toLocal(target, { x: w.x + dW.x, y: w.y + dW.y }); };
+  const o = f({ x: 0, y: 0 }), ex = f({ x: 1, y: 0 }), ey = f({ x: 0, y: 1 });
+  const m = { a: ex.x - o.x, b: ex.y - o.y, c: ey.x - o.x, d: ey.y - o.y, e: o.x, f: o.y };
+  const pk = cy.pk;
+  const ok = commitWith(app, [...new Set([src.id, target.id])], 'Copy internal line', d => { const id = ops.copyLineTo(d, mlRef(pk), target.id, m); mlLockCopy(d, target.id, id); });
+  if (ok) { ML.carry = null; app.status(`Line copied onto “${target.name}” as an internal line · right-click the line again to copy it once more`); }
+  app.invalidate();
+  return ok;
+}
+async function mlCarryStart(app: App, w: Vec) {
+  const pk = ML.pick!; const pts = mlWorld(app, pk); if (pts.length < 2) return;
+  if (!(await confirmDialog('Copy internal', 'Copy this line? It sticks to the mouse: left-click a panel to put it there, or right-click to type a movement from the click position.', 'OK'))) return;
+  // grab point: the place on the line nearest the right-click
+  let g = pts[0], bd = Infinity;
+  for (let k = 0; k + 1 < pts.length; k++) { const a = pts[k], b = pts[k + 1], ab = { x: b.x - a.x, y: b.y - a.y }, l2 = ab.x * ab.x + ab.y * ab.y; const t = l2 < 1e-12 ? 0 : Math.max(0, Math.min(1, ((w.x - a.x) * ab.x + (w.y - a.y) * ab.y) / l2)); const q = { x: a.x + ab.x * t, y: a.y + ab.y * t }; const dd = Math.hypot(q.x - w.x, q.y - w.y); if (dd < bd) { bd = dd; g = q; } }
+  ML.carry = { pk, pts, grabW: g, cur: w, add: { x: 0, y: 0 } };
+  app.invalidate();
+}
+async function mlCarryInput(app: App, clickW: Vec) {
+  const cy = ML.carry; if (!cy || inputBoxOpen()) return;
+  ML.frozen = true; cy.cur = clickW;
+  const res = await openInputBox({
+    title: 'Copy internal · movement from the click position', at: lastClient,
+    modes: [{ id: 'rel', label: 'dX dY', fields: [{ key: 'dx', label: 'dX', kind: 'length', value: 0 }, { key: 'dy', label: 'dY', kind: 'length', value: 0 }] }],
+    onPreview: (_m, v) => { cy.add = v ? { x: v.dx, y: v.dy } : { x: 0, y: 0 }; app.invalidate('canvas'); },
+  });
+  ML.frozen = false;
+  if (!res) { cy.add = { x: 0, y: 0 }; app.invalidate(); return; }
+  cy.add = { x: 0, y: 0 };
+  // the typed movement is in sheet (world) directions, measured from where the mouse was clicked
+  if (!mlPaste(app, { x: clickW.x + res.v.dx, y: clickW.y + res.v.dy })) app.invalidate();
 }
 function mlSetPick(app: App, pk: LPick) {
   const same = ML.pick && JSON.stringify(ML.pick) === JSON.stringify(pk);
@@ -794,14 +873,17 @@ async function mlInput(app: App, typed?: string) {
   const d0 = ML.op ? dirToLocal(pc, ML.op.dW) : { x: 0, y: 0 }; // blank unless a drag is in progress (Enter repeats the last move)
   const nW = mlNormal(app, pk), nL = dirToLocal(pc, nW);
   const off0 = d0.x * nL.x + d0.y * nL.y;
-  const modes: IBMode[] = mlMode() === 'parallel'
+  const mm = mlMode();
+  const modes: IBMode[] = mm === 'parallel' || mm === 'prop'
     ? [{ id: 'off', label: 'Offset', fields: [{ key: 'o', label: 'Offset (+ outward / left)', kind: 'length', value: off0 }] }]
+    : mm === 'h' ? [{ id: 'rel', label: 'dX', fields: [{ key: 'dx', label: 'dX', kind: 'length', value: d0.x }] }]
+    : mm === 'v' ? [{ id: 'rel', label: 'dY', fields: [{ key: 'dy', label: 'dY', kind: 'length', value: d0.y }] }]
     : [{ id: 'rel', label: 'dX dY', fields: [{ key: 'dx', label: 'dX', kind: 'length', value: d0.x }, { key: 'dy', label: 'dY', kind: 'length', value: d0.y }] },
       { id: 'polar', label: 'Distance ∠', fields: [{ key: 'l', label: 'Distance', kind: 'length', value: Math.hypot(d0.x, d0.y) }, { key: 'a', label: 'Angle', kind: 'angle', value: Math.round(Math.atan2(d0.y, d0.x) * 180 / Math.PI * 1e4) / 1e4 }] },
       { id: 'off', label: 'Offset', title: 'Perpendicular offset', fields: [{ key: 'o', label: 'Offset (+ outward / left)', kind: 'length', value: off0 }] }];
-  const toD = (m: string, v: Record<string, number>): Vec => m === 'off' ? { x: nL.x * v.o, y: nL.y * v.o } : m === 'polar' ? { x: v.l * Math.cos(v.a * Math.PI / 180), y: v.l * Math.sin(v.a * Math.PI / 180) } : { x: v.dx, y: v.dy };
+  const toD = (m: string, v: Record<string, number>): Vec => m === 'off' ? { x: nL.x * v.o, y: nL.y * v.o } : m === 'polar' ? { x: v.l * Math.cos(v.a * Math.PI / 180), y: v.l * Math.sin(v.a * Math.PI / 180) } : mm === 'h' || mm === 'v' ? dirToLocal(pc, { x: v.dx ?? 0, y: v.dy ?? 0 }) : { x: v.dx, y: v.dy };
   const res = await openInputBox({
-    title: `Move Line · ${mlMode() === 'parallel' ? 'Parallel' : 'Translate'}`, modes, at: lastClient, typed, amber: sizeBadge(app, mlSid(app, pk))?.text,
+    title: mlHead(), modes, at: lastClient, typed, amber: sizeBadge(app, mlSid(app, pk))?.text,
     onPreview: (m, v) => { if (!v) { app.cancelPreview(); return; } previewWith(app, [pc.id], d => mlApply(app, d, pk, toD(m, v))); },
   });
   ML.frozen = false;
@@ -809,27 +891,32 @@ async function mlInput(app: App, typed?: string) {
   if (mlCommit(app, toD(res.mode, res.v))) ML.last = { mode: res.mode, v: res.v };
 }
 export const moveLineTool: Tool = {
-  id: 'moveLine', title: 'Move Line / Segment', group: 'move', hotkey: 'Shift+G', icon: ICON.moveLine, cursor: 'crosshair',
-  activate(app) { ML.op = null; ML.frozen = false; mlAdopt(app); },
-  deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); ML.op = null; ML.frozen = false; ML.hover = null; app.cancelPreview(); },
-  busy: () => !!ML.op,
+  id: 'moveLine', title: 'Move / Copy Line', group: 'moveline', hotkey: 'Shift+G', icon: ICON.moveLine, cursor: 'crosshair',
+  activate(app) { ML.op = null; ML.frozen = false; ML.carry = null; mlAdopt(app); },
+  deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); ML.op = null; ML.carry = null; ML.frozen = false; ML.hover = null; app.cancelPreview(); },
+  busy: () => !!ML.op || !!ML.carry,
   modes: () => ML_MODES,
   mode: () => mlMode(),
-  setMode(app, id) { settings.moveLineMode = id as Settings['moveLineMode']; saveSettings(); ML.op = null; app.cancelPreview(); app.invalidate(); },
+  setMode(app, id) { settings.moveLineMode = id as MLMode; saveSettings(); ML.op = null; ML.carry = null; app.cancelPreview(); app.invalidate(); },
+  toggles: () => mlMode() === 'copyTo' ? [] : [{ id: 'copy', label: 'Copy', title: 'On: the original line stays and a copy is made (an internal line). Off: the line itself moves.', on: !!settings.moveLineCopy }],
+  toggle(app, id) { if (id === 'copy') { settings.moveLineCopy = !settings.moveLineCopy; saveSettings(); ML.op = null; app.cancelPreview(); app.invalidate(); } },
   badge(app) { return sizeBadge(app, mlValid(app) ? mlSid(app, ML.pick!) : editSidActive(app)); },
   hint(app) {
-    const head = `Move Line · ${mlMode() === 'parallel' ? 'Parallel' : 'Translate'}`;
-    if (!mlValid(app)) return `${head} · Select segment (or internal line) to move · Tab = mode · Esc = back to Select`;
+    const head = mlHead();
+    if (ML.carry) return `${head} · The line is on the mouse · left-click a panel to put it there · right-click = type a movement from the click position · Esc cancel`;
+    if (mlMode() === 'copyTo') return mlValid(app) ? `${head} · Right-click the picked line, then OK: it sticks to the mouse · or click another line · Esc = Select` : `${head} · Click the line to copy (any outline segment or internal line) · Tab = mode · Esc = back to Select`;
+    if (!mlValid(app)) return `${head} · Select segment (or internal line) to ${mlCopy() ? 'copy' : 'move'} · Tab = mode · Esc = back to Select`;
     if (ML.op && ML.op.kind !== 'press') {
       const pc = app.doc.piece(mlPieceId(ML.pick!));
       return `${head} · ${fmtV(dirToLocal(pc, ML.op.dW))} · ${ML.op.kind === 'carry' ? 'click to place' : 'release to place'} · type a value or right-click = input box · Shift H/V/45° · Esc cancel${ML.op.err ? ' · ⚠ ' + ML.op.err : ''}`;
     }
     const n = mlTargets(app, ML.pick!).length;
-    return `${head} · ${ML.pick!.kind === 'segment' ? 'Segment' : 'Internal line'} (${n} point${n > 1 ? 's' : ''} move) · drag it, or click then click the new spot · type a value or right-click = input box · arrows nudge · ⌫ undo pick · Esc = Select`;
+    return `${head} · ${ML.pick!.kind === 'segment' ? 'Segment' : 'Internal line'} (${n} point${n > 1 ? 's' : ''}${mlCopy() ? ', copied as an internal line' : ' move'}) · drag it, or click then click the new spot · type a value or right-click = input box · arrows nudge · ⌫ undo pick · Esc = Select`;
   },
   down(app, p) {
     trackClient(p);
     if (inputBoxOpen() || ML.frozen) return;
+    if (ML.carry) { ML.carry.cur = p.w; mlPaste(app, p.w); return; }
     if (ML.op?.kind === 'carry') {
       if (Math.hypot(p.s.x - ML.op.s.x, p.s.y - ML.op.s.y) < 6) { ML.op = { ...ML.op, kind: 'press', s: p.s, again: true }; app.cancelPreview(); return; }
       mlCommit(app, mlDeltaFromCursor(app, ML.op, p.w, p.e)); return;
@@ -838,8 +925,9 @@ export const moveLineTool: Tool = {
     if (!c) { app.status('Nothing to pick here: click a segment or an internal line'); return; }
     const pk: LPick = c.item.k === 'segment' ? { kind: 'segment', seg: c.item.seg } : { kind: 'internal', c: (c.item as { c: ContourSel }).c };
     const pc = app.doc.piece(mlPieceId(pk));
+    if (mlMode() === 'copyTo') { ML.pick = pk; ML.before = null; app.applySel(mlItem(pk), 'replace'); app.status('Line picked: right-click it, then OK, to copy it onto a panel'); app.invalidate(); return; }
     if (pc.locked) { toast(lockedMsg(pc), 'warn'); return; }
-    const why = pk.kind === 'internal' ? lockBlock(app, pc.id, pk.c.contourId, null, 'line') : null;
+    const why = pk.kind === 'internal' && !mlCopy() ? lockBlock(app, pc.id, pk.c.contourId, null, 'line') : null;
     if (why) { app.applySel(mlItem(pk), 'replace'); toast(why, 'warn'); app.status('🔒 ' + why); return; }
     mlSetPick(app, pk);
     ML.op = { kind: 'press', startW: p.w, s: p.s, dW: { x: 0, y: 0 }, lastW: p.w, err: null };
@@ -847,6 +935,7 @@ export const moveLineTool: Tool = {
   move(app, p) {
     trackClient(p);
     if (ML.frozen) return;
+    if (ML.carry) { ML.carry.cur = p.w; app.invalidate('canvas'); return; }
     const op = ML.op;
     if (!op) {
       const c = candidatesAt(app, p.w, 'all', { kinds: ['segment', 'internal'] })[0] ?? null;
@@ -871,23 +960,26 @@ export const moveLineTool: Tool = {
     trackClient(p);
     if (inputBoxOpen()) { inputBoxCommit(); return true; }
     // the movement box opens only on the selected line (or during a move); elsewhere the canvas menu opens
+    if (ML.carry) { void mlCarryInput(app, p.w); return true; }
     if (mlValid(app) && ML.op) { void mlInput(app); return true; }
     if (mlValid(app)) {
       const want = mlItem(ML.pick!);
       const on = candidatesAt(app, p.w, 'all', { kinds: ['segment', 'internal'] }).some(c => JSON.stringify(c.item) === JSON.stringify(want));
-      if (on) { void mlInput(app); return true; }
+      if (on) { if (mlMode() === 'copyTo') void mlCarryStart(app, p.w); else void mlInput(app); return true; }
     }
     return false;
   },
   key(app, e) {
     if (inputBoxOpen()) return false;
-    if (e.key === 'Escape') { if (ML.op) { ML.op = null; app.cancelPreview(); app.status('Move cancelled'); return true; } app.setTool('select'); return true; }
+    if (e.key === 'Escape') { if (ML.carry) { ML.carry = null; app.status('Copy cancelled'); app.invalidate(); return true; } if (ML.op) { ML.op = null; app.cancelPreview(); app.status('Move cancelled'); return true; } app.setTool('select'); return true; }
     if (e.key === 'Backspace') {
+      if (ML.carry) { ML.carry = null; app.invalidate(); return true; }
       if (ML.op) { ML.op = null; app.cancelPreview(); return true; }
       if (ML.pick) { const b = ML.before; ML.pick = null; ML.before = null; if (b) app.restoreSel(b); app.status('Pick undone'); return true; }
       app.status('Nothing picked'); return true;
     }
-    if (e.key === 'Tab' && !ML.op) { moveLineTool.setMode!(app, mlMode() === 'translate' ? 'parallel' : 'translate'); return true; }
+    if (e.key === 'Tab' && !ML.op && !ML.carry) { const i = ML_MODES.findIndex(m => m.id === mlMode()); moveLineTool.setMode!(app, ML_MODES[(i + (e.shiftKey ? ML_MODES.length - 1 : 1)) % ML_MODES.length].id); return true; }
+    if (mlMode() === 'copyTo' || ML.carry) return false;
     if (e.key === 'Enter' && !ML.op && mlValid(app) && ML.last) {
       const pc = app.doc.piece(mlPieceId(ML.pick!)); const v = ML.last.v;
       const nL = dirToLocal(pc, mlNormal(app, ML.pick!));
@@ -899,9 +991,11 @@ export const moveLineTool: Tool = {
   },
   nudge(app, dx, dy) {
     if (!mlValid(app)) { app.status('Move Line: select a segment first'); return; }
+    if (mlMode() === 'copyTo') return;
     const pc = app.doc.piece(mlPieceId(ML.pick!));
-    let dW = { x: dx, y: dy };
-    if (mlMode() === 'parallel') { const n = mlNormal(app, ML.pick!); const k = dW.x * n.x + dW.y * n.y || Math.hypot(dx, dy) * Math.sign(dx + dy); dW = { x: n.x * k, y: n.y * k }; }
+    let dW = { x: mlMode() === 'v' ? 0 : dx, y: mlMode() === 'h' ? 0 : dy };
+    if (!dW.x && !dW.y) return;
+    if (mlMode() === 'parallel' || mlMode() === 'prop') { const n = mlNormal(app, ML.pick!); const k = dW.x * n.x + dW.y * n.y || Math.hypot(dx, dy) * Math.sign(dx + dy); dW = { x: n.x * k, y: n.y * k }; }
     mlCommit(app, dirToLocal(pc, dW), 'Nudge line');
   },
   overlay(app) {
@@ -911,22 +1005,39 @@ export const moveLineTool: Tool = {
       const sid = mlSid(app, ML.pick!);
       out.push(itemHighlight(app, mlItem(ML.pick!), 1, sid ? AMBER : SEL_COLOR));
     }
+    const cy = ML.carry;
+    if (cy) {
+      const dx = cy.cur.x + cy.add.x - cy.grabW.x, dy = cy.cur.y + cy.add.y - cy.grabW.y;
+      const sp = cy.pts.map(q => app.view.toScreen({ x: q.x + dx, y: q.y + dy }));
+      const g = app.view.toScreen({ x: cy.cur.x + cy.add.x, y: cy.cur.y + cy.add.y });
+      out.push(`<path d="${sp.map((q, k) => `${k ? 'L' : 'M'}${fs(q.x)} ${fs(q.y)}`).join('')}" fill="none" stroke="#d6309b" stroke-width="2" stroke-dasharray="6 3" data-carry-line="1"/>` + screenMarker(g, 'cross', '#d6309b', 6));
+    }
     return out.join('');
   },
 };
 
 // ───────────────────────── Piece: move / rotate / flip ─────────────────────────
 
-type PMode = Settings['pieceToolMode'];
-const PC_MODES = [
-  { id: 'move', label: 'Move', title: 'Move Piece: drag (R / Shift+R ±90°, Q W ±1°, A S ±10°, X / Y flip while dragging)' },
-  { id: 'rotate', label: 'Rotate', title: 'Rotate Piece about its centre: drag or type an angle (Ctrl = 15° steps)' },
-  { id: 'flip', label: 'Flip', title: 'Flip Piece: click = left ⇄ right, Shift+click = up ⇄ down' },
+type PMode = 'move' | 'rotate' | 'flip';
+/** Rotate tool options: how the pivot is chosen. (Pieces are moved with the Select tool.) */
+const ROT_MODES = [
+  { id: 'point', label: 'By point', title: 'Rotate by point: click a pin point (a pattern point or any place on the piece), then a second point and turn the piece around the pin' },
+  { id: 'piece', label: 'Piece', title: 'Piece rotation: the piece turns about its centre; drag or type an angle 0–360° (Ctrl = 15° steps)' },
 ];
+const rotMode = (): 'point' | 'piece' => settings.rotateMode ?? 'point';
+const deg360 = (d: number) => { const v = ((d % 360) + 360) % 360; return Math.round(v * 100) / 100; };
+/** Grain line of a piece after its layout turned from L0 to L1 with "keep grain direction": same direction on the sheet. */
+function grainKept(p: Piece, L0: PieceLayout, L1: PieceLayout): Piece['grain'] {
+  const g = p.grain; const m = { x: (g.a.x + g.b.x) / 2, y: (g.a.y + g.b.y) / 2 };
+  const dW = dirToWorld({ ...p, layout: L0 } as Piece, { x: g.b.x - g.a.x, y: g.b.y - g.a.y });
+  const d = dirToLocal({ ...p, layout: L1 } as Piece, dW);
+  return { ...g, a: { x: m.x - d.x / 2, y: m.y - d.y / 2 }, b: { x: m.x + d.x / 2, y: m.y + d.y / 2 } };
+}
 type XF = { rot?: number; flip?: 'h' | 'v' };
 interface POp { kind: 'press' | 'drag' | 'carry'; ids: Id[]; base: Map<Id, PieceLayout>; startW: Vec; s: Vec; d: Vec; xf: XF[]; pivot: Vec; a0: number; deg: number; lastW: Vec; again?: boolean }
-const PCS: { op: POp | null; frozen: boolean; hover: Id | null } = { op: null, frozen: false, hover: null };
-const pcMode = (): PMode => settings.pieceToolMode ?? 'move';
+const PCS: { op: POp | null; frozen: boolean; hover: Id | null; active: PMode; pin: { w: Vec; ids: Id[] } | null } = { op: null, frozen: false, hover: null, active: 'rotate', pin: null };
+const pcMode = (): PMode => PCS.active;
+const grainFixed = () => PCS.active === 'rotate' && !!settings.rotateKeepGrain;
 
 function pcLayout(op: POp, id: Id, mode: PMode): PieceLayout {
   let L: PieceLayout = { ...op.base.get(id)! };
@@ -936,7 +1047,10 @@ function pcLayout(op: POp, id: Id, mode: PMode): PieceLayout {
 }
 function pcPreview(app: App) {
   const op = PCS.op!; const mode = pcMode();
-  for (const id of op.ids) app.beginPreview(id).layout = pcLayout(op, id, mode);
+  for (const id of op.ids) {
+    const pv = app.beginPreview(id); pv.layout = pcLayout(op, id, mode);
+    if (grainFixed()) pv.grain = grainKept(app.doc.piece(id), op.base.get(id)!, pv.layout);
+  }
   app.invalidate('canvas', 'panels', 'status');
 }
 function pcCommit(app: App, label: string) {
@@ -944,7 +1058,9 @@ function pcCommit(app: App, label: string) {
   const lay = new Map(op.ids.map(id => [id, pcLayout(op, id, mode)]));
   if ([...lay].every(([id, L]) => JSON.stringify(normalizeLayout(L)) === JSON.stringify(normalizeLayout(op.base.get(id)!)))) { app.preview.clear(); app.status('Not moved'); app.invalidate(); return; }
   app.preview.clear();
-  try { app.doc.transact(label, () => { for (const [id, L] of lay) app.doc.piece(id).layout = L; }); } catch (err) { reportError(err, label); }
+  const keep = grainFixed();
+  try { app.doc.transact(label, () => { for (const [id, L] of lay) { const p = app.doc.piece(id); if (keep) p.grain = grainKept(p, op.base.get(id)!, L); p.layout = L; } }); } catch (err) { reportError(err, label); }
+  if (mode === 'rotate') app.status(`Rotated ${deg360(op.deg)}°${keep ? ' · grain direction kept' : ' · grain line turned with the piece'}`);
   app.invalidate();
 }
 function pcIdsFor(app: App, pc: Piece): Id[] | null {
@@ -986,7 +1102,7 @@ async function pcInput(app: App, typed?: string) {
   op.kind = 'carry'; PCS.frozen = true;
   const mode = pcMode();
   const modes: IBMode[] = mode === 'rotate'
-    ? [{ id: 'rot', label: 'Angle', fields: [{ key: 'a', label: 'Angle (CCW +)', kind: 'angle', value: Math.round(op.deg * 1e4) / 1e4 }] }]
+    ? [{ id: 'rot', label: 'Angle', fields: [{ key: 'a', label: 'Angle 0–360° (counter-clockwise)', kind: 'angle', value: deg360(op.deg) }] }]
     : [{ id: 'rel', label: 'dX dY', fields: [{ key: 'dx', label: 'dX', kind: 'length', value: op.d.x }, { key: 'dy', label: 'dY', kind: 'length', value: op.d.y }] },
       { id: 'polar', label: 'Distance ∠', fields: [{ key: 'l', label: 'Distance', kind: 'length', value: Math.hypot(op.d.x, op.d.y) }, { key: 'a', label: 'Angle', kind: 'angle', value: Math.round(Math.atan2(op.d.y, op.d.x) * 180 / Math.PI * 1e4) / 1e4 }] }];
   const set = (m: string, v: Record<string, number>) => {
@@ -998,27 +1114,25 @@ async function pcInput(app: App, typed?: string) {
   set(res.mode, res.v);
   pcCommit(app, mode === 'rotate' ? 'Rotate piece' : 'Move piece');
 }
-export const pieceTool: Tool = {
-  id: 'movePiece', title: 'Move / Rotate / Flip Piece', group: 'move', hotkey: 'Ctrl+Shift+G', icon: ICON.movePiece, cursor: 'move',
-  activate() { PCS.op = null; PCS.frozen = false; },
-  deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); PCS.op = null; PCS.frozen = false; app.cancelPreview(); },
-  busy: () => !!PCS.op,
-  modes: () => PC_MODES,
-  mode: () => pcMode(),
-  setMode(app, id) { settings.pieceToolMode = id as PMode; saveSettings(); PCS.op = null; app.cancelPreview(); app.invalidate(); },
+export const rotateTool: Tool = {
+  id: 'rotatePiece', title: 'Rotate Piece', group: 'rotate', hotkey: 'Ctrl+Shift+G', icon: ICON.rotate, cursor: 'crosshair',
+  activate() { PCS.op = null; PCS.frozen = false; PCS.pin = null; PCS.active = 'rotate'; },
+  deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); PCS.op = null; PCS.pin = null; PCS.frozen = false; app.cancelPreview(); },
+  busy: () => !!PCS.op || !!PCS.pin,
+  modes: () => ROT_MODES,
+  mode: () => rotMode(),
+  setMode(app, id) { settings.rotateMode = id as 'point' | 'piece'; saveSettings(); PCS.op = null; PCS.pin = null; app.cancelPreview(); app.invalidate(); },
+  toggles: () => [{ id: 'grain', label: 'Keep grain direction', title: 'On: the grain line keeps its direction on the sheet while the piece turns. Off: the grain line turns with the piece.', on: !!settings.rotateKeepGrain }],
+  toggle(app, id) { if (id === 'grain') { settings.rotateKeepGrain = !settings.rotateKeepGrain; saveSettings(); if (PCS.op) pcPreview(app); app.invalidate(); } },
   badge: () => null,
   hint(app) {
-    const m = pcMode(); const head = `Piece · ${m === 'move' ? 'Move' : m === 'rotate' ? 'Rotate' : 'Flip'}`;
+    const pt = rotMode() === 'point'; const head = `Rotate · ${pt ? 'By point' : 'Piece'}`;
+    const g = settings.rotateKeepGrain ? 'grain direction kept' : 'grain turns with the piece';
     const op = PCS.op;
-    if (m === 'flip') return `${head} · Click a piece = flip left ⇄ right · Shift+click = up ⇄ down (selected pieces flip together) · Esc = Select`;
-    if (!op || op.kind === 'press') {
-      const sel = app.sel.pieces.map(id => app.piece(id)?.name).filter(Boolean);
-      if (sel.length && !op) return `${head} · ${sel.length > 1 ? `${sel.length} selected pieces` : sel[0]}: type ${m === 'rotate' ? 'an angle' : 'dX dY'} (or right-click) · or drag a piece${m === 'rotate' ? ' (about its centre)' : ''} · arrows nudge · Esc = Select`;
-      return `${head} · Select piece to ${m === 'rotate' ? 'rotate (about its centre)' : 'move'} · drag, or click then click · type a value or right-click = input box · arrows nudge selected pieces · Esc = Select`;
-    }
-    const n = op.ids.length > 1 ? `${op.ids.length} pieces · ` : '';
-    if (m === 'rotate') return `${head} · ${n}${(Math.round(op.deg * 100) / 100)}° · ${op.kind === 'carry' ? 'click to set' : 'release to set'} · Ctrl = 15° steps · type an angle or right-click = input box · Esc cancel`;
-    return `${head} · ${n}dX ${fmt(op.d.x)} dY ${fmt(op.d.y)} ${unitLabel()} · R/Shift+R ±90° · Q W ±1° · A S ±10° · X Y flip · Shift H/V/45° · ${op.kind === 'carry' ? 'click to place' : 'release to place'} · right-click = input box · Esc cancel`;
+    if (op && op.kind !== 'press') return `${head} · ${op.ids.length > 1 ? `${op.ids.length} pieces · ` : ''}${deg360(op.deg)}° · ${op.kind === 'carry' ? 'click to set' : 'release to set'} · Ctrl = 15° steps · type an angle or right-click = input box · ${g} · Esc cancel`;
+    if (pt) return PCS.pin ? `${head} · Pin set · click the second point (the one you turn), then move the mouse · Esc cancel` : `${head} · Click the pin point: a pattern point or any place on the piece · ${g} · Tab = mode · Esc = Select`;
+    const sel = app.sel.pieces.map(id => app.piece(id)?.name).filter(Boolean);
+    return sel.length ? `${head} · ${sel.length > 1 ? `${sel.length} selected pieces` : sel[0]}: type an angle 0–360 (or right-click the piece) · or drag a piece · ${g} · Esc = Select` : `${head} · Click or drag a piece to turn it about its centre · type an angle 0–360 · ${g} · Tab = mode · Esc = Select`;
   },
   down(app, p) {
     trackClient(p);
@@ -1028,9 +1142,23 @@ export const pieceTool: Tool = {
       if (Math.hypot(p.s.x - PCS.op.s.x, p.s.y - PCS.op.s.y) < 6 && !PCS.op.xf.length) { PCS.op = { ...PCS.op, kind: 'press', s: p.s, again: true }; app.cancelPreview(); return; }
       pcCommit(app, mode === 'rotate' ? 'Rotate piece' : 'Move piece'); return;
     }
+    if (mode === 'rotate' && rotMode() === 'point' && PCS.pin) {
+      // second point: the rotator. Turning starts from here.
+      const pin = PCS.pin; const rot = (p.e as MouseEvent).altKey ? p.w : snapPoint(app, p.w).p;
+      const ps = app.view.toScreen(pin.w);
+      if (Math.hypot(ps.x - p.s.x, ps.y - p.s.y) < 6) { app.status('The second point must be away from the pin'); return; }
+      PCS.pin = null;
+      PCS.op = { kind: 'press', ids: pin.ids, base: new Map(pin.ids.map(id => [id, { ...layoutOf(app.doc.piece(id)) }])), startW: rot, s: p.s, d: { x: 0, y: 0 }, xf: [], pivot: pin.w, a0: Math.atan2(rot.y - pin.w.y, rot.x - pin.w.x), deg: 0, lastW: rot };
+      app.invalidate(); return;
+    }
     const pc = pcPieceAt(app, p.w);
     if (!pc) { app.status('Nothing to pick here: click a piece'); return; }
     const e = p.e as MouseEvent;
+    if (mode === 'rotate' && rotMode() === 'point') {
+      const ids = pcIdsFor(app, pc); if (!ids) return;
+      PCS.pin = { w: e.altKey ? p.w : snapPoint(app, p.w).p, ids };
+      app.status('Pin set: click the second point, then move the mouse to turn the piece'); app.invalidate(); return;
+    }
     if (mode === 'flip') { const ids = pcIdsFor(app, pc); if (ids) flipPieces(app, ids, e.shiftKey ? 'v' : 'h'); return; }
     const ids = pcIdsFor(app, pc); if (!ids) return;
     const pivot = mode === 'rotate' ? pcCentre(app, ids) : p.w;
@@ -1067,15 +1195,15 @@ export const pieceTool: Tool = {
     if (inputBoxOpen()) { inputBoxCommit(); return true; }
     // the movement box opens only on a selected piece (or during a move); elsewhere the canvas menu opens
     const under = PCS.op ? null : pcPieceAt(app, p.w);
-    if (PCS.op || (pcMode() !== 'flip' && under && app.sel.pieces.includes(under.id))) { void pcInput(app); return true; }
+    if (PCS.op || (pcMode() !== 'flip' && !PCS.pin && under && app.sel.pieces.includes(under.id))) { void pcInput(app); return true; }
     return false;
   },
   key(app, e) {
     if (inputBoxOpen()) return false;
     const op = PCS.op;
-    if (e.key === 'Escape') { if (op) { PCS.op = null; app.cancelPreview(); app.status('Move cancelled'); return true; } app.setTool('select'); return true; }
-    if (e.key === 'Tab' && !op) { const i = PC_MODES.findIndex(m => m.id === pcMode()); pieceTool.setMode!(app, PC_MODES[(i + 1) % PC_MODES.length].id); return true; }
-    if (e.key === 'Backspace') { if (op) { PCS.op = null; app.cancelPreview(); } return true; }
+    if (e.key === 'Escape') { if (op) { PCS.op = null; app.cancelPreview(); app.status('Cancelled'); return true; } if (PCS.pin) { PCS.pin = null; app.status('Pin removed'); app.invalidate(); return true; } app.setTool('select'); return true; }
+    if (e.key === 'Tab' && !op && pcMode() === 'rotate') { rotateTool.setMode!(app, rotMode() === 'point' ? 'piece' : 'point'); return true; }
+    if (e.key === 'Backspace') { if (op) { PCS.op = null; app.cancelPreview(); } else if (PCS.pin) { PCS.pin = null; app.invalidate(); } return true; }
     if (op && pcMode() === 'move' && op.kind !== 'press' && !e.ctrlKey && !e.metaKey && !e.altKey) {
       const k = e.key.toLowerCase();
       const xf: XF | null = k === 'r' ? { rot: e.shiftKey ? -90 : 90 } : k === 'q' ? { rot: 1 } : k === 'w' ? { rot: -1 } : k === 'a' ? { rot: 10 } : k === 's' ? { rot: -10 } : k === 'x' ? { flip: 'h' } : k === 'y' ? { flip: 'v' } : null;
@@ -1095,10 +1223,11 @@ export const pieceTool: Tool = {
     const out: string[] = [];
     if (PCS.hover && !PCS.op) out.push(itemHighlight(app, { k: 'piece', pieceId: PCS.hover }, 0.5));
     const op = PCS.op;
+    if (PCS.pin && !op) { const c = app.view.toScreen(PCS.pin.w); out.push(screenMarker(c, 'cross', '#c0392b', 8) + screenMarker(c, 'ring', '#c0392b', 5) + `<text x="${fs(c.x + 10)}" y="${fs(c.y - 10)}" class="tool-note">pin</text>`); }
     if (op && pcMode() === 'rotate') {
       const c = app.view.toScreen(op.pivot);
       out.push(screenMarker(c, 'cross', SEL_COLOR, 8) + screenMarker(c, 'ring', SEL_COLOR, 5));
-      if (op.kind !== 'press') { const w = app.view.toScreen(op.lastW); out.push(`<path d="M${fs(c.x)} ${fs(c.y)}L${fs(w.x)} ${fs(w.y)}" stroke="${SEL_COLOR}" stroke-dasharray="4 3"/><text x="${fs(w.x + 10)}" y="${fs(w.y - 10)}" class="tool-note">${(Math.round(op.deg * 100) / 100)}°</text>`); }
+      if (op.kind !== 'press') { const w = app.view.toScreen(op.lastW); out.push(`<path d="M${fs(c.x)} ${fs(c.y)}L${fs(w.x)} ${fs(w.y)}" stroke="${SEL_COLOR}" stroke-dasharray="4 3"/><text x="${fs(w.x + 10)}" y="${fs(w.y - 10)}" class="tool-note">${deg360(op.deg)}°</text>`); }
     }
     return out.join('');
   },
@@ -1107,7 +1236,24 @@ export const pieceTool: Tool = {
 // ───────────────────────── Curve / Handle ─────────────────────────
 
 interface HOp { ref: AnchorRef; which: 'in' | 'out'; alt: boolean; moved: boolean; s: Vec }
-const CV: { op: HOp | null; picked: { ref: AnchorRef; which: 'in' | 'out' } | null; frozen: boolean } = { op: null, picked: null, frozen: false };
+const CV: {
+  op: HOp | null; picked: { ref: AnchorRef; which: 'in' | 'out' } | null; frozen: boolean;
+  /** a picked line: it is shaped as ONE curve with a handle at each end */
+  seg: SegSel | null;
+  segOp: { which: 'start' | 'end'; s: Vec; moved: boolean; rel: Vec | null } | null;
+} = { op: null, picked: null, frozen: false, seg: null, segOp: null };
+
+const SEG_YELLOW = '#f2c200';
+/** The picked line as one curve (base size), from the live preview when there is one. */
+function cvSeg(app: App): { pc: Piece; sc: ReturnType<typeof ops.segmentCurve> } | null {
+  const g = CV.seg; if (!g) return null;
+  const doc = app.doc.style.pieces.find(p => p.id === g.pieceId); if (!doc) { CV.seg = null; return null; }
+  const pc = app.preview.get(g.pieceId) ?? doc;
+  try { return { pc, sc: ops.segmentCurve(pc, app.doc.sizeLine(doc), g.contourId, g.from, g.to) }; } catch { CV.seg = null; return null; }
+}
+function cvSegApply(d: Document, g: SegSel, op: NonNullable<typeof CV.segOp>): number {
+  return ops.shapeSegment(d, g.pieceId, g.contourId, g.from, g.to, op.rel ? { [op.which]: op.rel } : {});
+}
 const cvDbl = new DoubleClick();
 
 function handleSet(app: App, pc: Piece, ref: AnchorRef, which: 'in' | 'out', rel: Vec, broken: boolean) {
@@ -1144,22 +1290,36 @@ async function cvInput(app: App, typed?: string) {
   commitWith(app, [pk.ref.pieceId], 'Edit handle', apply(res.v));
 }
 export const curveTool: Tool = {
-  id: 'curve', title: 'Curve / Handle', group: 'move', hotkey: 'Shift+C', icon: ICON.curve, cursor: 'default',
-  activate() { CV.op = null; CV.frozen = false; },
-  deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); CV.op = null; app.cancelPreview(); },
-  busy: () => !!CV.op,
+  id: 'curve', title: 'Curve / Handle', group: 'curve', hotkey: 'Shift+C', icon: ICON.curve, cursor: 'default',
+  activate() { CV.op = null; CV.frozen = false; CV.seg = null; CV.segOp = null; },
+  deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); CV.op = null; CV.seg = null; CV.segOp = null; app.cancelPreview(); },
+  busy: () => !!CV.op || !!CV.segOp,
   badge(app) { return app.activeSize !== app.baseSize() ? { text: 'Handles are not graded: switch to the base size to edit them', amber: true } : null; },
   hint(app) {
+    if (CV.segOp?.moved) { const g = cvSeg(app); return `Curve · shaping the line · length ${g ? fmt(g.sc.length) : ''} ${unitLabel()} · only this line changes · Shift = H/V/45° · Esc cancel`; }
+    if (CV.seg) { const g = cvSeg(app); if (g) return `Curve · line ${fmt(g.sc.length)} ${unitLabel()} · drag one of its two handles to shape it${g.sc.between ? ` · its ${g.sc.between} curve point(s) become one curve (shape within ${fmt(g.sc.dev)} ${unitLabel()})` : ''} · click another line or a point · Esc = deselect`; }
     if (CV.op?.moved) return 'Curve · drag the handle · Alt = break the pair · Shift = H/V/45° · Esc cancel';
     if (CV.picked) return 'Curve · handle picked · type a length or right-click = input box (length ∠) · drag a handle to reshape · Shift+click a point = corner ⇄ smooth · Esc = Select';
     const pa = app.primaryAnchor();
     return pa ? 'Curve · drag a handle (Alt = break the pair) · click a handle to type its length / angle · Shift+click a point = corner ⇄ smooth · Esc = Select'
-      : 'Curve · Click a point to show its handles · Shift+click = corner ⇄ smooth · Esc = Select';
+      : 'Curve · Click a line to shape it with its two handles · click a point to show its handles · Shift+click = corner ⇄ smooth · Esc = Select';
   },
   down(app, p) {
     trackClient(p);
     if (inputBoxOpen() || CV.frozen) return;
     const h = p.hit; const e = p.e as MouseEvent;
+    // a picked line: its two handles come first
+    const g = cvSeg(app);
+    if (g) {
+      for (const which of ['start', 'end'] as const) {
+        const hs = app.view.toScreen(toWorld(g.pc, which === 'start' ? g.sc.h0 : g.sc.h3));
+        if (Math.hypot(hs.x - p.s.x, hs.y - p.s.y) > 10) continue;
+        if (g.pc.locked) { toast(lockedMsg(g.pc), 'warn'); return; }
+        if (app.sizeOf(g.pc) !== app.doc.baseSize(g.pc)) { toast('Handles are not graded: switch to the base size (Ctrl+B) to edit them', 'warn'); return; }
+        CV.segOp = { which, s: p.s, moved: false, rel: null };
+        return;
+      }
+    }
     if (h.kind === 'handle' && h.pieceId && h.anchorId) {
       const ref = { pieceId: h.pieceId, contourId: h.contourId!, anchorId: h.anchorId };
       const pc = app.doc.piece(ref.pieceId);
@@ -1169,7 +1329,19 @@ export const curveTool: Tool = {
       return;
     }
     const hit = pointUnder(app, p);
-    if (!hit) { CV.picked = null; app.status('Nothing to pick here: click a point'); return; }
+    if (!hit) {
+      // a line: pick it, it gets one handle at each end
+      CV.picked = null;
+      const ch = contourNear(app, p.w, { tolPx: 8 });
+      if (!ch) { CV.seg = null; app.status('Nothing to pick here: click a line or a point'); app.invalidate(); return; }
+      const pts = ch.contour.points;
+      const from = ch.from ?? pts[0].id, to = ch.to ?? pts[pts.length - 1].id;
+      if (from === to) { CV.seg = null; app.status('This line has one grade point only: add a point (Cut Point) to split it into lines'); app.invalidate(); return; }
+      CV.seg = { pieceId: ch.piece.id, contourId: ch.contour.id, from, to };
+      app.sel = { pieces: [], anchors: [] }; app.liveSel = null;
+      app.invalidate(); return;
+    }
+    CV.seg = null;
     const pc = app.doc.piece(hit.ref.pieceId);
     if (e.shiftKey || cvDbl.hit(p.s.x, p.s.y, 'a:' + hit.ref.anchorId)) {
       if (pc.locked) { toast(lockedMsg(pc), 'warn'); return; }
@@ -1185,6 +1357,19 @@ export const curveTool: Tool = {
   },
   move(app, p) {
     trackClient(p);
+    if (CV.segOp && CV.seg && !CV.frozen) {
+      const so = CV.segOp, sg = CV.seg;
+      if (!so.moved && Math.hypot(p.s.x - so.s.x, p.s.y - so.s.y) < THRESH_PX) return;
+      so.moved = true;
+      const pc = app.doc.piece(sg.pieceId);
+      const base = ops.segmentCurve(pc, app.doc.sizeLine(pc), sg.contourId, sg.from, sg.to);
+      const ap = so.which === 'start' ? base.p0 : base.p3;
+      let hl = toLocal(pc, p.w); if ((p.e as MouseEvent).shiftKey) hl = constrain45(ap, hl);
+      so.rel = { x: hl.x - ap.x, y: hl.y - ap.y };
+      const err = previewWith(app, [sg.pieceId], d => { cvSegApply(d, sg, so); });
+      if (err) app.status('⚠ ' + err); else app.invalidate('status');
+      return;
+    }
     const op = CV.op; if (!op || CV.frozen) return;
     if (!op.moved && Math.hypot(p.s.x - op.s.x, p.s.y - op.s.y) < THRESH_PX) return;
     op.moved = true;
@@ -1201,6 +1386,16 @@ export const curveTool: Tool = {
     });
   },
   up(app) {
+    if (CV.segOp) {
+      const so = CV.segOp, sg = CV.seg; CV.segOp = null;
+      if (!sg || !so.moved || !so.rel) { app.cancelPreview(); app.invalidate(); return; }
+      let merged = 0;
+      if (commitWith(app, [sg.pieceId], 'Shape line', d => { merged = cvSegApply(d, sg, so); })) {
+        const g = cvSeg(app);
+        app.status(`Line shaped${g ? ` · length ${fmt(g.sc.length)} ${unitLabel()}` : ''}${merged ? ` · ${merged} curve point(s) became one curve` : ''}`);
+      }
+      app.invalidate(); return;
+    }
     const op = CV.op; CV.op = null; if (!op) return;
     if (!op.moved) { CV.picked = { ref: op.ref, which: op.which }; app.invalidate(); return; }
     const pv = app.preview.get(op.ref.pieceId);
@@ -1218,12 +1413,26 @@ export const curveTool: Tool = {
   },
   key(app, e) {
     if (inputBoxOpen()) return false;
+    if (e.key === 'Escape' && CV.segOp) { CV.segOp = null; app.cancelPreview(); app.invalidate(); return true; }
+    if (e.key === 'Escape' && CV.seg && !CV.op) { CV.seg = null; app.invalidate(); return true; }
     if (e.key === 'Escape') { if (CV.op) { CV.op = null; app.cancelPreview(); return true; } if (CV.picked) { CV.picked = null; app.invalidate(); return true; } app.setTool('select'); return true; }
     if (e.key === 'Backspace') { CV.picked = null; app.invalidate(); return true; }
     if (isNumKey(e) && CV.picked) { void cvInput(app, e.key); return true; }
     return false;
   },
   overlay(app) {
+    const g = cvSeg(app);
+    if (g) {
+      const S = (q: Vec) => app.view.toScreen(toWorld(g.pc, q));
+      const a = S(g.sc.p0), b = S(g.sc.h0), c = S(g.sc.h3), d = S(g.sc.p3);
+      // label at the middle of the curve (t = 0.5)
+      const m = { x: (a.x + 3 * b.x + 3 * c.x + d.x) / 8, y: (a.y + 3 * b.y + 3 * c.y + d.y) / 8 };
+      const dot = (q: Vec) => `<circle cx="${fs(q.x)}" cy="${fs(q.y)}" r="4" fill="#fff" stroke="#3b7cff" stroke-width="1.6" data-seg-handle="1"/>`;
+      return `<path d="M${fs(a.x)} ${fs(a.y)}C${fs(b.x)} ${fs(b.y)} ${fs(c.x)} ${fs(c.y)} ${fs(d.x)} ${fs(d.y)}" fill="none" stroke="${SEG_YELLOW}" stroke-width="2.6" stroke-linecap="round"/>`
+        + `<path d="M${fs(a.x)} ${fs(a.y)}L${fs(b.x)} ${fs(b.y)}M${fs(d.x)} ${fs(d.y)}L${fs(c.x)} ${fs(c.y)}" stroke="#3b7cff" stroke-width="1.1"/>` + dot(b) + dot(c)
+        + `<circle cx="${fs(a.x)}" cy="${fs(a.y)}" r="3.2" fill="#1d2330"/><circle cx="${fs(d.x)}" cy="${fs(d.y)}" r="3.2" fill="#1d2330"/>`
+        + `<text x="${fs(m.x + 8)}" y="${fs(m.y - 8)}" class="tool-note">${fmt(g.sc.length)}</text>`;
+    }
     const pk = CV.picked; if (!pk) return '';
     const pc = app.piece(pk.ref.pieceId); const rel = pc && handleRel(app, pk.ref, pk.which); const q = app.resolveRef(pk.ref);
     if (!pc || !rel || !q) return '';
@@ -1234,9 +1443,29 @@ export const curveTool: Tool = {
   },
 };
 
+/** Flip Piece: its own tool (click = left ⇄ right, Shift+click = up ⇄ down). */
+export const flipTool: Tool = {
+  id: 'flipPiece', title: 'Flip Piece', group: 'flip', icon: ICON.flip, cursor: 'crosshair',
+  activate() { PCS.op = null; PCS.frozen = false; PCS.pin = null; PCS.active = 'flip'; },
+  deactivate(app) { PCS.op = null; PCS.pin = null; app.cancelPreview(); },
+  hint: () => 'Flip · Click a piece = flip left ⇄ right · Shift+click = up ⇄ down (selected pieces flip together) · Esc = Select',
+  down(app, p) { rotateTool.down!(app, p); },
+  move(app, p) { rotateTool.move!(app, p); },
+  key(app, e) { if (e.key === 'Escape') { app.setTool('select'); return true; } return false; },
+  overlay(app) { return PCS.hover ? itemHighlight(app, { k: 'piece', pieceId: PCS.hover }, 0.5) : ''; },
+};
+
 /** Route arrow-key nudges: only Move tools nudge (Select never moves geometry). */
 export function nudgeActive(app: App, dx: number, dy: number) {
   if (app.tool?.nudge) { app.tool.nudge(app, dx, dy); return; }
-  app.status('Arrow-key nudge works in a Move tool: G = Move Point, Shift+G = Move Line, Ctrl+Shift+G = Piece');
+  // Select: the arrows move the selected pieces on the sheet (layout only), like a drag does
+  const ids = app.tool?.id === 'select' ? app.sel.pieces.filter(id => !app.hasSubSelection(id)) : [];
+  if (ids.length) {
+    const locked = ids.map(id => app.doc.piece(id)).find(p => p.locked);
+    if (locked) { toast(lockedMsg(locked), 'warn'); return; }
+    try { ops.transformPieceLayouts(app.doc, ids, { dx, dy }, 'Nudge piece'); } catch (err) { reportError(err, 'Nudge piece'); }
+    return;
+  }
+  app.status('Arrow keys: select a piece (Select tool) to move it, or use G = Move Point / Shift+G = Move Line');
 }
 

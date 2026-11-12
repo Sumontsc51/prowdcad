@@ -70,7 +70,7 @@ async function exactNext(app: App) {
 }
 
 export const penTool: Tool = {
-  id: 'pen', title: 'Pen — new piece', group: 'pen', hotkey: 'P', icon: ICON.pen, cursor: 'crosshair',
+  id: 'pen', title: 'Pen — new piece', group: 'pen', hidden: true, icon: ICON.pen, cursor: 'crosshair',
   deactivate(app) { D = null; app.invalidate('canvas'); },
   busy: () => !!D,
   hint: () => D ? `Pen: ${D.pts.length} pts · click start to close · Enter close · Backspace undo pt · Esc cancel · right-click exact` : 'Pen: click = corner, drag = smooth, Ctrl = curve point, Shift = H/V/45°',
