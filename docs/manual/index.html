@@ -169,7 +169,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
         <tbody>
           <tr><td>Menu bar (top)</td><td>File, Edit, Piece, Point, Segment, Seam, Notch, Cut, Dart, Grade, Measure, View, Help. Every command shows its shortcut. A greyed item tells you what it needs when you hover it, for example "needs a selected point".</td></tr>
           <tr><td>Tool-options strip (under the menus)</td><td>The active tool, its modes (Select: the selection filter; Move Point: Single / Smooth / Horizontal / Vertical / Along line / Group) and an amber badge <em>Editing size L grading</em> whenever an edit changes the grading of a size other than the base.</td></tr>
-          <tr><td>Tool palette (left)</td><td>Select, the Move tools, Pen, shapes, internal lines, notch/drill, measure, hand. A small triangle on a button means there are more tools behind it: right-click or long-press to open them.</td></tr>
+          <tr><td>Tool palette (left)</td><td>Select, Move Point, Move / Copy Line, Curve, Rotate, Flip, internal lines, Smooth run, shapes, Trace Piece, notch/drill, measure, hand. A small triangle on a button means there are more tools behind it: right-click or long-press to open them.</td></tr>
           <tr><td>Sheet (centre)</td><td>An endless white sheet in millimetres with rulers and a grid. Drag from a ruler to make a guide line. Wheel zooms at the cursor; hold Space and drag (or middle-drag) to pan.</td></tr>
           <tr><td>Pieces / Sizes / Inspector (right)</td><td>The piece list, the size chips (click one to make it the active size) with <em>Nested view</em>, and the Inspector, which shows and edits whatever is selected.</td></tr>
           <tr><td>Grading table (bottom)</td><td>Opens with <kbd>Ctrl+G</kbd>. One row per grade point, two columns (dX, dY) per size.</td></tr>
@@ -215,22 +215,22 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <p class="sub">The written version of the training video. Base size M, all values in mm.</p>
       <h3>1 · New style</h3>
       <p><span class="menu">File ▸ New</span>. Name <code>BASIC TEE</code>, sizes <code>S, M, L, XL, 2XL</code>, base <code>M</code>, no rectangle block.</p>
-      <h3>2 · Front half with the Pen tool</h3>
-      <p>Press <kbd>P</kbd>. Click each corner; hold <kbd>Ctrl</kbd> while clicking to place a curve point. Click the first point again to close, then name the piece <code>FRONT</code> with a 10 mm seam.</p>
+      <h3>2 · Front half from a rectangle</h3>
+      <p>There is no free-hand Pen tool: a piece starts from a shape (or from a DXF import, or from <em>Trace Piece</em>). Press <kbd>R</kbd>, click once and type the size 260 × 712, name it <code>FRONT</code> with a 10 mm seam. Then press <kbd>G</kbd> (Move Point · Single): press on a line and drag to add a point where you need one, and move the points to the positions in the table. Use the Curve tool (<kbd>Shift+C</kbd>) to bend a line with its two handles.</p>
       <div class="tbl"><table>
-        <thead><tr><th>Point</th><th class="num">X</th><th class="num">Y</th><th>Click</th></tr></thead>
+        <thead><tr><th>Point</th><th class="num">X</th><th class="num">Y</th><th>Point type</th></tr></thead>
         <tbody>
-          <tr><td>Centre-front hem (start)</td><td class="num">0</td><td class="num">0</td><td>click</td></tr>
-          <tr><td>Side hem</td><td class="num">260</td><td class="num">0</td><td>click</td></tr>
-          <tr><td>Underarm</td><td class="num">260</td><td class="num">465</td><td>click</td></tr>
-          <tr><td>Armhole curve</td><td class="num">222 / 205</td><td class="num">545 / 618</td><td><kbd>Ctrl</kbd>+click ×2</td></tr>
-          <tr><td>Shoulder point</td><td class="num">200</td><td class="num">680</td><td>click</td></tr>
-          <tr><td>Neck point (HPS)</td><td class="num">85</td><td class="num">712</td><td>click</td></tr>
-          <tr><td>Neck curve</td><td class="num">70 / 32</td><td class="num">664 / 625</td><td><kbd>Ctrl</kbd>+click ×2</td></tr>
-          <tr><td>Centre-front neck</td><td class="num">0</td><td class="num">622</td><td>click, then click the start point</td></tr>
+          <tr><td>Centre-front hem (start)</td><td class="num">0</td><td class="num">0</td><td>corner</td></tr>
+          <tr><td>Side hem</td><td class="num">260</td><td class="num">0</td><td>corner</td></tr>
+          <tr><td>Underarm</td><td class="num">260</td><td class="num">465</td><td>corner</td></tr>
+          <tr><td>Armhole curve</td><td class="num">222 / 205</td><td class="num">545 / 618</td><td>curve points ×2</td></tr>
+          <tr><td>Shoulder point</td><td class="num">200</td><td class="num">680</td><td>corner</td></tr>
+          <tr><td>Neck point (HPS)</td><td class="num">85</td><td class="num">712</td><td>corner</td></tr>
+          <tr><td>Neck curve</td><td class="num">70 / 32</td><td class="num">664 / 625</td><td>curve points ×2</td></tr>
+          <tr><td>Centre-front neck</td><td class="num">0</td><td class="num">622</td><td>corner</td></tr>
         </tbody>
       </table></div>
-      <p>Need an exact point? Right-click while drawing and type the length and angle, or dX and dY, of the next point.</p>
+      <p>Need an exact position? Select the point with Move Point and type its dX and dY, or set X / Y in the Inspector.</p>
       <h3>3 · Centre-front fold</h3>
       <p><span class="menu">Cut ▸ Half piece ▸ Set mirror axis</span>, click the centre-front hem, then the centre-front neck, then OK. You now edit one half and the other half follows. The fold edge gets no seam; PDF, plot and marker output open the piece to full width.</p>
       <h3>4 · Hem allowance</h3>
@@ -249,7 +249,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <h3>7 · Back</h3>
       <p>Select the front, <kbd>Ctrl+D</kbd> to duplicate it (grading included), rename it <code>BACK</code> in the Inspector and set Position X to <code>620</code>. Select the centre-back neck point and use <span class="menu">Point ▸ Move proportional</span> with dY <code>55</code>; the neck curve blends with the move.</p>
       <h3>8 · Sleeve</h3>
-      <p>Draw it whole with the Pen tool (hem 330, bicep 384, cap height 140, five curve points over the cap) and give the hem 25 mm. Grade the right underarm dX <code>8</code>, dY <code>4</code>, Equal X/Y, copy it, select the left underarm and use <span class="menu">Grade ▸ Clipboard ▸ Smart paste</span>. Smart paste turns +8 into −8 for the mirror side. Add a notch at the top of the cap.</p>
+      <p>Start it from a rectangle and shape it with Move Point and the Curve tool (hem 330, bicep 384, cap height 140, a curved cap) and give the hem 25 mm. Grade the right underarm dX <code>8</code>, dY <code>4</code>, Equal X/Y, copy it, select the left underarm and use <span class="menu">Grade ▸ Clipboard ▸ Smart paste</span>. Smart paste turns +8 into −8 for the mirror side. Add a notch at the top of the cap.</p>
       <h3>9 · Check and output</h3>
       <p>Select a piece and press <kbd>Ctrl+I</kbd> for sew length, cut length and area in every size. Then <span class="menu">File ▸ Export ▸ PDF</span> (<kbd>Ctrl+P</kbd>) with <em>Pieces: All pieces</em> and <em>Sizes: All sizes</em>. For this style that gives 32 A4 pages at 1:1.</p>
     </section>
@@ -258,10 +258,10 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <h2><small>Chapter 5</small>Drawing pieces</h2>
       <p>A piece has a <strong>sew line</strong> and a <strong>cut line</strong>. You draw and edit the sew line; the cut line is calculated from it and the seam allowances, so it is always correct after an edit.</p>
       <div class="grid2">
-        <div class="tile"><kbd>P</kbd><h4>Pen: new piece</h4><p>Click = corner, click-drag = smooth point with handles, <kbd>Ctrl</kbd>+click = curve point, <kbd>Shift</kbd> = horizontal/vertical/45°. Click the start point or press Enter to close.</p></div>
+        <div class="tile"><kbd>Shift+M</kbd><h4>Smooth run</h4><p>Its own tool button. Click the first and the last point of a run on one line: the points between them are smoothed (click a point in between to keep it). Enter or right-click applies it.</p></div>
         <div class="tile"><kbd>R</kbd><h4>Rectangle, circle, polygon</h4><p>Drag to draw, or click once for a dialog with exact sizes. A circle can be set by diameter or by perimeter.</p></div>
         <div class="tile"><kbd>I</kbd><h4>Internal line</h4><p>Start inside a piece. Double-click or Enter ends a line, clicking the start closes a shape. Right-click gives an exact length and mirror options. An end you put on the outline is <strong>locked</strong> to it (see below).</p></div>
-        <div class="tile"><kbd>Shift+T</kbd><h4>Trace</h4><p>Click around existing lines and points to make a new piece from them.</p></div>
+        <div class="tile"><kbd>Shift+T</kbd><h4>Trace Piece</h4><p>Click the lines that make the new outline, one after another, clockwise or counter-clockwise. Outline lines and internal lines both count, and a line is taken up to where another line meets it. Right-click a picked line (or Enter) to create the piece beside the original; the original is not changed. Click a picked line again to drop it.</p></div>
       </div>
       <p><strong>Snapping.</strong> While you draw or move, the cursor snaps to, in this order: a point, the <em>intersection</em> of two lines, the <em>midpoint</em> of a segment, the <em>perpendicular</em> foot from where the move started, a guide, and the grid (<span class="menu">View ▸ Snap</span>; <kbd>Ctrl+Shift+'</kbd> toggles grid snap). The Move tools show a small label (<code>pt</code>, <code>int</code>, <code>mid</code>, <code>perp</code>) next to the target. Hold <kbd>Alt</kbd> to switch snapping off for one drag.</p>
       <p><strong>Grade points and curve points.</strong> Grade points (squares) are corners and carry grading. Curve points (circles) shape the curve between them. A curve point without grading of its own <em>follows</em> its neighbouring grade points in the other sizes, so it moves when they move. To keep it where it is, select it and use <span class="menu">Point ▸ Pin curve point (keep position)</span>: it then gets its own grading and shows a dot in the middle. <span class="menu">Point ▸ Unpin</span> makes it follow again. Use as few curve points as give the shape you want.</p>
@@ -290,9 +290,9 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
         <thead><tr><th>Key</th><th>Tool</th><th>What moves</th></tr></thead>
         <tbody>
           <tr><td><kbd>G</kbd></td><td>Move Point</td><td><strong>Single</strong> (default): exactly the point you grab, with its own handles. Nothing else is stored differently. Other modes (<kbd>Tab</kbd> cycles, or <span class="menu">Point ▸ Modify Points</span>): <em>Smooth</em> (the curve points between the two tacks blend; drag a tack to another point to change the range), <em>Horizontal</em>, <em>Vertical</em>, <em>Along line</em> (slides on its own line), <em>Group</em> (every selected point by the same amount; drag on the empty sheet to draw a selection box around the points, <kbd>Shift</kbd>+box adds, <kbd>Ctrl</kbd>+box toggles, then drag one of them; points of a locked internal line inside the box are not a problem, the lock moves them with the outline). In <strong>Single</strong> you can also press on a line where it has no point and drag: a curve point is added there and moves with the cursor, so you shape the line in one step (one undo step; a click without a drag adds nothing; base size only). A smooth grade point next to the moved point works as a <strong>split</strong>: the line on its other side keeps its exact shape, only the side you are working on follows. Handles are drawn for one point only, the last one you selected. <strong>Right-click</strong> on the selected point (line or piece in the other Move tools) opens the movement box, with empty fields ready to type; right-click anywhere else opens the canvas menu.</td></tr>
-          <tr><td><kbd>Shift+G</kbd></td><td>Move Line</td><td>A sew segment (grade point to grade point) or a whole internal line: both ends and the curve points between them by the same amount. <em>Parallel</em> mode moves it straight out or in.</td></tr>
-          <tr><td><kbd>Ctrl+Shift+G</kbd></td><td>Move / Rotate / Flip Piece</td><td>The piece's place on the sheet (exports keep the drawn geometry). While dragging: <kbd>R</kbd> / <kbd>Shift+R</kbd> ±90°, <kbd>Q</kbd> <kbd>W</kbd> ±1°, <kbd>A</kbd> <kbd>S</kbd> ±10°, <kbd>X</kbd> <kbd>Y</kbd> flip. In Rotate mode with a piece selected, just type the angle.</td></tr>
-          <tr><td><kbd>Shift+C</kbd></td><td>Curve / Handle</td><td>Drag a handle to bend a curve (<kbd>Alt</kbd> breaks the pair); click a handle and type its length and angle; <kbd>Shift</kbd>+click a point = corner ⇄ smooth.</td></tr>
+          <tr><td><kbd>Shift+G</kbd></td><td>Move / Copy Line</td><td>A sew segment (grade point to grade point) or a whole internal line. Modes (<kbd>Tab</kbd> cycles): <em>Free</em>, <em>Horizontal</em>, <em>Vertical</em>, <em>Parallel</em> (straight out or in), <em>Follow shape</em> (proportional: the ends slide along the lines the line is attached to, so a leg hem moved outward follows the leg and gets narrower, inward it gets wider; an internal line with its ends on the outline slides along the outline; base size). The <strong>Copy</strong> button leaves the original and makes the result an internal line, in every mode. <em>Copy internal</em> puts a line onto any panel: click the line, right-click it and press OK, and it sticks to the mouse; left-click a panel to put it there, or right-click to type a movement measured from the click position.</td></tr>
+          <tr><td><kbd>Ctrl+Shift+G</kbd></td><td>Rotate Piece</td><td>The piece's place on the sheet (exports keep the drawn geometry). <em>By point</em>: click a pin point (a pattern point or any place on the piece), then press on a second point and drag: the piece turns around the pin. <em>Piece</em>: drag a piece or type an angle 0–360° to turn it about its centre (<kbd>Ctrl</kbd> = 15° steps). <strong>Keep grain direction</strong> on: the grain line keeps its direction on the sheet; off: it turns with the piece. <strong>Flip</strong> is its own tool button: click = left ⇄ right, <kbd>Shift</kbd>+click = up ⇄ down. To move a piece, drag it with the Select tool (arrow keys nudge it).</td></tr>
+          <tr><td><kbd>Shift+C</kbd></td><td>Curve / Handle</td><td><strong>Click a line</strong> (between two grade points): it turns yellow, shows its length and one handle at each end. Drag a handle and only that line reshapes; the lines beyond both end points keep their shape. If the line has curve points in between (a DXF import, say), the first drag replaces them with one curve of the same shape, so the two handles control the whole line (one undo step; base size). <strong>Click a point</strong> for its own handles: drag a handle to bend a curve (<kbd>Alt</kbd> breaks the pair); click a handle and type its length and angle; <kbd>Shift</kbd>+click a point = corner ⇄ smooth.</td></tr>
         </tbody>
       </table></div>
       <h3>Moving a point</h3>
@@ -554,12 +554,12 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <div class="tbl"><table>
         <thead><tr><th>Keys</th><th>Action</th></tr></thead>
         <tbody>
-          <tr><td><kbd>V</kbd> <kbd>G</kbd> <kbd>Shift+G</kbd> <kbd>Ctrl+Shift+G</kbd> <kbd>Shift+C</kbd></td><td>Select · Move Point · Move Line · Move / Rotate / Flip Piece · Curve / Handle</td></tr>
+          <tr><td><kbd>V</kbd> <kbd>G</kbd> <kbd>Shift+G</kbd> <kbd>Ctrl+Shift+G</kbd> <kbd>Shift+C</kbd></td><td>Select · Move Point · Move / Copy Line · Rotate Piece · Curve / Handle</td></tr>
           <tr><td><kbd>0</kbd> <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd></td><td>Selection filter (in Select): All · Pieces · Points · Lines · Internals · Marks</td></tr>
           <tr><td><kbd>Tab</kbd></td><td>Select: next object under the cursor · Move tools: next mode</td></tr>
           <tr><td><kbd>Space</kbd> tap / hold</td><td>Tap: Move tool ⇄ Select (selection kept) · hold and drag: pan</td></tr>
           <tr><td>Arrow keys (<kbd>Shift</kbd> = ×10)</td><td>Nudge, in a Move tool only (Select never moves anything)</td></tr>
-          <tr><td><kbd>P</kbd> <kbd>I</kbd> <kbd>R</kbd> <kbd>C</kbd></td><td>Pen · Internal line · Rectangle · Circle</td></tr>
+          <tr><td><kbd>I</kbd> <kbd>R</kbd> <kbd>C</kbd></td><td>Internal line · Rectangle · Circle</td></tr>
           <tr><td><kbd>S</kbd> <kbd>N</kbd> <kbd>D</kbd> <kbd>T</kbd></td><td>Seam · Notch · Drill · Text</td></tr>
           <tr><td><kbd>X</kbd></td><td>Cut Point (add points at an exact length, a ratio or in equal parts)</td></tr>
           <tr><td><kbd>Shift+D</kbd> <kbd>Shift+L</kbd> <kbd>Shift+U</kbd></td><td>Dart · Pleat · Slash &amp; spread</td></tr>
@@ -591,7 +591,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
           <tr><td><kbd>Alt+F3</kbd> · <kbd>Alt+F1</kbd></td><td>Align 2 points · Delete point</td></tr>
           <tr><td><kbd>Ctrl+F2</kbd> · <kbd>Ctrl+F11</kbd> · <kbd>Ctrl+F10</kbd></td><td>Move Line · Move Parallel · Split (divide internal)</td></tr>
           <tr><td><kbd>Alt+S</kbd></td><td>Swap line (internal ⇄ perimeter); Seam of segment moves to <kbd>Shift+Alt+S</kbd></td></tr>
-          <tr><td><kbd>Shift+F2</kbd> · <kbd>Shift+F9</kbd> · <kbd>Shift+F10</kbd></td><td>Move Piece · Flip Piece · Rotate Piece</td></tr>
+          <tr><td><kbd>Shift+F2</kbd> · <kbd>Shift+F9</kbd> · <kbd>Shift+F10</kbd></td><td>Rotate by point · Flip Piece · Rotate Piece</td></tr>
           <tr><td><kbd>Shift+W</kbd> · <kbd>Ctrl+A</kbd> · <kbd>Ctrl+D</kbd></td><td>Walk pieces · Select all · Clear selection (Duplicate moves to <kbd>Ctrl+Shift+D</kbd>)</td></tr>
         </tbody>
       </table></div>
@@ -602,7 +602,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <h3>The browser closed and I had not saved</h3>
       <p>Open ProwdCAD again in the same browser. It offers to restore the last auto-backup (made every 30 seconds). Choose <em>Restore</em>.</p>
       <h3>Dragging a point does nothing, it draws a box</h3>
-      <p>That is the Select tool: it only selects (a drag is a selection box). Press <kbd>G</kbd> for Move Point, <kbd>Shift+G</kbd> for Move Line or <kbd>Ctrl+Shift+G</kbd> for a piece. If you really want to drag points in Select, turn on <span class="menu">Edit ▸ Allow drag-move in Select</span>; it moves only what you grab.</p>
+      <p>That is the Select tool: it only selects (a drag is a selection box). Press <kbd>G</kbd> for Move Point, <kbd>Shift+G</kbd> for Move / Copy Line; a piece is moved by dragging it in Select. If you really want to drag points in Select, turn on <span class="menu">Edit ▸ Allow drag-move in Select</span>; it moves only what you grab.</p>
       <h3>I moved one point and the points next to it moved</h3>
       <p>Their stored positions did not change. Curve points without their own grading follow their neighbouring grade points in the other sizes (the hollow circles; Nested view shows it best), and the curve through a moved point re-shapes. While you drag, the old curve is drawn dashed and those points are marked "follows". Pin them with <span class="menu">Point ▸ Pin curve point</span>, or move them yourself with Move Point ▸ Single. An internal point marked "connected" follows on purpose (Piece ▸ Connections).</p>
       <h3>I cannot move a point of an internal line</h3>
