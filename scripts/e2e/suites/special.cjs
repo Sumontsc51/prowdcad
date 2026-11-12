@@ -279,12 +279,97 @@ async function dragsHead(h, fixtures) {
     const st = await h.state(); const y1 = (await h.ev(() => window.__e2e.L('FRONT', 'IL_A'))).y;
     return { got: `${n} end(s) locked; ${sel} points boxed; SS_HEM.y ${Q.r4(an(st, 'FRONT', 'SS_HEM').y)} CF_HEM.y ${Q.r4(an(st, 'FRONT', 'CF_HEM').y)}; locked end y ${Q.r4(y0)} → ${Q.r4(y1)}; ${await rev() - r0} undo step(s)`, pass: n >= 1 && sel >= 3 && near(an(st, 'FRONT', 'SS_HEM').y, -20, 1e-3) && near(an(st, 'FRONT', 'CF_HEM').y, -20, 1e-3) && near(y1 - y0, -20, 1e-3) && await rev() - r0 === 1 };
   });
+  await T('Curve tool: click a line, drag one of its two handles: only that line changes, its curve points become one curve, one undo step', async () => {
+    await h.ev(() => window.__e2e.app.setTool('curve')); await h.settle(40);
+    await h.clickW(await h.along('FRONT', 'UA', 'SH', 0.5)); await h.settle(40);
+    const shown = await h.page.locator('[data-seg-handle]').count();
+    const info = () => h.ev(() => { const E = window.__e2e, p = E.P('FRONT'); const sc = E.ops.segmentCurve(p, E.app.doc.sizeLine(p), p.sew.id, E.findA('FRONT', 'UA').a.id, E.findA('FRONT', 'SH').a.id); return { h0: E.localToWorld('FRONT', sc.h0), len: sc.length, between: sc.between, n: p.sew.points.length, side: E.segLen('FRONT', 'SS_HEM', 'UA'), sh: E.segLen('FRONT', 'SH', 'HPS') }; });
+    const a = await info(); const r0 = await rev();
+    await h.dragW(a.h0, { x: a.h0.x + 30, y: a.h0.y + 10 }, { steps: 8 });
+    const b = await info(); const steps = await rev() - r0;
+    await h.key('Control+z'); const c = await info();
+    return { got: `${shown} handles; points ${a.n} → ${b.n} → undo ${c.n}; line ${Q.r4(a.len)} → ${Q.r4(b.len)}; side seam ${Q.r4(a.side)} → ${Q.r4(b.side)}; shoulder ${Q.r4(a.sh)} → ${Q.r4(b.sh)}; ${steps} undo step(s)`,
+      pass: shown === 2 && a.between === 2 && b.n === a.n - 2 && b.between === 0 && Math.abs(b.len - a.len) > 0.05 && near(a.side, b.side, 1e-6) && near(a.sh, b.sh, 1e-6) && steps === 1 && c.n === a.n };
+  });
+  await T('Curve tool: a straight line gets two handles and bends when one is dragged', async () => {
+    await h.ev(() => window.__e2e.app.setTool('curve')); await h.settle(40);
+    await h.clickW(await h.along('FRONT', 'SS_HEM', 'UA', 0.5)); await h.settle(40);
+    const info = () => h.ev(() => { const E = window.__e2e, p = E.P('FRONT'); const sc = E.ops.segmentCurve(p, E.app.doc.sizeLine(p), p.sew.id, E.findA('FRONT', 'SS_HEM').a.id, E.findA('FRONT', 'UA').a.id); return { h3: E.localToWorld('FRONT', sc.h3), len: sc.length, hem: E.segLen('FRONT', 'CF_HEM', 'SS_HEM'), ah: E.segLen('FRONT', 'UA', 'SH') }; });
+    const a = await info(); await h.dragW(a.h3, { x: a.h3.x + 25, y: a.h3.y }, { steps: 8 }); const b = await info();
+    return { got: `side seam ${Q.r4(a.len)} → ${Q.r4(b.len)}; hem ${Q.r4(a.hem)} → ${Q.r4(b.hem)}; armhole ${Q.r4(a.ah)} → ${Q.r4(b.ah)}`, pass: b.len > a.len + 0.5 && near(a.hem, b.hem, 1e-6) && near(a.ah, b.ah, 1e-6) };
+  });
   await T('Move Point · Single with a multi-selection moves only the grabbed point', async () => { await h.selectA('FRONT', 'SS_HEM'); await h.selectA('FRONT', 'UA', true); await h.key('g'); const w = await h.W('FRONT', 'UA'); await h.dragW(w, { x: w.x + 20, y: w.y }, { steps: 10 }); const st = await h.state(); return { got: `SS_HEM.x ${Q.r4(an(st, 'FRONT', 'SS_HEM').x)} UA.x ${Q.r4(an(st, 'FRONT', 'UA').x)}`, pass: near(an(st, 'FRONT', 'SS_HEM').x, 260, 1e-3) && an(st, 'FRONT', 'UA').x > 270 }; });
   await T('Curve tool: handle drag reshapes, opposite handle mirrored', async () => { await h.key('Shift+C'); await h.clickA('FRONT', 'AH1'); const w = await h.ev(() => window.__e2e.handleW('FRONT', 'AH1', 'out')); const st0 = await h.state(); await h.dragW(w, { x: w.x + 8, y: w.y + 10 }, { steps: 8 }); const st1 = await h.state(); const a = an(st1, 'FRONT', 'AH1'); const others = anchorDiff(st0, st1, 'FRONT').filter(d => d.name !== 'AH1'); const col = a.hIn && a.hOut ? Math.abs(a.hIn.x * a.hOut.y - a.hIn.y * a.hOut.x) / (Math.hypot(a.hIn.x, a.hIn.y) * Math.hypot(a.hOut.x, a.hOut.y)) : 1; return { got: `hOut ${JSON.stringify(a.hOut)} hIn ${JSON.stringify(a.hIn)} sin=${col.toFixed(4)} others ${others.length}`, pass: !!a.hOut && col < 1e-3 && !others.length }; });
   await T('Curve tool: Alt+handle drag breaks the pair', async () => { await h.key('Shift+C'); await h.clickA('FRONT', 'AH1'); const w = await h.ev(() => window.__e2e.handleW('FRONT', 'AH1', 'out')); await h.dragW(w, { x: w.x + 8, y: w.y + 10 }, { steps: 8, mods: ['Alt'] }); const a = an(await h.state(), 'FRONT', 'AH1'); return { got: `smooth=${a.smooth}`, pass: a.smooth === false }; });
   await T('Curve tool: Shift+click toggles corner ⇄ smooth', async () => { await h.key('Shift+C'); await h.clickA('FRONT', 'UA', { mods: ['Shift'] }); const a = an(await h.state(), 'FRONT', 'UA'); return { got: `smooth=${a.smooth}`, pass: a.smooth === true }; });
-  await T('Move Piece: drag = layout only, one undo step', async () => { await h.key('Control+Shift+G'); const r0 = await rev(); const w = await h.local2world('BACK', { x: 520, y: 300 }); await h.dragW(w, { x: w.x + 50, y: w.y + 20 }, { steps: 10 }); const L = pc(await h.state(), 'BACK').layout; return { got: `layout ${JSON.stringify(L)}; revisions ${(await rev()) - r0}`, pass: !!L && near(L.x, 50, 2) && (await rev()) - r0 === 1 }; });
-  await T('Move Piece: R while dragging rotates 90°', async () => { await h.key('Control+Shift+G'); const w = await h.local2world('BACK', { x: 520, y: 300 }); await h.dragW(w, { x: w.x + 30, y: w.y }, { steps: 6, beforeUp: () => h.page.keyboard.press('r') }); const L = pc(await h.state(), 'BACK').layout; return { got: JSON.stringify(L), pass: !!L && Math.abs(L.angleDeg) > 1 }; });
+  await T('Rotate by point: the pin stays where it is, the piece turns 90°, one undo step', async () => {
+    await h.key('Control+Shift+G'); const r0 = await rev(); const w = await h.local2world('BACK', { x: 520, y: 300 });
+    await h.clickW(w); await h.dragW({ x: w.x + 100, y: w.y }, { x: w.x, y: w.y + 100 }, { steps: 12, mods: ['Alt'] });
+    const L = pc(await h.state(), 'BACK').layout; const w1 = await h.local2world('BACK', { x: 520, y: 300 });
+    return { got: `layout ${JSON.stringify(L)}; pin moved ${Q.r4(Math.hypot(w1.x - w.x, w1.y - w.y))}; revisions ${(await rev()) - r0}`, pass: !!L && near(L.angleDeg, 90, 1.5) && Math.hypot(w1.x - w.x, w1.y - w.y) < 0.01 && (await rev()) - r0 === 1 };
+  });
+  await T('Rotate · Piece with "Keep grain direction": the piece turns, the grain keeps its direction on the sheet', async () => {
+    const gdir = () => h.ev(() => { const E = window.__e2e, p = E.P('BACK'); const a = E.localToWorld('BACK', p.grain.a), b = E.localToWorld('BACK', p.grain.b); return Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI; });
+    const g0 = await gdir();
+    await h.ev(() => { const E = window.__e2e; E.settings.rotateKeepGrain = true; E.settings.rotateMode = 'piece'; });
+    await h.selectPiece('BACK'); await h.key('Control+Shift+G'); await h.key('4'); await h.page.waitForSelector('.ibox', { timeout: 2000 }); const ib = h.page.locator('.ibox input').first(); await ib.fill('45'); await ib.press('Enter'); await h.settle();
+    const L = pc(await h.state(), 'BACK').layout; const g1 = await gdir();
+    await h.ev(() => { window.__e2e.settings.rotateKeepGrain = false; });
+    return { got: `angle ${L && L.angleDeg}; grain direction ${Q.r4(g0)}° → ${Q.r4(g1)}°`, pass: !!L && near(L.angleDeg, 45, 0.01) && near(g0, g1, 0.01) };
+  });
+  await T('Rotate · Piece without "Keep grain direction": the grain turns with the piece', async () => {
+    const gdir = () => h.ev(() => { const E = window.__e2e, p = E.P('BACK'); const a = E.localToWorld('BACK', p.grain.a), b = E.localToWorld('BACK', p.grain.b); return Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI; });
+    const g0 = await gdir(); await h.ev(() => { window.__e2e.settings.rotateMode = 'piece'; });
+    await h.selectPiece('BACK'); await h.key('Control+Shift+G'); await h.key('4'); await h.page.waitForSelector('.ibox', { timeout: 2000 }); const ib = h.page.locator('.ibox input').first(); await ib.fill('45'); await ib.press('Enter'); await h.settle();
+    const g1 = await gdir(); let d = g1 - g0; d = ((d % 360) + 360) % 360;
+    return { got: `grain direction ${Q.r4(g0)}° → ${Q.r4(g1)}°`, pass: near(d, 45, 0.01) };
+  });
+  await T('Select: arrow keys move the selected piece (layout only)', async () => {
+    await h.selectPiece('BACK'); const s0 = JSON.stringify(pc(await h.state(), 'BACK').sew); await h.key('Shift+ArrowRight');
+    const st = await h.state(); const L = pc(st, 'BACK').layout;
+    return { got: `layout ${JSON.stringify(L)}`, pass: !!L && near(L.x, 10, 0.01) && JSON.stringify(pc(st, 'BACK').sew) === s0 };
+  });
+  await T('Move / Copy Line · Follow shape + Copy: the hem stays, an internal line appears between the side lines', async () => {
+    await h.ev(() => { const E = window.__e2e; E.settings.moveLineMode = 'prop'; E.settings.moveLineCopy = true; });
+    await h.key('Shift+G'); const w = await h.along('FRONT', 'CF_HEM', 'SS_HEM', 0.5); const s0 = JSON.stringify(pc(await h.state(), 'FRONT').sew); const n0 = pc(await h.state(), 'FRONT').internals.length; const r0 = await rev();
+    await h.dragW(w, { x: w.x, y: w.y + 60 }, { steps: 10 });
+    const st = await h.state(); const f = pc(st, 'FRONT'); const c = f.internals[f.internals.length - 1]; const a = c.points[0], b = c.points[c.points.length - 1];
+    await h.ev(() => { window.__e2e.settings.moveLineCopy = false; });
+    return { got: `internals ${n0} → ${f.internals.length}; copy from (${Q.r4(a.x)},${Q.r4(a.y)}) to (${Q.r4(b.x)},${Q.r4(b.y)}); outline changed ${JSON.stringify(f.sew) !== s0}; ${(await rev()) - r0} undo step(s)`,
+      pass: f.internals.length === n0 + 1 && JSON.stringify(f.sew) === s0 && near(a.y, 60, 0.5) && near(b.y, 60, 0.5) && near(Math.abs(b.x - a.x), 260, 0.5) && (await rev()) - r0 === 1 };
+  });
+  await T('Move / Copy Line · Parallel + Copy: an offset copy as an internal line', async () => {
+    await h.ev(() => { const E = window.__e2e; E.settings.moveLineMode = 'parallel'; E.settings.moveLineCopy = true; });
+    await h.key('Shift+G'); const w = await h.along('FRONT', 'SS_HEM', 'UA', 0.5); const n0 = pc(await h.state(), 'FRONT').internals.length; const s0 = JSON.stringify(pc(await h.state(), 'FRONT').sew);
+    await h.dragW(w, { x: w.x - 40, y: w.y + 25 }, { steps: 10 });
+    const f = pc(await h.state(), 'FRONT'); const c = f.internals[f.internals.length - 1];
+    await h.ev(() => { window.__e2e.settings.moveLineCopy = false; });
+    return { got: `internals ${n0} → ${f.internals.length}; copy x ${c && Q.r4(c.points[0].x)}`, pass: f.internals.length === n0 + 1 && JSON.stringify(f.sew) === s0 && near(c.points[0].x, 220, 0.5) && near(c.points[c.points.length - 1].x, 220, 0.5) };
+  });
+  await T('Copy internal: the picked line sticks to the mouse; right-click = movement box from the click position; Esc cancels', async () => {
+    await h.ev(() => { window.__e2e.settings.moveLineMode = 'copyTo'; }); await h.key('Shift+G');
+    const w = await h.along('FRONT', 'CF_HEM', 'SS_HEM', 0.5); await h.clickW(w); await h.clickW(w, { button: 'right' }); await h.ok();
+    const t = await h.local2world('BACK', { x: 520, y: 300 }); const c0 = await h.toClient(t); await h.page.mouse.move(c0.x, c0.y); await h.settle(40);
+    const carried = await h.page.locator('[data-carry-line]').count();
+    await h.clickW(t, { button: 'right' }); await h.page.waitForSelector('.ibox', { timeout: 2000 });
+    const ins = h.page.locator('.ibox input'); await ins.nth(0).fill('0'); await ins.nth(1).fill('50'); await ins.nth(1).press('Enter'); await h.settle();
+    const b = pc(await h.state(), 'BACK'); const c = b.internals[b.internals.length - 1];
+    const ys = c ? c.points.map(p => p.y) : [];
+    return { got: `carried line shown ${carried}; BACK internals ${b.internals.length}; copy y ${ys.map(Q.r4)}`, pass: carried === 1 && !!c && ys.every(y => near(y, 350, 1.5)) };
+  });
+  await T('Trace Piece: lines picked in mixed order across an internal line make a new piece; the source is unchanged', async () => {
+    await h.ev(() => { const E = window.__e2e, p = E.P('FRONT'); const mk = (x, y) => ({ id: 'p' + Math.random().toString(36).slice(2, 9), x, y, kind: 'grade', smooth: false, grade: {}, flags: {} }); E.app.doc.transact('yoke', () => { p.internals.push({ id: 'c' + Math.random().toString(36).slice(2, 9), type: 'internal', closed: false, points: [mk(260, 400), mk(0, 400)], style: 'solid' }); }); E.app.invalidate(); });
+    const s0 = JSON.stringify(pc(await h.state(), 'FRONT')); const n0 = (await h.state()).pieces.length; const r0 = await rev();
+    await h.key('Shift+T');
+    const L = v => h.local2world('FRONT', v);
+    await h.clickW(await L({ x: 60, y: 400 })); await h.clickW(await L({ x: 60, y: 0 })); await h.clickW(await L({ x: 260, y: 200 })); await h.clickW(await L({ x: 0, y: 200 }));
+    const picks = await h.page.locator('[data-trace-pick]').count();
+    await h.clickW(await L({ x: 60, y: 400 }), { button: 'right' }); await h.ok();
+    const st = await h.state(); const np = st.pieces[st.pieces.length - 1];
+    const xs = np.sew.points.map(p => Math.round(p.x)).sort((a, b) => a - b), ys = np.sew.points.map(p => Math.round(p.y)).sort((a, b) => a - b);
+    return { got: `${picks} lines picked; pieces ${n0} → ${st.pieces.length}; new piece points ${np.sew.points.map(p => `(${Q.r4(p.x)},${Q.r4(p.y)})`).join(' ')}; source changed ${JSON.stringify(pc(st, 'FRONT')) !== s0}; ${(await rev()) - r0} undo step(s)`,
+      pass: picks === 4 && st.pieces.length === n0 + 1 && np.sew.points.length === 4 && JSON.stringify(xs) === '[0,0,260,260]' && JSON.stringify(ys) === '[0,0,400,400]' && JSON.stringify(pc(st, 'FRONT')) === s0 && (await rev()) - r0 === 1 };
+  });
   await T('Select: window (L→R) box takes only fully-inside points', async () => { await h.ensureSelect(); await h.dragW({ x: -20, y: -20 }, { x: 270, y: 30 }); const sel = await h.sel(); return { got: JSON.stringify(sel), pass: sel.anchors.length === 2 }; });
   await T('Select: Shift+box adds', async () => { await h.selectA('FRONT', 'HPS'); await h.dragW({ x: -20, y: -20 }, { x: 270, y: 30 }, { mods: ['Shift'] }); const sel = await h.sel(); return { got: JSON.stringify(sel.anchors), pass: sel.anchors.length === 3 }; });
   await T('Select: click a sew line selects the segment', async () => { await h.ensureSelect(); await h.clickSeg('FRONT', 'SS_HEM', 'UA', 0.5); const sel = await h.sel(); return { got: JSON.stringify(sel.segments), pass: sel.segments.length === 1 }; });

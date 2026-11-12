@@ -29,7 +29,7 @@ async function single(ROOT, registry) {
     out.menus = menus; out.menuItems = items; out.registryMenuCommands = registry.filter(c => c.menu).length;
     out.missingFromMenubar = registry.filter(c => c.menu && !titles.includes(c.title)).map(c => c.id);
     // tiny flow: pen triangle, then File ▸ Export ▸ PDF with a real browser download
-    await p.keyboard.press('p');
+    await p.evaluate(() => window.prowdcad.app.setTool('pen'));
     const box = await p.locator('svg.sheet').boundingBox();
     for (const [x, y] of [[0.3, 0.7], [0.5, 0.7], [0.4, 0.4], [0.3, 0.7]]) await p.mouse.click(box.x + box.width * x, box.y + box.height * y);
     await p.waitForSelector('.dlg'); await p.locator('.dlg .btn.primary').click();
