@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { makeStyle, makePiece, makeContour, gradePoint } from '../src/model/factory';
+import { makeStyle, makePiece, makeContour, gradePoint, curvePoint } from '../src/model/factory';
+import { resolveContour } from '../src/model/contour';
 import { Document } from '../src/model/doc';
 import { copyLineTo, lineFollowShape } from '../src/ops/lines';
 
@@ -47,6 +48,48 @@ describe('lineFollowShape', () => {
     lineFollowShape(doc, { pieceId: id, contourId: r.contourId! }, { x: 0, y: 120 });
     const c = doc.piece(id).internals[0];
     expect(c.points[0].y).toBeCloseTo(420); expect(c.points[0].x).toBeCloseTo(-135);
+  });
+});
+
+describe('lineFollowShape keeps the neighbouring lines', () => {
+  /** hem between two CURVED side lines */
+  function curved() {
+    const s = makeStyle();
+    const pts = [gradePoint(-100, 0), gradePoint(100, 0), curvePoint(140, 200), curvePoint(130, 420), gradePoint(150, 600), gradePoint(-150, 600), curvePoint(-130, 420), curvePoint(-140, 200)];
+    const p = makePiece('LEG', makeContour(pts, { closed: true }), s.activeSizeTableId); s.pieces.push(p);
+    return { doc: new Document(s), id: p.id, ids: pts.map(a => a.id) };
+  }
+  const side = (doc: Document, id: string, from: string, to: string) => {
+    const p = doc.piece(id); const rc = resolveContour(p.sew, doc.sizeLine(p), doc.baseSize(p));
+    const i = p.sew.points.findIndex(a => a.id === from), j = p.sew.points.findIndex(a => a.id === to);
+    const n = rc.pts.length; const out = []; for (let k = rc.anchorIndex[i]; ; k = (k + 1) % n) { out.push(rc.pts[k]); if (k === rc.anchorIndex[j]) break; }
+    return out;
+  };
+  /** largest distance from the points of `a` to the polyline `b` */
+  const dev = (a: { x: number; y: number }[], b: { x: number; y: number }[]) => Math.max(...a.map(p => Math.min(...b.slice(1).map((q, k) => { const o = b[k], d = { x: q.x - o.x, y: q.y - o.y }, l2 = d.x * d.x + d.y * d.y; const t = l2 < 1e-12 ? 0 : Math.max(0, Math.min(1, ((p.x - o.x) * d.x + (p.y - o.y) * d.y) / l2)); return Math.hypot(o.x + d.x * t - p.x, o.y + d.y * t - p.y); }))));
+  it('inward: the side lines are cut, what is left of them has exactly the old shape, no point of theirs moved', () => {
+    const { doc, id, ids } = curved(); const sew = doc.piece(id).sew.id;
+    const before = side(doc, id, ids[1], ids[4]);
+    const pos = (k: number) => { const a = doc.piece(id).sew.points.find(q => q.id === ids[k])!; return [a.x, a.y]; };
+    const c2 = pos(2), c3 = pos(3);
+    lineFollowShape(doc, { pieceId: id, contourId: sew, from: ids[0], to: ids[1] }, { x: 0, y: 100 });
+    expect(pos(2)).toEqual(c2); expect(pos(3)).toEqual(c3);
+    expect(doc.piece(id).sew.points.find(q => q.id === ids[1])!.y).toBeCloseTo(100, 3);
+    expect(dev(side(doc, id, ids[1], ids[4]), before)).toBeLessThan(0.06);
+  });
+  it('inward past a curve point: that point goes, the rest keeps the old shape', () => {
+    const { doc, id, ids } = curved(); const sew = doc.piece(id).sew.id;
+    const before = side(doc, id, ids[1], ids[4]);
+    lineFollowShape(doc, { pieceId: id, contourId: sew, from: ids[0], to: ids[1] }, { x: 0, y: 300 });
+    expect(doc.piece(id).sew.points.some(q => q.id === ids[2])).toBe(false);
+    expect(dev(side(doc, id, ids[1], ids[4]), before)).toBeLessThan(0.06);
+  });
+  it('outward: the old side line stays exactly, a straight piece continues it', () => {
+    const { doc, id, ids } = curved(); const sew = doc.piece(id).sew.id;
+    const before = side(doc, id, ids[1], ids[4]);
+    lineFollowShape(doc, { pieceId: id, contourId: sew, from: ids[0], to: ids[1] }, { x: 0, y: -80 });
+    expect(doc.piece(id).sew.points.find(q => q.id === ids[1])!.y).toBeCloseTo(-80, 3);
+    expect(dev(before, side(doc, id, ids[1], ids[4]))).toBeLessThan(0.06);
   });
 });
 
