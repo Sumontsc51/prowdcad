@@ -56,8 +56,14 @@ export interface Settings {
   pickRadiusPx: number;
   /** Move Point tool mode (Single default) */
   movePointMode: 'single' | 'smooth' | 'h' | 'v' | 'along' | 'group';
-  moveLineMode: 'translate' | 'parallel';
+  moveLineMode: 'translate' | 'h' | 'v' | 'parallel' | 'prop' | 'copyTo';
   pieceToolMode: 'move' | 'rotate' | 'flip';
+  /** Rotate tool: pivot = two clicked points, or the piece centre */
+  rotateMode?: 'point' | 'piece';
+  /** Rotate tool: the grain line keeps its direction on the sheet */
+  rotateKeepGrain?: boolean;
+  /** Move / Copy Line: leave the original and create a copy */
+  moveLineCopy?: boolean;
   /** last-used dialog values, keyed by dialog id */
   last: Record<string, Record<string, string | number | boolean>>;
   /** per-tool remembered options (Cut Point / Dart / Pleat / Slash & spread), keyed by tool id */
@@ -76,7 +82,7 @@ export const DEFAULT_SETTINGS: Settings = {
   panels: { pieces: true, sizes: true, inspector: true, grading: false },
   guides: [],
   showCutCorners: false, showRuleNames: false, ruleBadges: false, showReference: true,
-  selFilter: 'all', selectDragMove: false, pickRadiusPx: 8, movePointMode: 'single', moveLineMode: 'translate', pieceToolMode: 'move',
+  selFilter: 'all', selectDragMove: false, pickRadiusPx: 8, movePointMode: 'single', moveLineMode: 'translate', pieceToolMode: 'move', rotateMode: 'point', rotateKeepGrain: false, moveLineCopy: false,
   last: {},
   toolState: {},
   autoLockInternal: true,
