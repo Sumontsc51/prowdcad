@@ -9,6 +9,7 @@ import type { Anchor, Contour, Id, Piece, SizeLine } from '../model/types';
 import type { Document } from '../model/doc';
 import { Vec, add, sub, mul, dist, norm, dot, len } from '../geom/vec';
 import { newId, makeContour } from '../model/factory';
+import { deletePoint } from './points';
 import {
   contourOf, idx, resolveBase, arcS, spanLen, spanPoly, pointAt, closestArc, closedPoly, extractRange, transformAnchor,
   nextGrade, prevGrade, jsonClone, type Xf,
@@ -111,7 +112,8 @@ export interface FollowResult { contourId?: Id; a: Vec; b: Vec; lengthBefore: nu
  * Move (or, with `copy`, copy as an internal line) a line by `d` at a right angle to itself while its ends
  * follow the shape: the ends of a sew segment slide along the two neighbouring segments (or their straight
  * extension), the ends of an internal line that sit on the outline slide along the outline. The points of the
- * line keep their proportions between the two new ends. Base size.
+ * line keep their proportions between the two new ends; the neighbouring lines keep their shape (cut where the
+ * end slides back, continued straight where it slides outward). Base size.
  */
 export function lineFollowShape(doc: Document, ref: LineRef, d: Vec, o: { copy?: boolean } = {}): FollowResult {
   return doc.transact(o.copy ? 'Copy line (follow shape)' : 'Move line (follow shape)', () => {
@@ -162,24 +164,70 @@ export function lineFollowShape(doc: Document, ref: LineRef, d: Vec, o: { copy?:
       const rr = resolveBase(c, line); res.lengthAfter = rr.cum[rr.cum.length - 1] ?? 0;
       return res;
     }
-    // the neighbouring lines: their curve points keep their proportion along the shortened / extended line
-    const moves: { a: Anchor; p: Vec; k: number }[] = [];
+    // The neighbouring lines keep their shape: none of their points moves. Where the line end slides back along a
+    // neighbour, the neighbour is cut there (the exact part of its curve is kept, points beyond the cut go);
+    // where it slides outward, the neighbour is continued by a straight piece from its old end.
+    const idA = P[ia].id, idB = P[ib].id;
+    const drop: Id[] = [];
+    const setH: { id: Id; hIn?: Vec | null; hOut?: Vec | null }[] = [];
+    const insert: { before?: Id; after?: Id; a: Anchor }[] = [];
+    const corner = (p: Vec, hIn: Vec | undefined, hOut: Vec | undefined): Anchor => ({ id: newId('p'), x: p.x, y: p.y, kind: 'curve', smooth: false, grade: {}, flags: {}, ...(hIn ? { hIn } : {}), ...(hOut ? { hOut } : {}) } as Anchor);
     if (hA && hB && pg !== ib && ng !== ia) {
-      const L0a = spanLen(r, pg, ia), L1a = L0a - hA.s, sP = arcS(r, pg);
-      const eA = norm(sub(A, spanPoly(r, pg, ia).reverse().find(q => dist(q, A) > 1e-6) ?? A));
-      for (let j = (pg + 1) % n; j !== ia; j = (j + 1) % n) {
-        const s1 = (spanLen(r, pg, j) * L1a) / L0a;
-        moves.push({ a: P[j], p: s1 <= L0a ? pointAt(r, sP + s1).pt : add(A, mul(eA, s1 - L0a)), k: L1a / L0a });
+      const L0a = spanLen(r, pg, ia), L0b = spanLen(r, ib, ng);
+      const interiorA: number[] = []; for (let j = (pg + 1) % n; j !== ia; j = (j + 1) % n) interiorA.push(j);
+      const interiorB: number[] = []; for (let j = (ib + 1) % n; j !== ng; j = (j + 1) % n) interiorB.push(j);
+      if (hA.s > 1e-9) {
+        const ex = extractRange(contour, line, arcS(r, pg), arcS(r, pg) + (L0a - hA.s), { keepIds: true });
+        const keep = new Set(ex.map(a => a.id));
+        for (const j of interiorA) if (!keep.has(P[j].id)) drop.push(P[j].id);
+        setH.push({ id: P[pg].id, hOut: ex[0].hOut ?? null });
+        for (const a of ex.slice(1, -1)) if (P.some(q => q.id === a.id)) setH.push({ id: a.id, hIn: a.hIn ?? null, hOut: a.hOut ?? null });
+        setH.push({ id: idA, hIn: ex[ex.length - 1].hIn ?? null });
+      } else if (hA.s < -1e-9) {
+        // outward: the old end stays as a point of the neighbour (its curve frozen), then straight to the new end
+        const curved = interiorA.length > 0 || dist(r.handles[ia].hIn, A) > 1e-6 || dist(r.handles[pg].hOut, r.anchorPos[pg]) > 1e-6;
+        if (curved) {
+          setH.push({ id: P[pg].id, hOut: sub(r.handles[pg].hOut, r.anchorPos[pg]) });
+          for (const j of interiorA) setH.push({ id: P[j].id, hIn: sub(r.handles[j].hIn, r.anchorPos[j]), hOut: sub(r.handles[j].hOut, r.anchorPos[j]) });
+          insert.push({ before: idA, a: corner(A, sub(r.handles[ia].hIn, A), undefined) });
+          setH.push({ id: idA, hIn: null });
+        }
       }
-      const L0b = spanLen(r, ib, ng), L1b = L0b - hB.s, sN = arcS(r, ng);
-      const eB = norm(sub(B, spanPoly(r, ib, ng).find(q => dist(q, B) > 1e-6) ?? B));
-      for (let j = (ib + 1) % n; j !== ng; j = (j + 1) % n) {
-        const s1 = (spanLen(r, j, ng) * L1b) / L0b;
-        moves.push({ a: P[j], p: s1 <= L0b ? pointAt(r, sN - s1).pt : add(B, mul(eB, s1 - L0b)), k: L1b / L0b });
+      if (hB.s > 1e-9) {
+        const s0 = arcS(r, ib) + hB.s;
+        const ex = extractRange(contour, line, s0, s0 + (L0b - hB.s), { keepIds: true });
+        const keep = new Set(ex.map(a => a.id));
+        for (const j of interiorB) if (!keep.has(P[j].id)) drop.push(P[j].id);
+        setH.push({ id: idB, hOut: ex[0].hOut ?? null });
+        for (const a of ex.slice(1, -1)) if (P.some(q => q.id === a.id)) setH.push({ id: a.id, hIn: a.hIn ?? null, hOut: a.hOut ?? null });
+        setH.push({ id: P[ng].id, hIn: ex[ex.length - 1].hIn ?? null });
+      } else if (hB.s < -1e-9) {
+        const curved = interiorB.length > 0 || dist(r.handles[ib].hOut, B) > 1e-6 || dist(r.handles[ng].hIn, r.anchorPos[ng]) > 1e-6;
+        if (curved) {
+          setH.push({ id: P[ng].id, hIn: sub(r.handles[ng].hIn, r.anchorPos[ng]) });
+          for (const j of interiorB) setH.push({ id: P[j].id, hIn: sub(r.handles[j].hIn, r.anchorPos[j]), hOut: sub(r.handles[j].hOut, r.anchorPos[j]) });
+          insert.push({ after: idB, a: corner(B, undefined, sub(r.handles[ib].hOut, B)) });
+          setH.push({ id: idB, hOut: null });
+        }
       }
+      for (const id of drop) { const a = P.find(q => q.id === id)!; if (a.flags.dartLeg || a.flags.pleatEdge || a.flags.locked) throw new Error('The neighbouring line has dart, pleat or locked points where the line would go'); }
     }
-    for (const j of ids) { const a = P[j]; const p = xpt(r.anchorPos[j]); a.x = p.x; a.y = p.y; if (a.hIn) a.hIn = xvec(a.hIn); if (a.hOut) a.hOut = xvec(a.hOut); }
-    for (const m of moves) { m.a.x = m.p.x; m.a.y = m.p.y; if (m.a.hIn) m.a.hIn = mul(m.a.hIn, m.k); if (m.a.hOut) m.a.hOut = mul(m.a.hOut, m.k); }
+    // the line itself: its points keep their proportions between the two new ends
+    const own = ids.map(j => ({ a: P[j], p: xpt(r.anchorPos[j]) }));
+    for (const m of own) { const a = m.a; a.x = m.p.x; a.y = m.p.y; if (a.hIn) a.hIn = xvec(a.hIn); if (a.hOut) a.hOut = xvec(a.hOut); delete a.hHold; }
+    for (const h of setH) {
+      const a = contour.points.find(q => q.id === h.id); if (!a) continue;
+      if (h.hIn !== undefined) { if (h.hIn) a.hIn = { ...h.hIn }; else delete a.hIn; }
+      if (h.hOut !== undefined) { if (h.hOut) a.hOut = { ...h.hOut }; else delete a.hOut; }
+      delete a.hHold;
+    }
+    for (const id of drop) deletePoint(doc, piece.id, id);
+    for (const ins of insert) { const k = contour.points.findIndex(q => q.id === (ins.before ?? ins.after)); contour.points.splice(ins.before ? k : k + 1, 0, ins.a); }
+    {
+      const ja = idx(contour, idA), jb = idx(contour, idB);
+      const rr = resolveBase(contour, line); res.lengthAfter = spanLen(rr, ja, jb);
+      return res;
+    }
     const rr = resolveBase(contour, line); res.lengthAfter = spanLen(rr, ia, ib);
     return res;
   });
