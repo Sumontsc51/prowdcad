@@ -28,7 +28,7 @@ async function buildFixture(h) {
   await h.ev(() => { const { app } = window.__e2e; const v = app.view; v.cx = 380; v.cy = 356; v.scale = Math.min(v.W / 900, v.H / 820); app.invalidate(); });
   await h.settle();
   // 2. FRONT with the Pen tool (UI): click = corner, Ctrl+click = curve, click start = close
-  await h.key('p');
+  await h.ev(() => window.__e2e.app.setTool('pen')); // the Pen tool is not offered to users any more; the fixture still draws with it
   for (const [, x, y, c] of FRONT) await h.clickW({ x, y }, { mods: c ? ['Control'] : [] });
   await h.clickW({ x: 0, y: 0 });
   await h.waitDialog();
