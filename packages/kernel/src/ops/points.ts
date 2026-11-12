@@ -664,6 +664,138 @@ export function joinHandle(doc: Document, pieceId: Id, anchorId: Id): void {
   });
 }
 
+// ───────────────────────── one curve per line (two handles) ─────────────────────────
+
+/** A line between two points seen as ONE cubic curve: the two handles that control it (absolute, base, piece-local). */
+export interface SegmentCurve {
+  from: Id; to: Id; p0: Vec; p3: Vec; h0: Vec; h3: Vec;
+  /** points in between that the curve replaces (0 = the line already is one curve) */
+  between: number;
+  /** largest distance between the present shape and the single curve */
+  dev: number;
+  length: number;
+}
+const bez = (p0: Vec, p1: Vec, p2: Vec, p3: Vec, t: number): Vec => {
+  const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+  return { x: a * p0.x + b * p1.x + c * p2.x + d * p3.x, y: a * p0.y + b * p1.y + c * p2.y + d * p3.y };
+};
+const bezPoly = (p0: Vec, p1: Vec, p2: Vec, p3: Vec, n = 48): Vec[] => Array.from({ length: n + 1 }, (_, k) => bez(p0, p1, p2, p3, k / n));
+const polyLen = (q: Vec[]) => { let L = 0; for (let k = 1; k < q.length; k++) L += dist(q[k - 1], q[k]); return L; };
+/**
+ * Least-squares cubic through a polyline with fixed end points (Schneider, with re-parameterisation).
+ * `free` = the end tangents are free too (closest shape); otherwise they keep the directions t0 / t3.
+ */
+function fitCubic(q: Vec[], t0: Vec, t3: Vec, free: boolean): { h0: Vec; h3: Vec } {
+  const p0 = q[0], p3 = q[q.length - 1];
+  const chord = dist(p0, p3);
+  const u: number[] = [0]; for (let k = 1; k < q.length; k++) u.push(u[k - 1] + dist(q[k - 1], q[k]));
+  const L = u[u.length - 1] || 1; for (let k = 0; k < u.length; k++) u[k] /= L;
+  const lo = chord * 1e-3, hi = Math.max(chord, L) * 2;
+  const solve = (): { h0: Vec; h3: Vec } | null => {
+    if (free) {
+      let s11 = 0, s12 = 0, s22 = 0; const r1 = { x: 0, y: 0 }, r2 = { x: 0, y: 0 };
+      for (let k = 0; k < q.length; k++) {
+        const t = u[k], m = 1 - t, b0 = m * m * m, b1 = 3 * m * m * t, b2 = 3 * m * t * t, b3 = t * t * t;
+        const tmp = sub(q[k], add(mul(p0, b0), mul(p3, b3)));
+        s11 += b1 * b1; s12 += b1 * b2; s22 += b2 * b2; r1.x += b1 * tmp.x; r1.y += b1 * tmp.y; r2.x += b2 * tmp.x; r2.y += b2 * tmp.y;
+      }
+      const det = s11 * s22 - s12 * s12; if (Math.abs(det) < 1e-12) return null;
+      const h0 = { x: (r1.x * s22 - r2.x * s12) / det, y: (r1.y * s22 - r2.y * s12) / det }, h3 = { x: (s11 * r2.x - s12 * r1.x) / det, y: (s11 * r2.y - s12 * r1.y) / det };
+      if (dist(h0, p0) > hi || dist(h3, p3) > hi) return null;
+      return { h0, h3 };
+    }
+    let c00 = 0, c01 = 0, c11 = 0, x0 = 0, x1 = 0;
+    for (let k = 0; k < q.length; k++) {
+      const t = u[k], m = 1 - t, b0 = m * m * m, b1 = 3 * m * m * t, b2 = 3 * m * t * t, b3 = t * t * t;
+      const a1 = mul(t0, b1), a2 = mul(t3, b2);
+      const tmp = sub(q[k], add(mul(p0, b0 + b1), mul(p3, b2 + b3)));
+      c00 += dot(a1, a1); c01 += dot(a1, a2); c11 += dot(a2, a2); x0 += dot(a1, tmp); x1 += dot(a2, tmp);
+    }
+    const det = c00 * c11 - c01 * c01; if (Math.abs(det) < 1e-12) return null;
+    const al = (x0 * c11 - x1 * c01) / det, ar = (c00 * x1 - c01 * x0) / det;
+    if (!(al > lo) || !(ar > lo) || al > hi || ar > hi) return null;
+    return { h0: add(p0, mul(t0, al)), h3: add(p3, mul(t3, ar)) };
+  };
+  let best = solve() ?? { h0: add(p0, mul(t0, L / 3)), h3: add(p3, mul(t3, L / 3)) };
+  for (let it = 0; it < 10; it++) {
+    // Newton step of every sample's parameter towards its closest point on the current curve
+    const { h0, h3 } = best;
+    for (let k = 1; k < q.length - 1; k++) {
+      const t = u[k], m = 1 - t;
+      const b = bez(p0, h0, h3, p3, t);
+      const d1 = add(add(mul(sub(h0, p0), 3 * m * m), mul(sub(h3, h0), 6 * m * t)), mul(sub(p3, h3), 3 * t * t));
+      const d2 = add(mul(add(sub(h3, mul(h0, 2)), p0), 6 * m), mul(add(sub(p3, mul(h3, 2)), h0), 6 * t));
+      const e = sub(b, q[k]); const den = dot(d1, d1) + dot(e, d2);
+      if (Math.abs(den) > 1e-12) u[k] = Math.max(0, Math.min(1, t - dot(e, d1) / den));
+    }
+    const nx = solve(); if (!nx) break; best = nx;
+  }
+  return best;
+}
+function segIdx(contour: Contour, fromId: Id, toId: Id): { i: number; j: number; mid: number[] } {
+  const n = contour.points.length, i = idx(contour, fromId), j = idx(contour, toId);
+  if (i < 0 || j < 0 || i === j) throw new Error('Pick a line between two points');
+  if (!contour.closed && j < i) throw new Error('Pick the line in its own direction');
+  const mid: number[] = [];
+  for (let k = (i + 1) % n; k !== j; k = (k + 1) % n) mid.push(k);
+  return { i, j, mid };
+}
+/** The two handles that control the line from → to as one curve (fitted when the line has points in between). */
+export function segmentCurve(piece: Piece, line: SizeLine, contourId: Id, fromId: Id, toId: Id): SegmentCurve {
+  const contour = contourOf(piece, contourId);
+  const { i, j, mid } = segIdx(contour, fromId, toId);
+  const r = resolveBase(contour, line);
+  const p0 = r.anchorPos[i], p3 = r.anchorPos[j];
+  const q = spanPoly(r, i, j);
+  let h0 = r.handles[i].hOut, h3 = r.handles[j].hIn;
+  if (mid.length) {
+    const dirOr = (h: Vec, p: Vec, fb: Vec) => { const v = sub(h, p); return len(v) > 1e-6 ? norm(v) : norm(fb); };
+    const t0 = dirOr(h0, p0, sub(q[Math.min(1, q.length - 1)], p0)), t3 = dirOr(h3, p3, sub(q[Math.max(0, q.length - 2)], p3));
+    // keep the end directions when that is close enough; otherwise the closest single curve
+    const devOf = (f: { h0: Vec; h3: Vec }) => { const cv = bezPoly(p0, f.h0, f.h3, p3); return Math.max(maxDev(cv, q), maxDev(q, cv)); };
+    const kept = fitCubic(q, t0, t3, false); const dk = devOf(kept);
+    let pick = kept;
+    if (dk > 0.2) { const fr = fitCubic(q, t0, t3, true); if (devOf(fr) < dk * 0.7) pick = fr; }
+    ({ h0, h3 } = pick);
+  }
+  // a straight line: handles a third along the chord, so there is something to grab
+  if (dist(h0, p0) < 1e-6) h0 = lerp(p0, p3, 1 / 3);
+  if (dist(h3, p3) < 1e-6) h3 = lerp(p3, p0, 1 / 3);
+  const cv = bezPoly(p0, h0, h3, p3);
+  return { from: fromId, to: toId, p0: { ...p0 }, p3: { ...p3 }, h0, h3, between: mid.length, dev: mid.length ? Math.max(maxDev(cv, q), maxDev(q, cv)) : 0, length: polyLen(mid.length ? cv : q) };
+}
+/**
+ * Shape the line from → to with two handles (relative to their points). Points in between are replaced by one
+ * curve of the same shape first; the lines beyond both end points keep their shape (handles are per side).
+ * Returns the number of points that were replaced.
+ */
+export function shapeSegment(doc: Document, pieceId: Id, contourId: Id, fromId: Id, toId: Id, h: { start?: Vec; end?: Vec } = {}): number {
+  return doc.transact('Shape line', () => {
+    const piece = piecesHas(doc, pieceId), line = doc.sizeLine(piece);
+    if (piece.locked) throw new Error('Piece is locked');
+    const contour = contourOf(piece, contourId);
+    const { i, j, mid } = segIdx(contour, fromId, toId);
+    const n = contour.points.length;
+    for (const k of mid) {
+      const a = contour.points[k];
+      if (a.kind === 'grade') throw new Error('Pick a line between two neighbouring grade points');
+      if (a.flags.dartLeg || a.flags.pleatEdge || a.flags.locked || a.flags.derived) throw new Error('This line has dart, pleat or locked points on it: it cannot become one curve');
+    }
+    const cur = segmentCurve(piece, line, contourId, fromId, toId);
+    const r = resolveBase(contour, line);
+    const A = contour.points[i], B = contour.points[j];
+    // the far sides keep their present shape
+    const hasPrev = contour.closed || i > 0, hasNext = contour.closed || j < n - 1;
+    if (hasPrev && A.smooth && !A.hIn) A.hIn = sub(r.handles[i].hIn, r.anchorPos[i]);
+    if (hasNext && B.smooth && !B.hOut) B.hOut = sub(r.handles[j].hOut, r.anchorPos[j]);
+    delete A.hHold; delete B.hHold;
+    for (const id of mid.map(k => contour.points[k].id)) deletePoint(doc, pieceId, id);
+    A.hOut = h.start ? { ...h.start } : sub(cur.h0, cur.p0);
+    B.hIn = h.end ? { ...h.end } : sub(cur.h3, cur.p3);
+    return mid.length;
+  });
+}
+
 /** Rotate the points array of the sew contour so the anchor is index 0 (point #1); moves the startPoint flag. */
 export function setStartPoint(doc: Document, pieceId: Id, anchorId: Id): void {
   doc.transact('Set start point', () => {
