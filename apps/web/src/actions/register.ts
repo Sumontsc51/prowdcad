@@ -40,7 +40,7 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
   const onePiece = (): Piece => { const p = app.primaryPiece(); if (!p) throw new Error('Select a piece'); return app.doc.piece(p.id); };
 
   // ───────────── tools (hotkeys) ─────────────
-  for (const t of app.tools) registerCommand({ id: 'tool.' + t.id, title: `Tool: ${t.title}`, hotkey: t.hotkey, run: () => app.setTool(t.id) });
+  for (const t of app.tools) if (t.id !== 'pen') registerCommand({ id: 'tool.' + t.id, title: `Tool: ${t.title}`, hotkey: t.hotkey, run: () => app.setTool(t.id) });
 
   // ───────────── File ─────────────
   registerCommand({ id: 'file.new', title: 'New…', menu: 'File', group: 0, hotkey: 'Ctrl+Alt+N', run: () => newStyle(app) });
@@ -266,7 +266,7 @@ async function deleteSelection(app: App) {
 export const ACCUMARK_KEYS: Record<string, string> = {
   'move.single': 'Alt+F12', 'move.smooth': 'Alt+F11', 'move.group': 'Alt+F2', 'point.alignH': 'Shift+Alt+H,Alt+F3', 'point.delete': 'Alt+F1',
   'move.line': 'Ctrl+F2', 'move.lineParallel': 'Ctrl+F11', 'seg.divide': 'Ctrl+F10', 'seg.swap': 'Alt+S', 'seam.segment': 'Shift+Alt+S',
-  'move.piece': 'Shift+F2', 'move.pieceFlip': 'Shift+F9', 'move.pieceRotate': 'Shift+F10', 'tool.walk': 'W,Shift+W',
+  'move.pieceRotatePoint': 'Shift+F2', 'move.pieceFlip': 'Shift+F9', 'move.pieceRotate': 'Shift+F10', 'tool.walk': 'W,Shift+W',
   'edit.selectAll': 'Ctrl+A', 'edit.deselect': 'Escape,Ctrl+D', 'edit.duplicate': 'Ctrl+Shift+D',
 };
 export const KEY_PRESETS: { id: string; label: string; map: Record<string, string> }[] = [
@@ -320,7 +320,7 @@ async function editHotkeys(rebuildUi: () => void) {
 async function customizeToolbar(app: App, rebuildUi: () => void) {
   const r = await showDialog({
     title: 'Customize toolbar', message: 'Choose which tools appear in the palette. Hidden tools stay reachable via their shortcut.',
-    fields: app.tools.map(t => ({ kind: 'checkbox' as const, key: t.id, label: `${t.title}${t.hotkey ? ` (${t.hotkey})` : ''}`, value: !settings.hiddenTools.includes(t.id) })),
+    fields: app.tools.filter(t => !t.hidden).map(t => ({ kind: 'checkbox' as const, key: t.id, label: `${t.title}${t.hotkey ? ` (${t.hotkey})` : ''}`, value: !settings.hiddenTools.includes(t.id) })),
     buttons: [{ id: 'all', label: 'Show all' }],
   });
   if (!r) return;

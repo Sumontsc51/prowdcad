@@ -153,7 +153,7 @@ export function registerCutPiece(app: App) {
     if (r) selectResult(app, ops.circularSkirt(app.doc, { waist: r.waist as number, length: r.len as number, sweepDeg: r.sweep as number, panels: (r.panels as number) > 0 ? Math.round(r.panels as number) : undefined, name: String(r._name), at: app.view.toWorld({ x: app.view.W / 2, y: app.view.H / 2 }) }));
   } });
   // construct pieces
-  registerCommand({ id: 'cut.trace', title: 'Trace segments tool', menu: 'Cut', group: 2, run: () => app.setTool('trace') });
+  registerCommand({ id: 'cut.trace', title: 'Trace Piece tool', menu: 'Cut', group: 2, run: () => app.setTool('trace') });
   registerCommand({ id: 'cut.build', title: 'Build piece from region', menu: 'Cut', group: 2, hotkey: 'Alt+B', run: async () => {
     const r = await must(app, { kind: 'piece', prompt: 'Build piece: click inside a region bounded by internal lines' }, 'piece');
     const n = await rememberedDialog('cut.build', { title: 'Build piece', fields: [{ kind: 'text', key: '_name', label: 'Name', value: `${r.piece.name} PART` }] });

@@ -28,18 +28,28 @@ export function registerMoveCmds(app: App) {
   mp('move.group', 'Move Points (group, same delta)', 'group');
 
   // ───── Segment ▸ Modify Line ─────
-  registerCommand({ id: 'move.line', title: 'Move Line', menu: 'Segment/Modify Line', checked: () => app.tool?.id === 'moveLine' && settings.moveLineMode === 'translate', run: () => { settings.moveLineMode = 'translate'; saveSettings(); app.setTool('moveLine'); } });
-  registerCommand({ id: 'move.lineParallel', title: 'Move Parallel / Offset', menu: 'Segment/Modify Line', checked: () => app.tool?.id === 'moveLine' && settings.moveLineMode === 'parallel', run: () => { settings.moveLineMode = 'parallel'; saveSettings(); app.setTool('moveLine'); } });
+  const ml = (id: string, title: string, mode: 'translate' | 'h' | 'v' | 'parallel' | 'prop' | 'copyTo') => registerCommand({
+    id, title, menu: 'Segment/Modify Line', checked: () => app.tool?.id === 'moveLine' && settings.moveLineMode === mode,
+    run: () => { settings.moveLineMode = mode; saveSettings(); app.setTool('moveLine'); app.invalidate(); },
+  });
+  ml('move.line', 'Move / Copy Line (free)', 'translate');
+  ml('move.lineH', 'Move / Copy Line Horizontal', 'h');
+  ml('move.lineV', 'Move / Copy Line Vertical', 'v');
+  ml('move.lineParallel', 'Move / Copy Parallel (offset)', 'parallel');
+  ml('move.lineProp', 'Move / Copy Proportional (follow shape)', 'prop');
+  ml('move.lineCopyTo', 'Copy internal (line onto another panel)', 'copyTo');
+  registerCommand({ id: 'move.lineCopyToggle', title: 'Move Line: copy instead of move', menu: 'Segment/Modify Line', checked: () => !!settings.moveLineCopy, run: () => { settings.moveLineCopy = !settings.moveLineCopy; saveSettings(); app.status(settings.moveLineCopy ? 'Move / Copy Line: makes a copy (internal line)' : 'Move / Copy Line: moves the line'); app.invalidate(); } });
   registerCommand({ id: 'move.curve', title: 'Curve / Handle tool', menu: 'Segment/Modify Line', checked: () => app.tool?.id === 'curve', run: () => app.setTool('curve') });
 
   // ───── Piece ▸ Modify Piece ─────
-  const pm = (id: string, title: string, mode: 'move' | 'rotate' | 'flip') => registerCommand({
-    id, title, menu: 'Piece/Modify Piece', checked: () => app.tool?.id === 'movePiece' && settings.pieceToolMode === mode,
-    run: () => { settings.pieceToolMode = mode; saveSettings(); app.setTool('movePiece'); },
+  const rot = (id: string, title: string, mode: 'point' | 'piece') => registerCommand({
+    id, title, menu: 'Piece/Modify Piece', checked: () => app.tool?.id === 'rotatePiece' && (settings.rotateMode ?? 'point') === mode,
+    run: () => { settings.rotateMode = mode; saveSettings(); app.setTool('rotatePiece'); },
   });
-  pm('move.piece', 'Move Piece', 'move');
-  pm('move.pieceRotate', 'Rotate Piece', 'rotate');
-  pm('move.pieceFlip', 'Flip Piece (tool)', 'flip');
+  rot('move.pieceRotatePoint', 'Rotate by point (pin + second point)', 'point');
+  rot('move.pieceRotate', 'Rotate Piece (about its centre, 0–360°)', 'piece');
+  registerCommand({ id: 'move.rotateKeepGrain', title: 'Rotate: keep grain direction', menu: 'Piece/Modify Piece', checked: () => !!settings.rotateKeepGrain, run: () => { settings.rotateKeepGrain = !settings.rotateKeepGrain; saveSettings(); app.status(settings.rotateKeepGrain ? 'Rotate: the grain line keeps its direction on the sheet' : 'Rotate: the grain line turns with the piece'); app.invalidate(); } });
+  registerCommand({ id: 'move.pieceFlip', title: 'Flip Piece (tool)', menu: 'Piece/Modify Piece', checked: () => app.tool?.id === 'flipPiece', run: () => app.setTool('flipPiece') });
   const selPieceIds = () => app.sel.pieces.filter(id => !app.hasSubSelection(id) || app.sel.pieces.length === 1);
   registerCommand({ id: 'piece.flipH', title: 'Flip selected left ⇄ right', menu: 'Piece/Modify Piece', group: 1, enabled: () => app.sel.pieces.length > 0, run: () => flipPieces(app, selPieceIds(), 'h') });
   registerCommand({ id: 'piece.flipV', title: 'Flip selected up ⇄ down', menu: 'Piece/Modify Piece', group: 1, enabled: () => app.sel.pieces.length > 0, run: () => flipPieces(app, selPieceIds(), 'v') });
