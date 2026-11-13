@@ -390,11 +390,18 @@ async function dragsHead(h, fixtures) {
     const rep = () => h.ev(async () => { const m = await import('/src/tools/walk.ts'); return m.walkRun ? m.walkRun() : null; });
     const r0 = await rep();
     const real0 = await h.ev(() => window.__e2e.app.preview.size);
+    // placed by a move only: the piece keeps the direction it has on the sheet, its point sits on the clicked point
+    const placed = await h.ev(() => { const E = window.__e2e, f = E.P('FRONT'), pv = E.app.preview.get(f.id); const a = E.findA('FRONT', 'SS_HEM').a; const r = (pv.layout.angleDeg || 0) * Math.PI / 180; const w = { x: pv.layout.x + a.x * Math.cos(r) - a.y * Math.sin(r), y: pv.layout.y + a.x * Math.sin(r) + a.y * Math.cos(r) }; const t = E.W('BACK', 'BL'); return { ang: pv.layout.angleDeg || 0, off: Math.hypot(w.x - t.x, w.y - t.y), own: (f.layout && f.layout.angleDeg) || 0 }; });
     await h.clickW(await h.along('BACK', 'TL', 'BL', 0.5)); const r1 = await rep();
-    const s0 = JSON.stringify((await h.state()).pieces.map(p => p.layout));
-    await h.key('Escape');
+    const s0 = JSON.stringify((await h.state()).pieces.map(p => p.layout)); const sew0 = JSON.stringify(pc(await h.state(), 'FRONT').sew);
+    const shown = await h.ev(() => { const E = window.__e2e; return JSON.stringify(E.app.preview.get(E.P('FRONT').id).layout); });
+    const rv = await rev(); await h.key('Escape');
     const after = await h.ev(() => window.__e2e.app.preview.size);
-    return { got: `stationary run ${r0 && Q.r4(r0)} → ${r1 && Q.r4(r1)}; piece shown on the seam during the walk ${real0 === 1}; back in place after Esc ${after === 0}`, pass: r0 !== null && Math.abs(r0) < 1e-6 && r1 > 50 && real0 === 1 && after === 0 && s0 === JSON.stringify((await h.state()).pieces.map(p => p.layout)) };
+    // the piece stays at its last walk position: placement only, one undo step, Ctrl+Z puts it back
+    const stE = await h.state(); const keptL = JSON.stringify(pc(stE, 'FRONT').layout); const steps = (await rev()) - rv;
+    const sameShape = JSON.stringify(pc(stE, 'FRONT').sew) === sew0;
+    await h.ensureSelect(); await h.key('Control+z');
+    return { got: `stationary run ${r0 && Q.r4(r0)} → ${r1 && Q.r4(r1)}; piece shown on the seam during the walk ${real0 === 1}; placed without turning (angle ${Q.r4(placed.ang)}°, point off by ${Q.r4(placed.off)}); after Esc it stays at the last walk position ${keptL === shown} (${steps} undo step, shape unchanged ${sameShape}); Ctrl+Z puts it back ${s0 === JSON.stringify((await h.state()).pieces.map(p => p.layout))}`, pass: keptL === shown && steps === 1 && sameShape && r0 !== null && Math.abs(r0) < 1e-6 && r1 > 50 && real0 === 1 && after === 0 && Math.abs(placed.ang - placed.own) < 1e-6 && placed.off < 0.01 && s0 === JSON.stringify((await h.state()).pieces.map(p => p.layout)) };
   });
   await T('Trace Piece: lines picked in mixed order across an internal line make a new piece; the source is unchanged', async () => {
     await h.ev(() => { const E = window.__e2e, p = E.P('FRONT'); const mk = (x, y) => ({ id: 'p' + Math.random().toString(36).slice(2, 9), x, y, kind: 'grade', smooth: false, grade: {}, flags: {} }); E.app.doc.transact('yoke', () => { p.internals.push({ id: 'c' + Math.random().toString(36).slice(2, 9), type: 'internal', closed: false, points: [mk(260, 400), mk(0, 400)], style: 'solid' }); }); E.app.invalidate(); });
