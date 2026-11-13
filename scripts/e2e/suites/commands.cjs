@@ -131,7 +131,7 @@ const cases = [
     drive: async h => { await h.waitDialog(); await h.fill('preset', 'accumark'); await h.ok(); },
     expect: async h => { const hk = await h.ev(() => window.__e2e.settings.hotkeys); return req(hk['move.smooth'] === 'Alt+F11', 'preset not applied from the dialog: ' + JSON.stringify(hk)); } },
   { id: 'edit.toolbar', change: false, drive: async h => { await h.waitDialog(); h._b0 = await h.page.locator('#palette .tool-btn').count(); await h.fill('measure', false); await h.fill('walk', false); await h.ok(); },
-    expect: async h => { const hid = await setting('hiddenTools')(h); const b1 = await h.page.locator('#palette .tool-btn').count(); return [req(hid.includes('measure') && hid.includes('walk'), 'hiddenTools not stored'), req(b1 === h._b0 - 1, `palette buttons ${h._b0}→${b1} (measure group should vanish)`)]; } },
+    expect: async h => { const hid = await setting('hiddenTools')(h); const b1 = await h.page.locator('#palette .tool-btn').count(); return [req(hid.includes('measure') && hid.includes('walk'), 'hiddenTools not stored'), req(b1 === h._b0 - 2, `palette buttons ${h._b0}→${b1} (the Measure Lines and Walk buttons should vanish)`)]; } },
 
   { id: 'edit.nudge#select', title: 'Arrow key with the Select tool active (point selected)', invoke: async h => { await h.selectA('FRONT', 'SS_HEM'); await h.key('ArrowRight'); }, change: 'maybe',
     after: async (h, c, r) => { r.notes.push(c.changed ? 'arrow in Select moved the point' : 'arrow in Select did nothing (no status message: ' + JSON.stringify(c.rec.statuses.slice(-1)) + ')'); } },

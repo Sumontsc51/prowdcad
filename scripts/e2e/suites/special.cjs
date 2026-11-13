@@ -369,11 +369,15 @@ async function dragsHead(h, fixtures) {
     const n0 = pc(await h.state(), 'FRONT').internals.length; const r0 = await rev();
     await h.clickW(await h.local2world('PATCH', { x: 30, y: 45 }));
     await h.clickW(await h.local2world('FRONT', { x: 220, y: 100 }));
+    const once = (await rev()) - r0;
+    // clicking again two or three times must not make more copies
+    await h.clickW(await h.local2world('FRONT', { x: 220, y: 100 })); await h.clickW(await h.local2world('PATCH', { x: 30, y: 45 })); await h.clickW(await h.local2world('FRONT', { x: 220, y: 100 })); await h.clickW(await h.local2world('FRONT', { x: 220, y: 120 }));
     const st = await h.state(); const f = pc(st, 'FRONT'); const added = f.internals.slice(n0);
+    const patchInt = pc(st, 'PATCH').internals.length;
     const box = added.find(c => c.closed); const line = added.find(c => !c.closed);
     const xs = box ? box.points.map(p => Math.round(p.x)).sort((a, b) => a - b) : [], ys = box ? box.points.map(p => Math.round(p.y)).sort((a, b) => a - b) : [];
     return { got: `FRONT internals ${n0} → ${f.internals.length}; outline copy x ${xs} y ${ys}; inner line ${line ? line.points.map(p => `(${Q.r4(p.x)},${Q.r4(p.y)})`).join(' ') : 'none'}; ${(await rev()) - r0} undo step(s)`,
-      pass: added.length === 2 && JSON.stringify(xs) === '[80,80,180,180]' && JSON.stringify(ys) === '[200,200,260,260]' && !!line && near(line.points[0].x, 100, 0.01) && near(line.points[0].y, 230, 0.01) && (await rev()) - r0 === 1 };
+      pass: added.length === 2 && JSON.stringify(xs) === '[80,80,180,180]' && JSON.stringify(ys) === '[200,200,260,260]' && !!line && near(line.points[0].x, 100, 0.01) && near(line.points[0].y, 230, 0.01) && once === 1 && (await rev()) - r0 === 1 && patchInt === 1 };
   });
   await T('Internal line: clicking the last point a second time (slowly) ends the line', async () => {
     const n0 = pc(await h.state(), 'FRONT').internals.length; await h.key('i');
@@ -385,10 +389,12 @@ async function dragsHead(h, fixtures) {
     await h.key('w'); await h.clickA('FRONT', 'SS_HEM'); await h.clickA('BACK', 'BL');
     const rep = () => h.ev(async () => { const m = await import('/src/tools/walk.ts'); return m.walkRun ? m.walkRun() : null; });
     const r0 = await rep();
+    const real0 = await h.ev(() => window.__e2e.app.preview.size);
     await h.clickW(await h.along('BACK', 'TL', 'BL', 0.5)); const r1 = await rep();
     const s0 = JSON.stringify((await h.state()).pieces.map(p => p.layout));
     await h.key('Escape');
-    return { got: `stationary run ${r0 && Q.r4(r0)} → ${r1 && Q.r4(r1)}`, pass: r0 !== null && Math.abs(r0) < 1e-6 && r1 > 50 && s0 === JSON.stringify((await h.state()).pieces.map(p => p.layout)) };
+    const after = await h.ev(() => window.__e2e.app.preview.size);
+    return { got: `stationary run ${r0 && Q.r4(r0)} → ${r1 && Q.r4(r1)}; piece shown on the seam during the walk ${real0 === 1}; back in place after Esc ${after === 0}`, pass: r0 !== null && Math.abs(r0) < 1e-6 && r1 > 50 && real0 === 1 && after === 0 && s0 === JSON.stringify((await h.state()).pieces.map(p => p.layout)) };
   });
   await T('Trace Piece: lines picked in mixed order across an internal line make a new piece; the source is unchanged', async () => {
     await h.ev(() => { const E = window.__e2e, p = E.P('FRONT'); const mk = (x, y) => ({ id: 'p' + Math.random().toString(36).slice(2, 9), x, y, kind: 'grade', smooth: false, grade: {}, flags: {} }); E.app.doc.transact('yoke', () => { p.internals.push({ id: 'c' + Math.random().toString(36).slice(2, 9), type: 'internal', closed: false, points: [mk(260, 400), mk(0, 400)], style: 'solid' }); }); E.app.invalidate(); });
