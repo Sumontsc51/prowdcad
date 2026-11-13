@@ -357,6 +357,39 @@ async function dragsHead(h, fixtures) {
     const ys = c ? c.points.map(p => p.y) : [];
     return { got: `carried line shown ${carried}; BACK internals ${b.internals.length}; copy y ${ys.map(Q.r4)}`, pass: carried === 1 && !!c && ys.every(y => near(y, 350, 1.5)) };
   });
+  await T('Copy internal by overlay: click a small panel lying on a piece, then the piece: all the panel lines land there exactly', async () => {
+    // a 100 × 60 panel laid on FRONT with its corner at FRONT (80, 200)
+    await h.ev(() => { const E = window.__e2e; const f = E.P('FRONT'); const mk = (x, y) => ({ id: 'p' + Math.random().toString(36).slice(2, 9), x, y, kind: 'grade', smooth: false, grade: {}, flags: {} });
+      const np = JSON.parse(JSON.stringify(E.P('BACK'))); np.id = 'pc' + Math.random().toString(36).slice(2, 9); np.name = 'PATCH'; np.sew = { ...np.sew, id: 'c' + Math.random().toString(36).slice(2, 9), points: [mk(0, 0), mk(100, 0), mk(100, 60), mk(0, 60)] };
+      np.internals = [{ id: 'c' + Math.random().toString(36).slice(2, 9), type: 'internal', closed: false, points: [mk(20, 30), mk(80, 30)], style: 'solid' }]; np.notches = []; np.drills = []; np.texts = []; np.darts = []; np.pleats = []; np.connections = []; np.fullness = [];
+      np.grain = { a: { x: 20, y: 10 }, b: { x: 80, y: 10 }, gradeA: {}, gradeB: {} };
+      const w = E.localToWorld('FRONT', { x: 80, y: 200 }); np.layout = { x: w.x, y: w.y, angleDeg: 0 };
+      E.app.doc.transact('patch', st => { st.pieces.push(np); }); E.app.invalidate(); void f; });
+    await h.ev(() => { window.__e2e.settings.moveLineMode = 'copyTo'; }); await h.key('Shift+G');
+    const n0 = pc(await h.state(), 'FRONT').internals.length; const r0 = await rev();
+    await h.clickW(await h.local2world('PATCH', { x: 30, y: 45 }));
+    await h.clickW(await h.local2world('FRONT', { x: 220, y: 100 }));
+    const st = await h.state(); const f = pc(st, 'FRONT'); const added = f.internals.slice(n0);
+    const box = added.find(c => c.closed); const line = added.find(c => !c.closed);
+    const xs = box ? box.points.map(p => Math.round(p.x)).sort((a, b) => a - b) : [], ys = box ? box.points.map(p => Math.round(p.y)).sort((a, b) => a - b) : [];
+    return { got: `FRONT internals ${n0} → ${f.internals.length}; outline copy x ${xs} y ${ys}; inner line ${line ? line.points.map(p => `(${Q.r4(p.x)},${Q.r4(p.y)})`).join(' ') : 'none'}; ${(await rev()) - r0} undo step(s)`,
+      pass: added.length === 2 && JSON.stringify(xs) === '[80,80,180,180]' && JSON.stringify(ys) === '[200,200,260,260]' && !!line && near(line.points[0].x, 100, 0.01) && near(line.points[0].y, 230, 0.01) && (await rev()) - r0 === 1 };
+  });
+  await T('Internal line: clicking the last point a second time (slowly) ends the line', async () => {
+    const n0 = pc(await h.state(), 'FRONT').internals.length; await h.key('i');
+    await h.clickLocal('FRONT', { x: 60, y: 100 }); await h.page.waitForTimeout(700); await h.clickLocal('FRONT', { x: 60, y: 300 }); await h.page.waitForTimeout(900); await h.clickLocal('FRONT', { x: 60, y: 300 });
+    const f = pc(await h.state(), 'FRONT'); const c = f.internals[f.internals.length - 1];
+    return { got: `internals ${n0} → ${f.internals.length}; points ${c ? c.points.length : 0}`, pass: f.internals.length === n0 + 1 && c.points.length === 2 };
+  });
+  await T('Walk: point on piece 1, point on piece 2, then a click on the seam walks there', async () => {
+    await h.key('w'); await h.clickA('FRONT', 'SS_HEM'); await h.clickA('BACK', 'BL');
+    const rep = () => h.ev(async () => { const m = await import('/src/tools/walk.ts'); return m.walkRun ? m.walkRun() : null; });
+    const r0 = await rep();
+    await h.clickW(await h.along('BACK', 'TL', 'BL', 0.5)); const r1 = await rep();
+    const s0 = JSON.stringify((await h.state()).pieces.map(p => p.layout));
+    await h.key('Escape');
+    return { got: `stationary run ${r0 && Q.r4(r0)} → ${r1 && Q.r4(r1)}`, pass: r0 !== null && Math.abs(r0) < 1e-6 && r1 > 50 && s0 === JSON.stringify((await h.state()).pieces.map(p => p.layout)) };
+  });
   await T('Trace Piece: lines picked in mixed order across an internal line make a new piece; the source is unchanged', async () => {
     await h.ev(() => { const E = window.__e2e, p = E.P('FRONT'); const mk = (x, y) => ({ id: 'p' + Math.random().toString(36).slice(2, 9), x, y, kind: 'grade', smooth: false, grade: {}, flags: {} }); E.app.doc.transact('yoke', () => { p.internals.push({ id: 'c' + Math.random().toString(36).slice(2, 9), type: 'internal', closed: false, points: [mk(260, 400), mk(0, 400)], style: 'solid' }); }); E.app.invalidate(); });
     const s0 = JSON.stringify(pc(await h.state(), 'FRONT')); const n0 = (await h.state()).pieces.length; const r0 = await rev();

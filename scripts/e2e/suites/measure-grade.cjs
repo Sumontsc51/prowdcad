@@ -16,8 +16,8 @@ const mtab = h => h.ev(() => [...document.querySelectorAll('.fwin[data-win="mlin
 const num = t => parseFloat(String(t).replace(/[^\d.\-]/g, ''));
 /** hand calculation: kernel measureSegment of each listed segment per size */
 const hand = (h, segs) => h.ev(segs => { const E = window.__e2e; return E.app.sizeLine().sizes.map(s => ({ size: s.name, parts: segs.map(([p, a, b]) => E.segLen(p, a, b, s.id)) })); }, segs);
-const MSmod = h => h.ev(async () => { const m = await import('/src/panels/measure-table.ts'); return { groups: m.MS.groups.map(g => ({ name: g.name, parts: g.parts.map(p => ({ label: p.label, cut: !!p.cut, from: p.ref.from, to: p.ref.to })) })), history: m.MS.history.length }; });
-const resetMeasure = async h => { await h.ev(async () => { const m = await import('/src/panels/measure-table.ts'); m.MS.groups = []; m.MS.cur = -1; m.MS.history = []; m.MS.tol = null; m.MS.ease = 0; m.MS.diff = 'BA'; m.MS.mode = 'contour'; }); };
+const MSmod = h => h.ev(async () => { const m = await import('/src/panels/measure-table.ts'); return { closed: m.MS.closed, groups: m.MS.groups.map(g => ({ name: g.name, parts: g.parts.map(p => ({ label: p.label, cut: !!p.cut, from: p.ref.from, to: p.ref.to })) })), history: m.MS.history.length }; });
+const resetMeasure = async h => { await h.ev(async () => { const m = await import('/src/panels/measure-table.ts'); m.MS.groups = []; m.MS.cur = -1; m.MS.history = []; m.MS.tol = null; m.MS.ease = 0; m.MS.diff = 'BA'; m.MS.mode = 'contour'; m.MS.closed = 0; }); };
 const gcell = (h, size, axis) => h.page.locator(`.sg-wrap.gr input[data-size="${size}"][data-axis="${axis}"]`).first();
 async function typeInto(h, loc, text) { await loc.click({ clickCount: 3 }); await loc.fill(text); await loc.press('Enter'); await h.settle(60); }
 async function pasteInto(h, sel, text) {
@@ -46,8 +46,9 @@ const cases = [
         const got = num(r.cells['0:sum']?.t); if (!near(got, sum, 0.006)) errs.push(`${row.size} Σ ${got} ≠ hand ${sum.toFixed(3)}`);
       }
       const dprev = num(t[2].cells[':dprev']?.t ?? t[2].cells['undefined:dprev']?.t);
-      await h.key('Enter');
+      await h.key('Enter'); const mid = await MSmod(h); await h.key('Enter'); // first = done with group A, second = keep A on its own
       const st = await MSmod(h);
+      errs.push(req(mid.closed === 1 && mid.groups.length === 1, `the first Enter should only finish group A: ${JSON.stringify(mid)}`));
       errs.push(req(st.history === 1 && !st.groups.length, `Enter did not keep the measurement: ${JSON.stringify(st)}`));
       errs.push(req((await h.page.locator('text.m-label').count()) === 0, 'labels still drawn after OK'));
       h._note = `S Σ ${t[0].cells['0:sum'].t} · XL Σ ${t[3].cells['0:sum'].t} · Δprev(L) ${dprev}`;
@@ -85,14 +86,25 @@ const cases = [
 
   // ── B. comparison across two pieces with a difference column, A−B toggle, ease ± tolerance ──
   C('compare', {
-    title: 'Measure Line comparison: FRONT side seam (A) vs BACK side seam (B): Σ A, Σ B, B − A per size, A − B toggle, ease ± tol pass/fail',
+    title: 'Measure Lines comparison: FRONT side seam (A), right-click, BACK side seam (B), right-click: Σ A, Σ B, A − B per size, toggle, ease ± tol pass/fail',
     change: false, pre: resetMeasure,
     invoke: async h => { await h.key('m'); },
-    drive: async h => { await h.clickSeg('FRONT', 'SS_HEM', 'UA'); await h.clickSeg('BACK', 'BR', 'TR'); },
+    drive: async h => {
+      const rc = () => h.clickW({ x: 330, y: 300 }, { button: 'right' });
+      await h.clickSeg('FRONT', 'SS_HEM', 'UA'); await rc(); h._c1 = await MSmod(h);
+      await h.clickSeg('BACK', 'BR', 'TR'); await rc(); h._c2 = await MSmod(h);
+      h._diff = await h.ev(async () => (await import('/src/panels/measure-table.ts')).MS.diff);
+      h._spec = await h.page.locator('.fwin[data-win="mline"] [data-act="tospec"].disabled').count();
+      await h.page.locator('.fwin[data-win="mline"] [data-diff="BA"]').click(); await h.settle(60);
+    },
     expect: async h => {
       const errs = [];
       const st = await MSmod(h);
-      errs.push(req(st.groups.length === 2, 'a click on another piece should start group B: ' + JSON.stringify(st)));
+      errs.push(req(h._c1.closed === 1 && h._c1.groups.length === 1, 'right-click should finish group A: ' + JSON.stringify(h._c1)));
+      errs.push(req(h._c2.closed === 2 && h._c2.groups.length === 2, 'second right-click should show the comparison: ' + JSON.stringify(h._c2)));
+      errs.push(req(h._diff === 'AB', 'the comparison should open as A − B, got ' + h._diff));
+      errs.push(req(h._spec === 1, 'Add to spec should be inactive while two groups are compared'));
+      errs.push(req(st.groups.length === 2, 'two groups expected: ' + JSON.stringify(st)));
       const hc = await hand(h, [['FRONT', 'SS_HEM', 'UA'], ['BACK', 'BR', 'TR']]);
       let t = await mtab(h);
       for (const row of hc) {
@@ -117,14 +129,23 @@ const cases = [
     },
   }),
   C('compare-ctrl', {
-    title: 'Measure Line: Ctrl+click on the same piece forces a new group; groups can be renamed',
+    title: 'Measure Lines: a group takes lines from several pieces; two groups at most; a new line after the comparison starts blank; groups can be renamed',
     change: false, pre: resetMeasure,
     invoke: async h => { await h.key('m'); },
     drive: async h => {
-      await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); await h.clickSeg('FRONT', 'CF_NECK', 'CF_HEM', 0.5, { mods: ['Control'] });
+      const rc = () => h.clickW({ x: 330, y: 300 }, { button: 'right' });
+      await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); await h.clickSeg('BACK', 'BL', 'BR'); await rc();
+      await h.clickSeg('FRONT', 'CF_NECK', 'CF_HEM', 0.5); await h.clickSeg('BACK', 'BR', 'TR');
       const nm = h.page.locator('.fwin[data-win="mline"] input.m-gname[data-g="0"]'); await nm.click({ clickCount: 3 }); await nm.fill('Hem'); await nm.press('Enter'); await h.settle(60);
+      h._g = await MSmod(h); await rc(); h._done = await MSmod(h);
+      await h.clickSeg('FRONT', 'SS_HEM', 'UA'); h._fresh = await MSmod(h);
     },
-    expect: async h => { const st = await MSmod(h); return [req(st.groups.length === 2, 'Ctrl+click did not start a second group'), req(st.groups[0].name === 'Hem', 'group not renamed: ' + st.groups[0].name)]; },
+    expect: async h => [
+      req(h._g.groups.length === 2 && h._g.groups[0].parts.length === 2 && h._g.groups[1].parts.length === 2, 'each group should hold two lines from two pieces: ' + JSON.stringify(h._g)),
+      req(h._g.groups[0].name === 'Hem', 'group not renamed: ' + h._g.groups[0].name),
+      req(h._done.closed === 2, 'comparison not shown after the second right-click'),
+      req(h._fresh.closed === 0 && h._fresh.groups.length === 1 && h._fresh.groups[0].parts.length === 1, 'a new line after the comparison should start a blank measurement: ' + JSON.stringify(h._fresh)),
+    ],
   }),
 
   // ── nested view: each size row uses that size's geometry, other sizes' outlines are pickable ──
@@ -260,7 +281,7 @@ const cases = [
   C('by-measurement', {
     title: 'Grade by measurement: FRONT hem measured, spec column pasted (S 245 / M 260 / L 276 / XL 291), SS_HEM + UA solved in X → hem = spec ±0.01',
     pre: resetMeasure,
-    invoke: async h => { await h.key('m'); await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); await h.key('Enter'); await h.selectA('FRONT', 'SS_HEM'); await h.selectA('FRONT', 'UA', true); await h.cmd('grade.byMeasurement'); },
+    invoke: async h => { await h.key('m'); await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); await h.key('Enter'); await h.key('Enter'); await h.selectA('FRONT', 'SS_HEM'); await h.selectA('FRONT', 'UA', true); await h.cmd('grade.byMeasurement'); },
     drive: async h => {
       const w = h.page.locator('.fwin[data-win="gradefit"]');
       const opt = await w.locator('select.gf-meas option').nth(1).getAttribute('value');
