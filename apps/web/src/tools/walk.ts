@@ -15,7 +15,7 @@ import type { App } from '../app';
 import { ICON, type Tool } from './tool';
 import { anchorNear } from '../hitkit';
 import { ops } from '../ops-bridge';
-import { resolveFor, toWorld, toLocal, layoutOf } from '../geometry';
+import { resolveFor, toWorld, toLocal, layoutOf, dirToWorld, dirToLocal } from '../geometry';
 import { reportError } from '../commands';
 import { showDialog } from '../ui/dialog';
 import { fmt, unitLabel } from '../units-ui';
@@ -27,27 +27,70 @@ interface WalkUI {
   state?: WalkState;
   stepMm: number; ratio: number; skipDarts: boolean;
   rev: number;
+  /** angle between the two seams at the contact when the walk started (the direction the user gave the piece) */
+  delta?: number;
 }
 const W: WalkUI = { stepMm: 5, ratio: 1, skipDarts: true, rev: -1 };
 
 let hoverW: Vec | null = null;
-function reset(app: App) { W.moving = undefined; W.state = undefined; hoverW = null; app.cancelPreview(); app.invalidate('canvas', 'status'); }
+function reset(app: App) { W.moving = undefined; W.state = undefined; W.delta = undefined; hoverW = null; app.cancelPreview(); app.invalidate('canvas', 'status'); }
 
+/** point and unit tangent (contour-forward) of a walk side at its current arc position, piece-local */
+function sideAt(side: WalkState['stationary']): { p: Vec; t: Vec } {
+  const N = side.r.pts.length, cum = side.r.cum; const tot = cum[cum.length - 1] || 1;
+  const sv = ((side.s % tot) + tot) % tot;
+  let j = 0; while (j < cum.length - 2 && cum[j + 1] < sv) j++;
+  const a = side.r.pts[j % N], b = side.r.pts[(j + 1) % N]; const l = cum[j + 1] - cum[j];
+  const u = l > 1e-12 ? (sv - cum[j]) / l : 0; const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  return { p: { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u }, t: { x: (b.x - a.x) / d, y: (b.y - a.y) / d } };
+}
+const rot = (v: Vec, a: number): Vec => ({ x: v.x * Math.cos(a) - v.y * Math.sin(a), y: v.x * Math.sin(a) + v.y * Math.cos(a) });
+/**
+ * Where the moving piece is shown (world): its contact point lies on the stationary contact point and it keeps
+ * the direction the user gave it on the sheet (rotation and flip of its own placement). While it walks it rolls
+ * along the seam from that direction: the angle between the two seams at the contact stays what it was at the start.
+ */
+function placement(app: App): { ang: number; o: Vec; toWorld: (q: Vec) => Vec; toLocal: (w: Vec) => Vec } | null {
+  const st = W.state; if (!st) return null;
+  const stat = app.doc.style.pieces.find(x => x.id === st.stationary.pieceId), mv = app.doc.style.pieces.find(x => x.id === st.moving.pieceId);
+  if (!stat || !mv) return null;
+  const m = sideAt(st.moving), c = sideAt(st.stationary);
+  const angOf = (v: Vec) => Math.atan2(v.y, v.x);
+  const tm = dirToWorld(mv, m.t), ts = dirToWorld(stat, c.t);
+  if (W.delta === undefined) W.delta = angOf(tm) - angOf(ts); // the seam angle the user set, kept through the walk
+  const ang = angOf(ts) + W.delta - angOf(tm);
+  const cw = toWorld(stat, c.p);
+  const lin = (v: Vec) => rot(dirToWorld(mv, v), ang);
+  const mo = lin(m.p); const o = { x: cw.x - mo.x, y: cw.y - mo.y };
+  return { ang, o, toWorld: q => { const v = lin(q); return { x: o.x + v.x, y: o.y + v.y }; }, toLocal: w => dirToLocal(mv, rot({ x: w.x - o.x, y: w.y - o.y }, -ang)) };
+}
 /**
  * Show the moving piece ITSELF at its walked position (seam allowance, notches, labels and all), as a live
  * preview: nothing is written to the document, and the piece is back in its own place when the walk ends.
  */
 function showMoving(app: App) {
-  const st = W.state; if (!st) return;
-  const stat = app.doc.style.pieces.find(x => x.id === st.stationary.pieceId), mv = app.doc.style.pieces.find(x => x.id === st.moving.pieceId);
-  if (!stat || !mv) return;
-  const f = (q: Vec) => toWorld(stat, ops.applyTransform(st.transform, q));
-  const o = f({ x: 0, y: 0 }), ex = f({ x: 1, y: 0 }), ey = f({ x: 0, y: 1 });
-  const ux = { x: ex.x - o.x, y: ex.y - o.y }, uy = { x: ey.x - o.x, y: ey.y - o.y };
-  const flip = ux.x * uy.y - ux.y * uy.x < 0;
+  const st = W.state; const pl = placement(app); if (!st || !pl) return;
+  const mv = app.doc.piece(st.moving.pieceId); const L = layoutOf(mv);
   app.preview.delete(mv.id);
-  app.beginPreview(mv.id).layout = { x: o.x, y: o.y, angleDeg: Math.atan2(ux.y, ux.x) * 180 / Math.PI, ...(flip ? { flipY: true } : {}) };
+  app.beginPreview(mv.id).layout = { ...L, x: pl.o.x, y: pl.o.y, angleDeg: (L.angleDeg ?? 0) + pl.ang * 180 / Math.PI };
   app.invalidate('canvas');
+}
+/**
+ * End the walk and leave the moving piece where the walk put it, so the two pieces can be matched or adjusted
+ * there. Only its place on the sheet changes (one undo step; Ctrl+Z puts it back); the pattern is not touched.
+ */
+function finish(app: App): boolean {
+  const st = W.state; let kept = false;
+  if (st) {
+    const pv = app.preview.get(st.moving.pieceId); const mv = app.doc.style.pieces.find(x => x.id === st.moving.pieceId);
+    if (pv?.layout && mv && !mv.locked && JSON.stringify(pv.layout) !== JSON.stringify(layoutOf(mv))) {
+      const L = { ...pv.layout };
+      app.preview.clear();
+      try { app.doc.transact('Walk: place piece', () => { app.doc.piece(mv.id).layout = L; }); kept = true; } catch (err) { reportError(err, 'Walk'); }
+    }
+  }
+  reset(app);
+  return kept;
 }
 /** arc distance from the walk start to the point of a side's contour nearest to local point `l` (in the walk direction), and how far `l` is from it */
 function alongSide(side: WalkState['stationary'], l: Vec): { dist: number; off: number; tot: number } {
@@ -90,6 +133,13 @@ function start(app: App, stat: { pieceId: string; anchorId: string }) {
       options: { skipDarts: W.skipDarts, step: W.stepMm, walkRatio: W.ratio },
     });
     W.rev = app.doc.revision();
+    // walk the way the pieces lie: the moving seam is followed in the direction that runs with the stationary one
+    {
+      const st = W.state; const stat = app.doc.piece(st.stationary.pieceId), mvp = app.doc.piece(st.moving.pieceId);
+      const a = dirToWorld(mvp, sideAt(st.moving).t), b = dirToWorld(stat, sideAt(st.stationary).t);
+      if ((a.x * b.x + a.y * b.y) * st.moving.dir * st.stationary.dir < 0) W.state = ops.flipDirection(st, 'moving');
+    }
+    W.delta = undefined;
     showMoving(app);
     app.status(`Placed on the point · now click along the seam to walk there · ${hud()}`);
   } catch (err) { reportError(err, 'Walk'); reset(app); }
@@ -107,16 +157,17 @@ function drop(app: App, which: 'both' | 'stationary' | 'moving') {
 }
 
 /** World point of a moving-piece local point under the walk transform (walk works in piece-local frames; we place the moving piece relative to the stationary piece's layout). */
-function movingToWorld(app: App, stat: Piece, p: Vec): Vec {
-  return toWorld(stat, ops.applyTransform(W.state!.transform, p));
+function movingToWorld(app: App, _stat: Piece, p: Vec): Vec {
+  const pl = placement(app);
+  return pl ? pl.toWorld(p) : p;
 }
 
 export const walkTool: Tool = {
   id: 'walk', title: 'Walk pieces', group: 'walk', hotkey: 'W', icon: ICON.walk, cursor: 'crosshair',
   activate(app) { reset(app); },
-  deactivate(app) { reset(app); },
+  deactivate(app) { finish(app); },
   busy: () => !!W.moving,
-  hint: () => W.state ? hud() + ' · click the seam = walk to there · arrows/wheel step · N notch · F/G/B flip · [ ] step · R ratio · K darts · Esc end'
+  hint: () => W.state ? hud() + ' · click the seam = walk to there · arrows/wheel step · N notch · F/G/B flip · [ ] step · R ratio · K darts · Esc = end (the piece stays here)'
     : W.moving ? 'Walk: click the point on the second piece (it stays): the first piece is placed onto it' : 'Walk: click a point on the first piece (the one that walks)',
   down(app, p) {
     if (W.state) {
@@ -125,10 +176,9 @@ export const walkTool: Tool = {
       if (st.stationary.r.pts.length < 2 || st.moving.r.pts.length < 2) return;
       const l = toLocal(stat, p.w);
       const a = alongSide(st.stationary, l);
-      // the moving piece is drawn through the walk transform: bring the click back into its own frame
-      const t = st.transform; const c = Math.cos(-t.rotateRad), sn = Math.sin(-t.rotateRad);
-      const q = { x: l.x - t.translate.x - t.about.x, y: l.y - t.translate.y - t.about.y };
-      const b = alongSide(st.moving, { x: t.about.x + q.x * c - q.y * sn, y: t.about.y + q.x * sn + q.y * c });
+      // the moving piece is shown where the walk put it: bring the click back into its own frame
+      const pl = placement(app);
+      const b = pl ? alongSide(st.moving, pl.toLocal(p.w)) : { dist: 0, off: Infinity, tot: 1 };
       const useMoving = b.off < a.off;
       const hit = useMoving ? b : a;
       if (hit.off * app.view.scale > 25) { app.status('Walk: click on (or near) a seam line to walk there · arrows / wheel step · Esc = end'); return; }
@@ -156,7 +206,7 @@ export const walkTool: Tool = {
   },
   key(app, e) {
     if (!W.moving && !W.state) return false;
-    if (e.key === 'Escape') { reset(app); app.status('Walk ended'); return true; }
+    if (e.key === 'Escape') { const kept = finish(app); app.status(kept ? 'Walk ended · the piece stays at its last walk position, so you can match or adjust there (Ctrl+Z puts it back)' : 'Walk ended'); return true; }
     if (!W.state) return false;
     const k = e.shiftKey ? 10 : e.altKey ? 0.1 : 1;
     switch (e.key) {
