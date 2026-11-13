@@ -30,7 +30,38 @@ interface WalkUI {
 }
 const W: WalkUI = { stepMm: 5, ratio: 1, skipDarts: true, rev: -1 };
 
-function reset(app: App) { W.moving = undefined; W.state = undefined; app.invalidate('canvas', 'status'); }
+let hoverW: Vec | null = null;
+function reset(app: App) { W.moving = undefined; W.state = undefined; hoverW = null; app.cancelPreview(); app.invalidate('canvas', 'status'); }
+
+/**
+ * Show the moving piece ITSELF at its walked position (seam allowance, notches, labels and all), as a live
+ * preview: nothing is written to the document, and the piece is back in its own place when the walk ends.
+ */
+function showMoving(app: App) {
+  const st = W.state; if (!st) return;
+  const stat = app.doc.style.pieces.find(x => x.id === st.stationary.pieceId), mv = app.doc.style.pieces.find(x => x.id === st.moving.pieceId);
+  if (!stat || !mv) return;
+  const f = (q: Vec) => toWorld(stat, ops.applyTransform(st.transform, q));
+  const o = f({ x: 0, y: 0 }), ex = f({ x: 1, y: 0 }), ey = f({ x: 0, y: 1 });
+  const ux = { x: ex.x - o.x, y: ex.y - o.y }, uy = { x: ey.x - o.x, y: ey.y - o.y };
+  const flip = ux.x * uy.y - ux.y * uy.x < 0;
+  app.preview.delete(mv.id);
+  app.beginPreview(mv.id).layout = { x: o.x, y: o.y, angleDeg: Math.atan2(ux.y, ux.x) * 180 / Math.PI, ...(flip ? { flipY: true } : {}) };
+  app.invalidate('canvas');
+}
+/** arc distance from the walk start to the point of a side's contour nearest to local point `l` (in the walk direction), and how far `l` is from it */
+function alongSide(side: WalkState['stationary'], l: Vec): { dist: number; off: number; tot: number } {
+  const N = side.r.pts.length; const cum = side.r.cum; const tot = cum[cum.length - 1] || 1;
+  let bs = 0, bd = Infinity;
+  for (let j = 0; j < N; j++) {
+    const a = side.r.pts[j], b = side.r.pts[(j + 1) % N]; const ab = { x: b.x - a.x, y: b.y - a.y }; const l2 = ab.x * ab.x + ab.y * ab.y;
+    const t = l2 < 1e-12 ? 0 : Math.max(0, Math.min(1, ((l.x - a.x) * ab.x + (l.y - a.y) * ab.y) / l2));
+    const d = Math.hypot(a.x + ab.x * t - l.x, a.y + ab.y * t - l.y);
+    if (d < bd) { bd = d; bs = cum[j] + t * Math.sqrt(l2); }
+  }
+  const s0 = side.s - side.run * side.dir;
+  return { dist: (((bs - s0) * side.dir) % tot + tot) % tot, off: bd, tot };
+}
 
 function hud(): string {
   const st = W.state; if (!st) return '';
@@ -44,6 +75,7 @@ function step(app: App, mult: number) {
     if (W.rev !== app.doc.revision()) { W.state = ops.refreshWalk(app.doc, W.state); W.rev = app.doc.revision(); }
     W.state = ops.walkStep(W.state, W.stepMm * mult);
   } catch (err) { reportError(err, 'Walk'); }
+  showMoving(app);
   app.status(hud()); app.invalidate('canvas');
 }
 
@@ -58,7 +90,8 @@ function start(app: App, stat: { pieceId: string; anchorId: string }) {
       options: { skipDarts: W.skipDarts, step: W.stepMm, walkRatio: W.ratio },
     });
     W.rev = app.doc.revision();
-    app.status(hud());
+    showMoving(app);
+    app.status(`Placed on the point · now click along the seam to walk there · ${hud()}`);
   } catch (err) { reportError(err, 'Walk'); reset(app); }
   app.invalidate('canvas');
 }
@@ -68,6 +101,7 @@ function drop(app: App, which: 'both' | 'stationary' | 'moving') {
   try {
     const r = ops.dropNotch(app.doc, W.state, which);
     W.state = ops.refreshWalk(app.doc, W.state); W.rev = app.doc.revision();
+    showMoving(app);
     app.status(`Walk notch dropped (${[r.stationary && 'stationary', r.moving && 'moving'].filter(Boolean).join(' + ')}) · ${hud()}`);
   } catch (err) { reportError(err, 'Drop notch'); }
 }
@@ -78,7 +112,7 @@ function movingToWorld(app: App, stat: Piece, p: Vec): Vec {
 }
 
 export const walkTool: Tool = {
-  id: 'walk', title: 'Walk pieces', group: 'measure', hotkey: 'W', icon: ICON.walk, cursor: 'crosshair',
+  id: 'walk', title: 'Walk pieces', group: 'walk', hotkey: 'W', icon: ICON.walk, cursor: 'crosshair',
   activate(app) { reset(app); },
   deactivate(app) { reset(app); },
   busy: () => !!W.moving,
@@ -86,25 +120,25 @@ export const walkTool: Tool = {
     : W.moving ? 'Walk: click the point on the second piece (it stays): the first piece is placed onto it' : 'Walk: click a point on the first piece (the one that walks)',
   down(app, p) {
     if (W.state) {
-      // click on the stationary seam: the moving piece walks along the seam up to the click
+      // click on a seam (the stationary one, or the moving piece's own): the moving piece walks up to the click
       const st = W.state; const stat = app.doc.style.pieces.find(x => x.id === st.stationary.pieceId); if (!stat) return;
-      const side = st.stationary; const N = side.r.pts.length; if (N < 2) return;
-      const l = toLocal(stat, p.w); const cum = side.r.cum; const tot = cum[cum.length - 1] || 1;
-      let bs = 0, bd = Infinity;
-      for (let j = 0; j < N; j++) {
-        const a = side.r.pts[j], b = side.r.pts[(j + 1) % N]; const ab = { x: b.x - a.x, y: b.y - a.y }; const l2 = ab.x * ab.x + ab.y * ab.y;
-        const t = l2 < 1e-12 ? 0 : Math.max(0, Math.min(1, ((l.x - a.x) * ab.x + (l.y - a.y) * ab.y) / l2));
-        const d = Math.hypot(a.x + ab.x * t - l.x, a.y + ab.y * t - l.y);
-        if (d < bd) { bd = d; bs = cum[j] + t * Math.sqrt(l2); }
-      }
-      if (bd * app.view.scale > 25) { app.status('Walk: click on (or near) the seam line of the stationary piece to walk there · arrows / wheel step'); return; }
-      const s0 = side.s - side.run * side.dir;
-      let dist = (((bs - s0) * side.dir) % tot + tot) % tot;
+      if (st.stationary.r.pts.length < 2 || st.moving.r.pts.length < 2) return;
+      const l = toLocal(stat, p.w);
+      const a = alongSide(st.stationary, l);
+      // the moving piece is drawn through the walk transform: bring the click back into its own frame
+      const t = st.transform; const c = Math.cos(-t.rotateRad), sn = Math.sin(-t.rotateRad);
+      const q = { x: l.x - t.translate.x - t.about.x, y: l.y - t.translate.y - t.about.y };
+      const b = alongSide(st.moving, { x: t.about.x + q.x * c - q.y * sn, y: t.about.y + q.x * sn + q.y * c });
+      const useMoving = b.off < a.off;
+      const hit = useMoving ? b : a;
+      if (hit.off * app.view.scale > 25) { app.status('Walk: click on (or near) a seam line to walk there · arrows / wheel step · Esc = end'); return; }
+      const ratio = st.options.walkRatio || 1;
+      let dist = useMoving ? hit.dist / ratio : hit.dist; const tot = useMoving ? hit.tot / ratio : hit.tot;
       try {
         let cur = st;
         // a fresh walk goes the shorter way round to the click
-        if (Math.abs(side.run) < 1e-6 && dist > tot / 2) { cur = ops.flipDirection(st, 'both'); dist = tot - dist; }
-        W.state = ops.walkTo(cur, dist); app.status(`Walked to the click · ${hud()}`);
+        if (Math.abs(st.stationary.run) < 1e-6 && dist > tot / 2) { cur = ops.flipDirection(st, 'both'); dist = tot - dist; }
+        W.state = ops.walkTo(cur, dist); showMoving(app); app.status(`Walked to the click · ${hud()}`);
       } catch (err) { reportError(err, 'Walk'); }
       app.invalidate('canvas'); return;
     }
@@ -113,6 +147,7 @@ export const walkTool: Tool = {
     if (!W.moving) { W.moving = { pieceId: h.piece.id, anchorId: h.anchor.id }; app.invalidate('canvas', 'status'); return; }
     start(app, { pieceId: h.piece.id, anchorId: h.anchor.id });
   },
+  move(app, p) { if (W.moving && !W.state) { const h = anchorNear(app, p.w, { contour: 'sew' }); hoverW = h ? h.world : p.w; app.invalidate('canvas'); } },
   wheel(app, e) {
     if (!W.state || e.ctrlKey) return false;
     const k = e.shiftKey ? 10 : e.altKey ? 0.1 : 1;
@@ -132,13 +167,13 @@ export const walkTool: Tool = {
     }
     switch (e.key.toLowerCase()) {
       case 'n': drop(app, e.shiftKey ? 'stationary' : e.altKey ? 'moving' : 'both'); return true;
-      case 'f': W.state = ops.flipDirection(W.state, 'moving'); app.status(hud()); app.invalidate('canvas'); return true;
-      case 'g': W.state = ops.flipDirection(W.state, 'stationary'); app.status(hud()); app.invalidate('canvas'); return true;
-      case 'b': W.state = ops.flipDirection(W.state, 'both'); app.status(hud()); app.invalidate('canvas'); return true;
+      case 'f': W.state = ops.flipDirection(W.state, 'moving'); showMoving(app); app.status(hud()); app.invalidate('canvas'); return true;
+      case 'g': W.state = ops.flipDirection(W.state, 'stationary'); showMoving(app); app.status(hud()); app.invalidate('canvas'); return true;
+      case 'b': W.state = ops.flipDirection(W.state, 'both'); showMoving(app); app.status(hud()); app.invalidate('canvas'); return true;
       case 'k': {
         W.skipDarts = !W.skipDarts;
         const st = W.state; W.state = { ...st, options: { ...st.options, skipDarts: W.skipDarts } };
-        W.state = ops.refreshWalk(app.doc, W.state); app.status(hud()); return true;
+        W.state = ops.refreshWalk(app.doc, W.state); showMoving(app); app.status(hud()); return true;
       }
       case 's': void (async () => {
         const r = await showDialog({ title: 'Walk step', fields: [{ kind: 'length', key: 'v', label: 'Step (arrow / wheel)', value: W.stepMm, min: 0.001 }] });
@@ -146,11 +181,11 @@ export const walkTool: Tool = {
       })(); return true;
       case 'r': void (async () => {
         const r = await showDialog({ title: 'Walk ratio', message: 'Moving advances ratio × the stationary step (ease / gathering).', fields: [{ kind: 'number', key: 'v', label: 'Ratio', value: W.ratio, min: 0.01 }] });
-        if (r && W.state) { W.ratio = r.v as number; W.state = ops.setWalkRatio(W.state, W.ratio); app.status(hud()); }
+        if (r && W.state) { W.ratio = r.v as number; W.state = ops.setWalkRatio(W.state, W.ratio); showMoving(app); app.status(hud()); }
       })(); return true;
       case 't': void (async () => {
         const r = await showDialog({ title: 'Walk to', fields: [{ kind: 'length', key: 'v', label: 'Stationary distance', value: ops.walkReport(W.state!).stationary }] });
-        if (r && W.state) { W.state = ops.walkTo(W.state, r.v as number); app.status(hud()); app.invalidate('canvas'); }
+        if (r && W.state) { W.state = ops.walkTo(W.state, r.v as number); showMoving(app); app.status(hud()); app.invalidate('canvas'); }
       })(); return true;
     }
     return false;
@@ -160,7 +195,12 @@ export const walkTool: Tool = {
     if (W.moving && !W.state) {
       const pc = app.doc.style.pieces.find(x => x.id === W.moving!.pieceId);
       const i = pc ? pc.sew.points.findIndex(a => a.id === W.moving!.anchorId) : -1;
-      if (pc && i >= 0) s += screenMarker(app.view.toScreen(toWorld(pc, resolveFor(app.doc, pc, app.sizeOf(pc)).sew.anchorPos[i])), 'square', '#ff9f1a', 6);
+      if (pc && i >= 0) {
+        const a = app.view.toScreen(toWorld(pc, resolveFor(app.doc, pc, app.sizeOf(pc)).sew.anchorPos[i]));
+        s += screenMarker(a, 'square', '#ff9f1a', 6);
+        // rubber band to the cursor: where this point will be placed
+        if (hoverW) { const b = app.view.toScreen(hoverW); s += `<path d="M${fs(a.x)} ${fs(a.y)}L${fs(b.x)} ${fs(b.y)}" stroke="#e03131" stroke-width="1.4" data-walk-band="1"/>`; }
+      }
     }
     const st = W.state; if (!st) return s;
     const stat = app.doc.style.pieces.find(x => x.id === st.stationary.pieceId);
@@ -169,9 +209,8 @@ export const walkTool: Tool = {
     // ghost of the moving piece placed by the walk transform (in the stationary piece's frame)
     const r = resolveFor(app.doc, mv, st.sizeId);
     const path = (pts: Vec[], closed: boolean) => pts.map((q, i) => { const w = app.view.toScreen(movingToWorld(app, stat, q)); return `${i ? 'L' : 'M'}${fs(w.x)} ${fs(w.y)}`; }).join('') + (closed ? 'Z' : '');
-    s += `<path d="${path(r.sew.pts, true)}" fill="rgba(255,159,26,0.10)" stroke="#ff9f1a" stroke-width="1.6"/>`;
-    for (const ic of r.internals) s += `<path d="${path(ic.pts, ic.closed)}" fill="none" stroke="#ff9f1a" stroke-width="0.9" opacity="0.7"/>`;
-    if (r.cut.length > 2) s += `<path d="${path(r.cut, true)}" fill="none" stroke="#ff9f1a" stroke-width="0.8" stroke-dasharray="4 3" opacity="0.7"/>`;
+    // the piece itself is drawn at its walked position (live preview); this only tints its outline
+    s += `<path d="${path(r.sew.pts, true)}" fill="rgba(255,159,26,0.06)" stroke="#ff9f1a" stroke-width="1.2" data-walk-ghost="1"/>`;
     const rep = ops.walkReport(st);
     const sp = app.view.toScreen(toWorld(stat, rep.stationaryPoint));
     s += screenMarker(sp, 'circle', '#d6309b', 5);

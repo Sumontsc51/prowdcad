@@ -234,7 +234,11 @@ function measureTwo(app: App, a: MPt, b: MPt) {
   if (a.ref && b.ref && a.ref.pieceId === b.ref.pieceId) {
     const pc = app.doc.piece(a.ref.pieceId); const line = app.doc.sizeLine(pc);
     const rows = app.doc.sizesOf(pc).map(sid => { const m = ops.measureXY(app.doc, a.ref!, b.ref!, sid); return [line.sizes.find(s => s.id === sid)?.name ?? sid, fmt(m.distance), fmt(m.dx), fmt(m.dy), m.angleDeg.toFixed(2) + '°']; });
-    showTable(`Measure — ${pc.name}`, ['Size', 'Straight', 'dX', 'dY', 'Angle'], rows, result);
+    showTable(`Measure Distance — ${pc.name}`, ['Size', 'Straight', 'dX', 'dY', 'Angle'], rows, result);
+  } else {
+    // points on two pieces, or free points on the sheet: the distance as it lies on the sheet
+    const dx = b.w.x - a.w.x, dy = b.w.y - a.w.y;
+    showTable('Measure Distance', ['', 'Straight', 'dX', 'dY', 'Angle'], [['On the sheet', fmt(Math.hypot(dx, dy)), fmt(dx), fmt(dy), (Math.atan2(dy, dx) * 180 / Math.PI).toFixed(2) + '°']], result);
   }
 }
 function measureAngle3(app: App, [a, v, b]: MPt[]) {
@@ -360,6 +364,10 @@ export const measureTool: Tool = {
     for (const q of pts) s += screenMarker(app.view.toScreen(q.w), 'circle', '#ff9f1a', 3);
     if (!angleMode && chain.length === 2) {
       const a = app.view.toScreen(chain[0]), b = app.view.toScreen(chain[1]);
+      // dX / dY legs of the measured distance
+      s += `<path d="M${fs(a.x)} ${fs(a.y)}L${fs(b.x)} ${fs(a.y)}L${fs(b.x)} ${fs(b.y)}" fill="none" stroke="#ff9f1a" stroke-width="1" stroke-dasharray="3 3" opacity="0.7"/>`
+        + `<text x="${fs((a.x + b.x) / 2)}" y="${fs(a.y + 14)}" class="tool-note" text-anchor="middle">dX ${fmt(chain[1].x - chain[0].x)}</text>`
+        + `<text x="${fs(b.x + 6)}" y="${fs((a.y + b.y) / 2)}" class="tool-note">dY ${fmt(chain[1].y - chain[0].y)}</text>`;
       s += `<text x="${fs((a.x + b.x) / 2 + 6)}" y="${fs((a.y + b.y) / 2 - 6)}" class="tool-note">${fmt(Math.hypot(chain[1].x - chain[0].x, chain[1].y - chain[0].y))} ${unitLabel()}</text>`;
     }
     return s;

@@ -33,5 +33,5 @@ export const TOOLS: Tool[] = [
 ];
 
 export const GROUP_TITLES: Record<string, string> = {
-  select: 'Select', movepoint: 'Move Point', moveline: 'Move / Copy Line', curve: 'Curve / Handle', rotate: 'Rotate', grain: 'Grain / Flip', measuredist: 'Measure Distance', pen: 'Internal line', smooth: 'Smooth run', trace: 'Trace Piece', shape: 'Shapes', seam: 'Seam', marks: 'Notch / Drill / Text', cutpoint: 'Cut Point', live: 'Dart / Pleat', cut: 'Cut / Trace', measure: 'Measure / Walk', view: 'Navigate',
+  select: 'Select', movepoint: 'Move Point', moveline: 'Move / Copy Line', curve: 'Curve / Handle', rotate: 'Rotate', grain: 'Grain / Flip', measuredist: 'Measure Distance', walk: 'Walk pieces', pen: 'Internal line', smooth: 'Smooth run', trace: 'Trace Piece', shape: 'Shapes', seam: 'Seam', marks: 'Notch / Drill / Text', cutpoint: 'Cut Point', live: 'Dart / Pleat', cut: 'Cut / Trace', measure: 'Measure / Walk', view: 'Navigate',
 };

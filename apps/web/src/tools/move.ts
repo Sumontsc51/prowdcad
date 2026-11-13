@@ -836,17 +836,22 @@ function mlPastePanel(app: App, target: Piece): boolean {
   const f = (q: Vec) => toLocal(target, toWorld(src, q));
   const o = f({ x: 0, y: 0 }), ex = f({ x: 1, y: 0 }), ey = f({ x: 0, y: 1 });
   const m = { a: ex.x - o.x, b: ex.y - o.y, c: ey.x - o.x, d: ey.y - o.y, e: o.x, f: o.y };
-  const lines = [src.sew, ...src.internals.filter(c => c.type !== 'dartAxis' && c.type !== 'pleatAxis')].map(c => c.id);
+  // a line that is already on the target at exactly this place is not copied a second time
+  const at = (q: Vec) => ({ x: m.a * q.x + m.c * q.y + m.e, y: m.b * q.x + m.d * q.y + m.f });
+  const there = (c: Contour) => target.internals.some(t => t.closed === c.closed && t.points.length === c.points.length && t.points.every((tp, k) => { const q = at(c.points[k]); return Math.hypot(tp.x - q.x, tp.y - q.y) < 0.01; }));
+  const all = [src.sew, ...src.internals.filter(c => c.type !== 'dartAxis' && c.type !== 'pleatAxis')];
+  const lines = all.filter(c => !there(c)).map(c => c.id);
+  ML.panel = null; // one copy per pick: pick the panel again to copy it somewhere else
+  if (!lines.length) { app.status(`The lines of “${src.name}” are already on “${target.name}” at this place: nothing copied`); toast('Already copied here', 'warn'); app.invalidate(); return false; }
   const ok = commitWith(app, [src.id, target.id], 'Copy panel lines', d => { for (const cid of lines) ops.copyLineTo(d, { pieceId: src.id, contourId: cid }, target.id, m); });
-  if (ok) { app.status(`${lines.length} line${lines.length > 1 ? 's' : ''} of “${src.name}” copied onto “${target.name}” as internal lines, where the panel lies · click another piece to copy again · Esc = done`); app.applySel({ k: 'piece', pieceId: target.id }, 'replace'); }
+  if (ok) { app.status(`${lines.length} line${lines.length > 1 ? 's' : ''} of “${src.name}” copied once onto “${target.name}” as internal lines, where the panel lies · click the panel again to copy it elsewhere`); app.applySel({ k: 'piece', pieceId: target.id }, 'replace'); }
   app.invalidate();
   return ok;
 }
-/** the pieces under a point, top candidate first */
+/** every visible piece whose outline contains the point (overlapping pieces all count) */
 function piecesAt(app: App, w: Vec): Piece[] {
-  const ids: Id[] = [];
-  for (const c of candidatesAt(app, w, 'all', { kinds: ['piece', 'segment'] })) { const id = c.item.k === 'piece' ? c.item.pieceId : (c.item as { seg: SegSel }).seg.pieceId; if (!ids.includes(id)) ids.push(id); }
-  return ids.map(id => app.doc.piece(id));
+  const inside = (poly: Vec[], q: Vec) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const a = poly[i], b = poly[j]; if ((a.y > q.y) !== (b.y > q.y) && q.x < (b.x - a.x) * (q.y - a.y) / (b.y - a.y) + a.x) c = !c; } return c; };
+  return app.doc.style.pieces.filter(p => { if (app.hiddenPieces.has(p.id)) return false; try { return inside(resolveFor(app.doc, p, app.sizeOf(p)).sew.pts, toLocal(p, w)); } catch { return false; } });
 }
 async function mlCarryStart(app: App, w: Vec) {
   const pk = ML.pick!; const pts = mlWorld(app, pk); if (pts.length < 2) return;
@@ -954,7 +959,9 @@ export const moveLineTool: Tool = {
       // off the lines, inside a piece: the whole panel is picked
       // where pieces overlap, the smallest one under the cursor is the panel
       const area = (q: Piece) => { const b = pieceWorldBox(app.doc, q, app.sizeOf(q)); return (b.maxX - b.minX) * (b.maxY - b.minY); };
-      const pc0 = piecesAt(app, p.w).sort((x, y) => area(x) - area(y))[0];
+      const under = piecesAt(app, p.w);
+      if (under.length === 1) { app.status('Copy internal: click inside the small panel where it lies on another piece (or click one line to copy just that line)'); return; }
+      const pc0 = under.sort((x, y) => area(x) - area(y))[0];
       if (pc0) { ML.panel = pc0.id; ML.pick = null; app.applySel({ k: 'piece', pieceId: pc0.id }, 'replace'); app.status(`Panel “${pc0.name}” picked with all its lines: now click the piece it lies on`); app.invalidate(); return; }
     }
     if (!c) { app.status('Nothing to pick here: click a segment or an internal line'); return; }
