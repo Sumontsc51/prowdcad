@@ -40,7 +40,7 @@ export function registerCutPiece(app: App) {
   const tx = (label: string, fn: () => void) => app.doc.transact(label, fn);
 
   // ───────────── Cut menu ─────────────
-  registerCommand({ id: 'cut.slash', title: 'Slash tool', menu: 'Cut', group: 0, run: () => app.setTool('slash') });
+  registerCommand({ id: 'cut.slash', title: 'Cut / Merge Piece tool', menu: 'Cut', group: 0, run: () => app.setTool('slash') });
   registerCommand({ id: 'cut.alongInternal', title: 'Cut along internal…', menu: 'Cut', group: 0, run: async () => {
     const { piece, contour } = await internalOrPick(app, 'Click the internal line to cut along');
     const o = await slashOpts(app, `Cut ${piece.name} along internal`, piece.id); if (!o) return;

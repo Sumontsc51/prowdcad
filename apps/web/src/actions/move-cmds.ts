@@ -9,7 +9,7 @@ import { settings, saveSettings, type SelFilter } from '../settings';
 import { showDialog } from '../ui/dialog';
 import { FILTERS } from '../selpick';
 import { setSelFilter } from '../tools/select';
-import { flipPieces, type MPMode } from '../tools/move';
+import { flipPieces, grainToHorizontal, pieceToGrain, type MPMode } from '../tools/move';
 import { resolveFor } from '../geometry';
 import { segmentIds } from '../hitkit';
 import { notchesFor } from '../canvas/render';
@@ -42,6 +42,7 @@ export function registerMoveCmds(app: App) {
   registerCommand({ id: 'move.curve', title: 'Curve / Handle tool', menu: 'Segment/Modify Line', checked: () => app.tool?.id === 'curve', run: () => app.setTool('curve') });
 
   // ───── Piece ▸ Modify Piece ─────
+  const selPieceIds = () => app.sel.pieces.filter(id => !app.hasSubSelection(id) || app.sel.pieces.length === 1);
   const rot = (id: string, title: string, mode: 'point' | 'piece') => registerCommand({
     id, title, menu: 'Piece/Modify Piece', checked: () => app.tool?.id === 'rotatePiece' && (settings.rotateMode ?? 'point') === mode,
     run: () => { settings.rotateMode = mode; saveSettings(); app.setTool('rotatePiece'); },
@@ -49,8 +50,13 @@ export function registerMoveCmds(app: App) {
   rot('move.pieceRotatePoint', 'Rotate by point (pin + second point)', 'point');
   rot('move.pieceRotate', 'Rotate Piece (about its centre, 0–360°)', 'piece');
   registerCommand({ id: 'move.rotateKeepGrain', title: 'Rotate: keep grain direction', menu: 'Piece/Modify Piece', checked: () => !!settings.rotateKeepGrain, run: () => { settings.rotateKeepGrain = !settings.rotateKeepGrain; saveSettings(); app.status(settings.rotateKeepGrain ? 'Rotate: the grain line keeps its direction on the sheet' : 'Rotate: the grain line turns with the piece'); app.invalidate(); } });
-  registerCommand({ id: 'move.pieceFlip', title: 'Flip Piece (tool)', menu: 'Piece/Modify Piece', checked: () => app.tool?.id === 'flipPiece', run: () => app.setTool('flipPiece') });
-  const selPieceIds = () => app.sel.pieces.filter(id => !app.hasSubSelection(id) || app.sel.pieces.length === 1);
+  const gr = (id: string, title: string, mode: string) => registerCommand({ id, title, menu: 'Piece/Modify Piece', checked: () => app.tool?.id === 'grain' && (settings.toolState?.grain?.mode ?? 'flipH') === mode, run: () => { (settings.toolState ??= {}).grain = { mode }; saveSettings(); app.setTool('grain'); app.invalidate(); } });
+  gr('move.pieceFlip', 'Grain tool: Flip horizontal', 'flipH');
+  gr('move.pieceFlipV', 'Grain tool: Flip vertical', 'flipV');
+  gr('move.grainSet', 'Grain tool: Grain to piece position', 'grainSet');
+  gr('move.pieceToGrain', 'Grain tool: Piece to grain', 'pieceToGrain');
+  registerCommand({ id: 'piece.grainHorizontal', title: 'Set grain to piece position (selected)', menu: 'Piece/Modify Piece', group: 1, enabled: () => app.sel.pieces.length > 0, run: () => grainToHorizontal(app, selPieceIds()) });
+  registerCommand({ id: 'piece.toGrain', title: 'Set piece to grain (selected)', menu: 'Piece/Modify Piece', group: 1, enabled: () => app.sel.pieces.length > 0, run: () => pieceToGrain(app, selPieceIds()) });
   registerCommand({ id: 'piece.flipH', title: 'Flip selected left ⇄ right', menu: 'Piece/Modify Piece', group: 1, enabled: () => app.sel.pieces.length > 0, run: () => flipPieces(app, selPieceIds(), 'h') });
   registerCommand({ id: 'piece.flipV', title: 'Flip selected up ⇄ down', menu: 'Piece/Modify Piece', group: 1, enabled: () => app.sel.pieces.length > 0, run: () => flipPieces(app, selPieceIds(), 'v') });
 
