@@ -27,6 +27,8 @@ export const GROUP_COLORS = ['#e8590c', '#1c7ed6', '#2b8a3e', '#ae3ec9', '#c92a2
 export const MS = {
   groups: [] as MGroupUI[],
   cur: -1,
+  /** how many groups were finished with right-click / Enter: 0 = picking group A, 1 = picking group B, 2 = comparison shown */
+  closed: 0,
   mode: 'contour' as MeasureMode,
   history: [] as MRecord[],
   /** target ease (B − A) and tolerance; tol null = no pass / fail */
@@ -59,7 +61,7 @@ export function removePart(part: MeasurePart): boolean {
     const g = MS.groups[gi]; const k = g.parts.findIndex(p => sameRef(p, part));
     if (k < 0) continue;
     g.parts.splice(k, 1); relabel(g);
-    if (!g.parts.length) { MS.groups.splice(gi, 1); renameDefault(); MS.cur = Math.min(MS.cur, MS.groups.length - 1); }
+    if (!g.parts.length) { MS.groups.splice(gi, 1); renameDefault(); MS.cur = Math.min(MS.cur, MS.groups.length - 1); MS.closed = Math.min(MS.closed, MS.groups.length); }
     else MS.cur = gi;
     return true;
   }
@@ -70,7 +72,7 @@ export function removeLast(): boolean {
   const g = MS.groups[MS.cur] ?? MS.groups[MS.groups.length - 1];
   if (!g) return false;
   g.parts.pop();
-  if (!g.parts.length) { MS.groups.splice(MS.groups.indexOf(g), 1); renameDefault(); MS.cur = MS.groups.length - 1; }
+  if (!g.parts.length) { MS.groups.splice(MS.groups.indexOf(g), 1); renameDefault(); MS.cur = MS.groups.length - 1; MS.closed = Math.min(MS.closed, MS.groups.length); }
   return true;
 }
 export function hasOpen() { return MS.groups.some(g => g.parts.length); }
@@ -83,13 +85,13 @@ export function commitMeasure(): MRecord | null {
   let rec = MS.editing ? MS.history.find(r => r.id === MS.editing) : undefined;
   if (rec) Object.assign(rec, { groups, mode: MS.mode, ease: MS.ease, tol: MS.tol });
   else { rec = { id: 'm' + (++seq), name: /^[A-Z]\d*( vs [A-Z]\d*)*$/.test(name) ? `Measure ${MS.history.length + 1}` + (groups.length > 1 ? ` (${name})` : '') : name, groups, mode: MS.mode, ease: MS.ease, tol: MS.tol, at: new Date().toISOString() }; MS.history.push(rec); }
-  MS.groups = []; MS.cur = -1; MS.editing = null;
+  MS.groups = []; MS.cur = -1; MS.editing = null; MS.closed = 0;
   return rec;
 }
-export function cancelMeasure() { MS.groups = []; MS.cur = -1; MS.editing = null; }
+export function cancelMeasure() { MS.groups = []; MS.cur = -1; MS.editing = null; MS.closed = 0; }
 export function reopen(id: string) {
   const r = MS.history.find(x => x.id === id); if (!r) return;
-  MS.groups = JSON.parse(JSON.stringify(r.groups)); MS.cur = MS.groups.length - 1; MS.mode = r.mode; MS.ease = r.ease; MS.tol = r.tol; MS.editing = r.id;
+  MS.groups = JSON.parse(JSON.stringify(r.groups)); MS.cur = MS.groups.length - 1; MS.mode = r.mode; MS.ease = r.ease; MS.tol = r.tol; MS.editing = r.id; MS.closed = Math.min(2, MS.groups.length);
 }
 
 export function partName(app: App, p: MeasurePart): string {
@@ -175,9 +177,10 @@ export function renderMeasureWindow(app: App) {
     nm.classList.add('m-gname'); nm.setAttribute('data-g', String(gi));
     chips.append(h('div.m-chip' + (gi === MS.cur ? '.on' : ''), { style: `--gc:${groupColor(gi)}`, title: g.parts.map(p => `${p.label}: ${partName(app, p)}`).join('\n'), onclick: (e: Event) => { if ((e.target as Element).closest('input,button')) return; MS.cur = gi; rerender(); } },
       h('span.m-dot'), nm, h('span.dim', {}, `${g.parts.length} line${g.parts.length === 1 ? '' : 's'}`),
-      h('button.mini', { title: 'Remove this group', onclick: () => { MS.groups.splice(gi, 1); renameDefault(); MS.cur = MS.groups.length - 1; rerender(); } }, '×')));
+      h('button.mini', { title: 'Remove this group', onclick: () => { MS.groups.splice(gi, 1); renameDefault(); MS.cur = MS.groups.length - 1; MS.closed = Math.min(MS.closed, MS.groups.length); rerender(); } }, '×')));
   });
   if (MS.groups.length) win.body.append(chips);
+  if (hasOpen()) win.body.append(h('div.dim.m-stage', { 'data-stage': String(MS.closed) }, MS.closed === 0 ? 'Group A: click its lines (any pieces), then right-click = done with A' : MS.closed === 1 ? (MS.groups.length > 1 ? 'Group B: click its lines (any pieces), then right-click = compare' : 'Group A is done. Click the lines of group B, then right-click = compare (right-click now keeps A on its own)') : 'Comparison: A − B per size. Clicking a new line starts a blank measurement.'));
 
   if (MS.groups.length > 1) {
     const dir = h('div.seg.m-dir');
@@ -194,7 +197,7 @@ export function renderMeasureWindow(app: App) {
   }
 
   if (!hasOpen()) {
-    win.body.append(h('div.empty', {}, 'Click lines on the canvas (Measure tool, M). Each click adds L1, L2, … and the window sums them per size. Click a line on another piece (or Ctrl+click) to start a comparison. Enter / right-click = OK, Esc = cancel.'));
+    win.body.append(h('div.empty', {}, 'Click lines on the canvas (Measure tool, M): any lines, on any pieces. They add up per size as group A. Right-click = done with A; then click the lines of group B and right-click again: the window shows total A, total B and A − B per size. Two groups at most; a new line after that starts a blank measurement. Esc = cancel.'));
   } else {
     let t: MeasureTable;
     try { t = measureTable(app, MS.groups, MS.mode, MS); } catch (err) { win.body.append(h('div.warnline', {}, (err as Error).message)); t = { rows: [], cols: [], pass: [] }; }
@@ -226,7 +229,7 @@ export function renderMeasureWindow(app: App) {
     h('button.btn.sm' + (hasOpen() ? '' : '.disabled'), { 'data-act': 'copy', title: 'Copy the table as TSV (Excel): rows = sizes', onclick: () => run('Copy', () => { if (!hasOpen()) return; void copyText(measureTSV(app)).then(ok => toast(ok ? 'Copied (TSV, rows = sizes)' : 'Copy refused by the browser', ok ? 'ok' : 'warn')); }) }, 'Copy TSV'),
     h('button.btn.sm' + (hasOpen() ? '' : '.disabled'), { 'data-act': 'spec', title: 'Grade the selected points so this measurement hits a spec per size', onclick: () => { if (hasOpen()) hooks.gradeToSpec?.(liveGroups(app, MS.groups), MS.mode); } }, 'Grade to spec…'),
     h('button.btn.sm' + (hasOpen() ? '' : '.disabled'), { 'data-act': 'adjust', title: 'Change the pattern: make one of these lines an exact length, or make the difference between two groups (ease) a value', onclick: () => { if (hasOpen()) hooks.adjust?.(); } }, 'Adjust segment…'),
-    h('button.btn.sm' + (hasOpen() || MS.history.length ? '' : '.disabled'), { 'data-act': 'tospec', title: 'Keep this measurement in the style as a point of measure with a target per size (Measure spec)', onclick: () => { if (hasOpen() || MS.history.length) hooks.addToSpec?.(); } }, 'Add to spec'),
+    h('button.btn.sm' + ((hasOpen() || MS.history.length) && MS.groups.length < 2 ? '' : '.disabled'), { 'data-act': 'tospec', title: MS.groups.length > 1 ? 'Not available while two groups are compared: a point of measure is one group of lines' : 'Keep this measurement in the style as a point of measure with a target per size (Measure spec)', onclick: () => { if ((hasOpen() || MS.history.length) && MS.groups.length < 2) hooks.addToSpec?.(); } }, 'Add to spec'),
     h('span.spacer'),
     h('button.btn.sm', { 'data-act': 'cancel', title: 'Cancel (Esc)', onclick: () => { cancelMeasure(); hooks.onCancel?.(); rerender(); } }, 'Cancel'),
     h('button.btn.sm.primary' + (hasOpen() ? '' : '.disabled'), { 'data-act': 'ok', title: 'OK (Enter / right-click): keep it in the list below', onclick: () => { const r = commitMeasure(); if (r) toast(`Kept “${r.name}”`, 'ok'); hooks.onOK?.(); rerender(); } }, 'OK'),
