@@ -29,11 +29,13 @@ interface WalkUI {
   rev: number;
   /** angle between the two seams at the contact when the walk started (the direction the user gave the piece) */
   delta?: number;
+  /** the turn the piece is shown with at the moment (kept when the walk direction changes) */
+  lastAng?: number;
 }
 const W: WalkUI = { stepMm: 5, ratio: 1, skipDarts: true, rev: -1 };
 
 let hoverW: Vec | null = null;
-function reset(app: App) { W.moving = undefined; W.state = undefined; W.delta = undefined; hoverW = null; app.cancelPreview(); app.invalidate('canvas', 'status'); }
+function reset(app: App) { W.moving = undefined; W.state = undefined; W.delta = undefined; W.lastAng = undefined; hoverW = null; app.cancelPreview(); app.invalidate('canvas', 'status'); }
 
 /** point and unit tangent (contour-forward) of a walk side at its current arc position, piece-local */
 function sideAt(side: WalkState['stationary']): { p: Vec; t: Vec } {
@@ -43,6 +45,30 @@ function sideAt(side: WalkState['stationary']): { p: Vec; t: Vec } {
   const a = side.r.pts[j % N], b = side.r.pts[(j + 1) % N]; const l = cum[j + 1] - cum[j];
   const u = l > 1e-12 ? (sv - cum[j]) / l : 0; const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
   return { p: { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u }, t: { x: (b.x - a.x) / d, y: (b.y - a.y) / d } };
+}
+/** point of a side's contour at arc position sv (piece-local) */
+function ptAt(side: WalkState['stationary'], sv0: number): Vec {
+  const N = side.r.pts.length, cum = side.r.cum; const tot = cum[cum.length - 1] || 1;
+  const sv = ((sv0 % tot) + tot) % tot;
+  let j = 0; while (j < cum.length - 2 && cum[j + 1] < sv) j++;
+  const a = side.r.pts[j % N], b = side.r.pts[(j + 1) % N]; const l = cum[j + 1] - cum[j];
+  const u = l > 1e-12 ? (sv - cum[j]) / l : 0;
+  return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u };
+}
+/**
+ * Unit direction in which a side is walked from its contact point (piece-local), looking `eps` ahead in the walk
+ * direction `dir`. At a corner this is the line the walk goes ALONG, not the line it comes from.
+ */
+function travelDir(side: WalkState['stationary'], dir: 1 | -1 = side.dir, eps = 0.5): Vec {
+  const a = ptAt(side, side.s), b = ptAt(side, side.s + dir * eps); const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  return { x: (b.x - a.x) / d, y: (b.y - a.y) / d };
+}
+/** Walk the moving piece along whichever of its two lines at the contact runs WITH the stationary line (as the pieces lie on the sheet). */
+function matchMovingDir(app: App, st: WalkState): WalkState {
+  const stat = app.doc.piece(st.stationary.pieceId), mv = app.doc.piece(st.moving.pieceId);
+  const ts = dirToWorld(stat, travelDir(st.stationary, st.stationary.dir, 5));
+  const score = (d: 1 | -1) => { const t = dirToWorld(mv, travelDir(st.moving, d, 5)); return t.x * ts.x + t.y * ts.y; };
+  return score((-st.moving.dir) as 1 | -1) > score(st.moving.dir) ? ops.flipDirection(st, 'moving') : st;
 }
 const rot = (v: Vec, a: number): Vec => ({ x: v.x * Math.cos(a) - v.y * Math.sin(a), y: v.x * Math.sin(a) + v.y * Math.cos(a) });
 /**
@@ -56,9 +82,12 @@ function placement(app: App): { ang: number; o: Vec; toWorld: (q: Vec) => Vec; t
   if (!stat || !mv) return null;
   const m = sideAt(st.moving), c = sideAt(st.stationary);
   const angOf = (v: Vec) => Math.atan2(v.y, v.x);
-  const tm = dirToWorld(mv, m.t), ts = dirToWorld(stat, c.t);
-  if (W.delta === undefined) W.delta = angOf(tm) - angOf(ts); // the seam angle the user set, kept through the walk
+  // directions of travel (the lines being walked along), so a corner at the contact is read the right way
+  const tm = dirToWorld(mv, travelDir(st.moving)), ts = dirToWorld(stat, travelDir(st.stationary));
+  // the seam angle the user set is kept through the walk; after a direction change the piece keeps its present turn
+  if (W.delta === undefined) W.delta = (W.lastAng ?? 0) + angOf(tm) - angOf(ts);
   const ang = angOf(ts) + W.delta - angOf(tm);
+  W.lastAng = ang;
   const cw = toWorld(stat, c.p);
   const lin = (v: Vec) => rot(dirToWorld(mv, v), ang);
   const mo = lin(m.p); const o = { x: cw.x - mo.x, y: cw.y - mo.y };
@@ -134,12 +163,8 @@ function start(app: App, stat: { pieceId: string; anchorId: string }) {
     });
     W.rev = app.doc.revision();
     // walk the way the pieces lie: the moving seam is followed in the direction that runs with the stationary one
-    {
-      const st = W.state; const stat = app.doc.piece(st.stationary.pieceId), mvp = app.doc.piece(st.moving.pieceId);
-      const a = dirToWorld(mvp, sideAt(st.moving).t), b = dirToWorld(stat, sideAt(st.stationary).t);
-      if ((a.x * b.x + a.y * b.y) * st.moving.dir * st.stationary.dir < 0) W.state = ops.flipDirection(st, 'moving');
-    }
-    W.delta = undefined;
+    W.state = matchMovingDir(app, W.state);
+    W.delta = undefined; W.lastAng = undefined;
     showMoving(app);
     app.status(`Placed on the point · now click along the seam to walk there · ${hud()}`);
   } catch (err) { reportError(err, 'Walk'); reset(app); }
@@ -187,7 +212,21 @@ export const walkTool: Tool = {
       try {
         let cur = st;
         // a fresh walk goes the shorter way round to the click
-        if (Math.abs(st.stationary.run) < 1e-6 && dist > tot / 2) { cur = ops.flipDirection(st, 'both'); dist = tot - dist; }
+        if (Math.abs(st.stationary.run) < 1e-6) {
+          if (useMoving) {
+            // clicked on the moving piece's own line: that is the line to walk, the stationary side follows it
+            if (dist > tot / 2) { cur = ops.flipDirection(cur, 'moving'); dist = tot - dist; }
+            const mvp = app.doc.piece(cur.moving.pieceId), stp = app.doc.piece(cur.stationary.pieceId);
+            const tmv = dirToWorld(mvp, travelDir(cur.moving, cur.moving.dir, 5));
+            const sc = (d: 1 | -1) => { const t = dirToWorld(stp, travelDir(cur.stationary, d, 5)); return t.x * tmv.x + t.y * tmv.y; };
+            if (sc((-cur.stationary.dir) as 1 | -1) > sc(cur.stationary.dir)) cur = ops.flipDirection(cur, 'stationary');
+          } else {
+            // clicked on the stationary line: walk towards the click, along the moving line that runs with it
+            if (dist > tot / 2) { cur = ops.flipDirection(cur, 'stationary'); dist = tot - dist; }
+            cur = matchMovingDir(app, cur);
+          }
+          W.delta = undefined; W.lastAng = undefined; // nothing walked yet: the piece keeps the direction the user set
+        }
         W.state = ops.walkTo(cur, dist); showMoving(app); app.status(`Walked to the click · ${hud()}`);
       } catch (err) { reportError(err, 'Walk'); }
       app.invalidate('canvas'); return;
@@ -217,9 +256,9 @@ export const walkTool: Tool = {
     }
     switch (e.key.toLowerCase()) {
       case 'n': drop(app, e.shiftKey ? 'stationary' : e.altKey ? 'moving' : 'both'); return true;
-      case 'f': W.state = ops.flipDirection(W.state, 'moving'); showMoving(app); app.status(hud()); app.invalidate('canvas'); return true;
-      case 'g': W.state = ops.flipDirection(W.state, 'stationary'); showMoving(app); app.status(hud()); app.invalidate('canvas'); return true;
-      case 'b': W.state = ops.flipDirection(W.state, 'both'); showMoving(app); app.status(hud()); app.invalidate('canvas'); return true;
+      case 'f': W.state = ops.flipDirection(W.state, 'moving'); W.delta = undefined; showMoving(app); app.status(hud()); app.invalidate('canvas'); return true;
+      case 'g': W.state = ops.flipDirection(W.state, 'stationary'); W.delta = undefined; showMoving(app); app.status(hud()); app.invalidate('canvas'); return true;
+      case 'b': W.state = ops.flipDirection(W.state, 'both'); W.delta = undefined; showMoving(app); app.status(hud()); app.invalidate('canvas'); return true;
       case 'k': {
         W.skipDarts = !W.skipDarts;
         const st = W.state; W.state = { ...st, options: { ...st.options, skipDarts: W.skipDarts } };
@@ -291,4 +330,6 @@ export const walkTool: Tool = {
 
 export function walkActive() { return !!W.state; }
 /** distance walked on the stationary piece (null = no walk) */
+/** contact point on the moving piece, piece-local (null = no walk) */
+export function walkMovingPoint(): Vec | null { return W.state ? ptAt(W.state.moving, W.state.moving.s) : null; }
 export function walkRun(): number | null { return W.state ? ops.walkReport(W.state).stationary : null; }
