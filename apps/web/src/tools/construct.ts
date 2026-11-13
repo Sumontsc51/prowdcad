@@ -24,6 +24,7 @@ import { fmt, unitLabel } from '../units-ui';
 import { fs, screenMarker, snapOutline } from './common';
 import { snapPoint } from '../canvas/snap';
 import { toast } from '../ui/toast';
+import { settings, saveSettings } from '../settings';
 
 // ───────────── Smooth ─────────────
 
@@ -125,13 +126,92 @@ async function commitSlash(app: App) {
   } catch (err) { reportError(err, 'Slash'); }
 }
 
+// Cut / Merge Piece: three ways (tool-options strip, Tab)
+//   By line   click an internal line that runs across the piece: the piece is cut along it
+//   Slash     click points across the piece, Enter (the former Slash tool)
+//   Merge     click a seam line on one piece, then the matching line on another: the pieces join there
+type CutMode = 'line' | 'slash' | 'merge';
+const cutMode = (): CutMode => (settings.toolState?.cut?.mode as CutMode) ?? 'line';
+const CUT_MODES: { id: CutMode; label: string; title: string }[] = [
+  { id: 'line', label: 'Cut by line', title: 'Click an internal line that runs from outline to outline: the piece is cut along it into two pieces' },
+  { id: 'slash', label: 'Slash', title: 'Click points across the piece, then Enter: the piece is cut along them' },
+  { id: 'merge', label: 'Merge', title: 'Click a seam line on the piece that stays, then the matching seam line on the other piece: the two pieces become one' },
+];
+let CUTH: { pieceId: Id; contourId: Id } | null = null;
+let MG: { pieceId: Id; contourId: Id; from: Id; to: Id; world: Vec[] } | null = null;
+let MGH: Vec[] | null = null;
+
+async function cutOptions(title: string, pc: Piece) {
+  const r = await rememberedDialog('slash', {
+    title, fields: [
+      { kind: 'radio', key: 'grade', label: 'New cut points', value: 'auto', options: [{ value: 'auto', label: 'Auto grade (proportional)' }, { value: 'zero', label: 'Zero grade' }] },
+      { kind: 'length', key: 'seam', label: 'Seam on new edges', value: pc.seamDefault, min: 0 },
+    ],
+  });
+  return r ? { gradeMode: r.grade as 'auto' | 'zero', seam: r.seam as number } : null;
+}
+/** the open internal line under the cursor (not a dart / pleat axis) */
+function cutLineAt(app: App, w: Vec): { piece: Piece; contourId: Id } | null {
+  const ch = contourNear(app, w, { tolPx: 8, contour: 'internal' });
+  if (!ch || ch.contour === ch.piece.sew || ch.contour.closed || ch.contour.type === 'dartAxis' || ch.contour.type === 'pleatAxis') return null;
+  return { piece: ch.piece, contourId: ch.contour.id };
+}
+async function cutByLine(app: App, w: Vec) {
+  const hit = cutLineAt(app, w);
+  if (!hit) { app.status('Cut by line: click an internal line that runs across the piece (draw one with the Internal line tool, I)'); return; }
+  if (hit.piece.locked) { toast('Piece is locked', 'warn'); return; }
+  const o = await cutOptions(`Cut ${hit.piece.name} along the line`, hit.piece); if (!o) return;
+  try {
+    const ids = ops.cutAlongInternal(app.doc, hit.piece.id, hit.contourId, o);
+    app.sel = { pieces: [...ids], anchors: [] };
+    toast(`Cut into ${ids.map(id => app.doc.piece(id).name).join(' + ')}`, 'ok');
+  } catch (err) { reportError(err, 'Cut by line'); }
+  CUTH = null; app.invalidate();
+}
+function seamAt(app: App, w: Vec, excludePieceId?: Id) {
+  const ch = contourNear(app, w, { tolPx: 8, contour: 'sew', ...(excludePieceId ? { excludePieceId } : {}) });
+  if (!ch || !ch.from || !ch.to) return null;
+  return { pieceId: ch.piece.id, contourId: ch.contour.id, from: ch.from, to: ch.to, world: runWorld(app, ch.piece, ch.contour, ch.from, ch.to) };
+}
+async function mergeClick(app: App, w: Vec) {
+  if (!MG) {
+    const a = seamAt(app, w);
+    if (!a) { app.status('Merge: click a seam line (between two grade points) on the piece that stays'); return; }
+    MG = a; app.status('Merge: now click the matching seam line on the other piece (it moves onto the first)'); app.invalidate('canvas'); return;
+  }
+  const b = seamAt(app, w, MG.pieceId);
+  if (!b) { app.status('Merge: click the matching seam line on ANOTHER piece'); return; }
+  const a = MG;
+  const r = await rememberedDialog('cut.join', { title: 'Merge pieces', fields: [
+    { kind: 'radio', key: 'anchor', label: 'Unequal lengths: align', value: 'first', options: [{ value: 'first', label: 'First end' }, { value: 'last', label: 'Last end' }] },
+    { kind: 'checkbox', key: 'keep', label: 'Keep the seam as a dashed internal line', value: true },
+  ] });
+  if (!r) return;
+  try {
+    const id = ops.joinPieces(app.doc, a.pieceId, { from: a.from, to: a.to }, b.pieceId, { from: b.from, to: b.to }, { anchor: r.anchor as 'first', alignOnly: false, keepSeamLine: !!r.keep });
+    app.sel = { pieces: [id], anchors: [] };
+    toast(`Merged into ${app.doc.piece(id).name}`, 'ok');
+  } catch (err) { reportError(err, 'Merge pieces'); }
+  MG = null; MGH = null; app.invalidate();
+}
+
 export const slashTool: Tool = {
-  id: 'slash', title: 'Slash (cut piece)', group: 'cut', hotkey: 'K', icon: ICON.slash, cursor: 'crosshair',
-  activate() { SL = null; },
-  deactivate(app) { SL = null; app.invalidate('canvas'); },
-  busy: () => !!SL,
-  hint: () => SL ? `Slash: ${SL.pts.length} pt · click more points · Enter = cut · Backspace = undo point · Esc = cancel` : 'Slash: click the first point (on or outside the outline of a piece)',
+  id: 'slash', title: 'Cut / Merge Piece', group: 'cut', hotkey: 'K', icon: ICON.slash, cursor: 'crosshair',
+  activate() { SL = null; MG = null; MGH = null; CUTH = null; },
+  deactivate(app) { SL = null; MG = null; MGH = null; CUTH = null; app.invalidate('canvas'); },
+  busy: () => !!SL || !!MG,
+  modes: () => CUT_MODES,
+  mode: () => cutMode(),
+  setMode(app, id) { (settings.toolState ??= {}).cut = { ...(settings.toolState.cut ?? {}), mode: id }; saveSettings(); SL = null; MG = null; MGH = null; CUTH = null; app.invalidate(); },
+  hint: () => {
+    const m = cutMode();
+    if (m === 'line') return 'Cut by line: click an internal line that runs across the piece · the piece is cut along it · Tab = Slash / Merge · Esc = Select';
+    if (m === 'merge') return MG ? 'Merge: click the matching seam line on the other piece · Esc cancel' : 'Merge: click a seam line on the piece that stays · Tab = mode · Esc = Select';
+    return SL ? `Slash: ${SL.pts.length} pt · click more points · Enter = cut · Backspace = undo point · Esc = cancel` : 'Slash: click the first point (on or outside the outline of a piece) · Tab = mode';
+  },
   down(app, p) {
+    if (cutMode() === 'line') { void cutByLine(app, p.w); return; }
+    if (cutMode() === 'merge') { void mergeClick(app, p.w); return; }
     const w = slashPoint(app, p.w, p.e.shiftKey);
     if (!SL) {
       // on, inside or OUTSIDE the outline (AccuMark): outside, the piece is the one the slash crosses next
@@ -148,9 +228,15 @@ export const slashTool: Tool = {
     }
     SL.pts.push(w); app.invalidate('canvas');
   },
-  move(app, p) { if (SL) { SL.hover = slashPoint(app, p.w, p.e.shiftKey); app.invalidate('canvas'); } },
+  move(app, p) {
+    if (cutMode() === 'line') { const h = cutLineAt(app, p.w); const nh = h ? { pieceId: h.piece.id, contourId: h.contourId } : null; if (JSON.stringify(nh) !== JSON.stringify(CUTH)) { CUTH = nh; app.invalidate('canvas'); } return; }
+    if (cutMode() === 'merge') { const h = seamAt(app, p.w, MG?.pieceId); MGH = h ? h.world : null; app.invalidate('canvas'); return; }
+    if (SL) { SL.hover = slashPoint(app, p.w, p.e.shiftKey); app.invalidate('canvas'); }
+  },
   context(app) { if (SL) { void commitSlash(app); return true; } return false; },
   key(app, e) {
+    if (e.key === 'Tab' && !SL && !e.ctrlKey && !e.altKey) { const i = CUT_MODES.findIndex(m => m.id === cutMode()); slashTool.setMode!(app, CUT_MODES[(i + (e.shiftKey ? CUT_MODES.length - 1 : 1)) % CUT_MODES.length].id); return true; }
+    if (e.key === 'Escape' && MG) { MG = null; MGH = null; app.status('Merge cancelled'); app.invalidate('canvas'); return true; }
     if (!SL) return false;
     if (e.key === 'Escape') { SL = null; app.invalidate('canvas'); return true; }
     if (e.key === 'Enter') { void commitSlash(app); return true; }
@@ -158,6 +244,18 @@ export const slashTool: Tool = {
     return false;
   },
   overlay(app) {
+    if (cutMode() === 'line') {
+      if (!CUTH) return '';
+      const pc = app.doc.style.pieces.find(x => x.id === CUTH!.pieceId); const ci = pc ? pc.internals.findIndex(c => c.id === CUTH!.contourId) : -1; if (!pc || ci < 0) return '';
+      const rc = resolveFor(app.doc, pc, app.sizeOf(pc)).internals[ci]; if (!rc) return '';
+      return `<path d="${screenPath(app, rc.pts.map(q => toWorld(pc, q)))}" fill="none" stroke="#e74c3c" stroke-width="3" stroke-dasharray="7 4" data-cut-line="1"/>`;
+    }
+    if (cutMode() === 'merge') {
+      let o = '';
+      if (MG) o += `<path d="${screenPath(app, MG.world)}" fill="none" stroke="#16a085" stroke-width="4" data-merge-pick="1"/>`;
+      if (MGH) o += `<path d="${screenPath(app, MGH)}" fill="none" stroke="#16a085" stroke-width="4" opacity="0.4"/>`;
+      return o;
+    }
     if (!SL) return '';
     const pts = [...SL.pts, ...(SL.hover ? [SL.hover] : [])];
     return `<path d="${screenPath(app, pts)}" fill="none" stroke="#e74c3c" stroke-width="1.6" stroke-dasharray="6 3"/>` + SL.pts.map(q => screenMarker(app.view.toScreen(q), 'circle', '#e74c3c', 3)).join('');

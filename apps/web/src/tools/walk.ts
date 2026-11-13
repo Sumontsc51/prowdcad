@@ -15,7 +15,7 @@ import type { App } from '../app';
 import { ICON, type Tool } from './tool';
 import { anchorNear } from '../hitkit';
 import { ops } from '../ops-bridge';
-import { resolveFor, toWorld, layoutOf } from '../geometry';
+import { resolveFor, toWorld, toLocal, layoutOf } from '../geometry';
 import { reportError } from '../commands';
 import { showDialog } from '../ui/dialog';
 import { fmt, unitLabel } from '../units-ui';
@@ -82,10 +82,32 @@ export const walkTool: Tool = {
   activate(app) { reset(app); },
   deactivate(app) { reset(app); },
   busy: () => !!W.moving,
-  hint: () => W.state ? hud() + ' · arrows/wheel step · N notch · F/G/B flip · [ ] step · R ratio · K darts · Esc end'
-    : W.moving ? 'Walk: click the start point on the STATIONARY piece' : 'Walk: click the start point on the MOVING piece (sew line)',
+  hint: () => W.state ? hud() + ' · click the seam = walk to there · arrows/wheel step · N notch · F/G/B flip · [ ] step · R ratio · K darts · Esc end'
+    : W.moving ? 'Walk: click the point on the second piece (it stays): the first piece is placed onto it' : 'Walk: click a point on the first piece (the one that walks)',
   down(app, p) {
-    if (W.state) return;
+    if (W.state) {
+      // click on the stationary seam: the moving piece walks along the seam up to the click
+      const st = W.state; const stat = app.doc.style.pieces.find(x => x.id === st.stationary.pieceId); if (!stat) return;
+      const side = st.stationary; const N = side.r.pts.length; if (N < 2) return;
+      const l = toLocal(stat, p.w); const cum = side.r.cum; const tot = cum[cum.length - 1] || 1;
+      let bs = 0, bd = Infinity;
+      for (let j = 0; j < N; j++) {
+        const a = side.r.pts[j], b = side.r.pts[(j + 1) % N]; const ab = { x: b.x - a.x, y: b.y - a.y }; const l2 = ab.x * ab.x + ab.y * ab.y;
+        const t = l2 < 1e-12 ? 0 : Math.max(0, Math.min(1, ((l.x - a.x) * ab.x + (l.y - a.y) * ab.y) / l2));
+        const d = Math.hypot(a.x + ab.x * t - l.x, a.y + ab.y * t - l.y);
+        if (d < bd) { bd = d; bs = cum[j] + t * Math.sqrt(l2); }
+      }
+      if (bd * app.view.scale > 25) { app.status('Walk: click on (or near) the seam line of the stationary piece to walk there · arrows / wheel step'); return; }
+      const s0 = side.s - side.run * side.dir;
+      let dist = (((bs - s0) * side.dir) % tot + tot) % tot;
+      try {
+        let cur = st;
+        // a fresh walk goes the shorter way round to the click
+        if (Math.abs(side.run) < 1e-6 && dist > tot / 2) { cur = ops.flipDirection(st, 'both'); dist = tot - dist; }
+        W.state = ops.walkTo(cur, dist); app.status(`Walked to the click · ${hud()}`);
+      } catch (err) { reportError(err, 'Walk'); }
+      app.invalidate('canvas'); return;
+    }
     const h = anchorNear(app, p.w, { contour: 'sew' });
     if (!h) { app.status('Click a point on a sew line'); return; }
     if (!W.moving) { W.moving = { pieceId: h.piece.id, anchorId: h.anchor.id }; app.invalidate('canvas', 'status'); return; }
@@ -179,3 +201,5 @@ export const walkTool: Tool = {
 };
 
 export function walkActive() { return !!W.state; }
+/** distance walked on the stationary piece (null = no walk) */
+export function walkRun(): number | null { return W.state ? ops.walkReport(W.state).stationary : null; }

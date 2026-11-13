@@ -123,7 +123,7 @@ export const internalTool: Tool = {
   busy: () => !!D,
   toggles: () => [{ id: 'autolock', label: 'Lock ends to outline', title: 'An end drawn on the outline stays attached to its segment (proportional) when the segment moves, changes length or grades', on: settings.autoLockInternal }],
   toggle(app, id) { if (id === 'autolock') { settings.autoLockInternal = !settings.autoLockInternal; saveSettings(); app.invalidate(); } },
-  hint: () => D ? `Internal: ${D.pts.length} pts on “${D.host.name}” · click start = polygon · dbl-click/Enter = end line · right-click = exact/mirror${D.mirror !== 'none' ? ` · mirror ${D.mirror}` : ''}` : 'Internal: click inside a piece to start · Ctrl = curve · Shift = H/V/45°',
+  hint: () => D ? `Internal: ${D.pts.length} pts on “${D.host.name}” · click start = polygon · click the last point again (or Enter) = end line · right-click = exact/mirror${D.mirror !== 'none' ? ` · mirror ${D.mirror}` : ''}` : 'Internal: click inside a piece to start · Ctrl = curve · Shift = H/V/45°',
 
   down(app, p) {
     const e = p.e as PointerEvent;
@@ -140,6 +140,11 @@ export const internalTool: Tool = {
     }
     // manual double-click → end open line
     if (dbl.hit(p.s.x, p.s.y, 'draft')) { commit(app, false); return; }
+    // the last point clicked a second time (however slowly) → end the line there
+    if (D.pts.length >= 2) {
+      const sl = app.view.toScreen(toWorld(D.host, D.pts[D.pts.length - 1]));
+      if (Math.hypot(sl.x - p.s.x, sl.y - p.s.y) <= 7) { commit(app, false); return; }
+    }
     // click on start → close polygon
     if (D.pts.length >= 3) {
       const s0 = app.view.toScreen(toWorld(D.host, D.pts[0]));

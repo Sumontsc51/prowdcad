@@ -25,7 +25,7 @@ import { fmt, unitLabel } from '../units-ui';
 import { snapOutline, screenMarker, fs } from './common';
 import { anchorNear, screenPath, segmentIds } from '../hitkit';
 import { ops } from '../ops-bridge';
-import { floatingWindow, table } from '../ui/window';
+import { floatingWindow, table, closeWindow } from '../ui/window';
 import { h, clear } from '../ui/dom';
 import { reportError } from '../commands';
 import { resolveFor, toWorld, toLocal } from '../geometry';
@@ -126,16 +126,12 @@ function pickLine(app: App, p: Ptr) {
   const cut = p.e.altKey !== !!settings.toolState?.measure?.cut;
   if (cut && hit.contour !== hit.piece.sew) { toast('The cut line exists only for sew lines; measuring the internal line', 'warn'); }
   const part = { ref: { pieceId: hit.piece.id, contourId: hit.contour.id, from: hit.from, to: hit.to }, cut: cut && hit.contour === hit.piece.sew ? true : undefined };
+  // a comparison (two finished groups) is on screen: any new line starts a blank measurement
+  if (MS.closed >= 2) cancelMeasure();
   // click again on a picked line = remove it
   if (!p.e.shiftKey && removePart(part)) { afterChange(app, `Removed ${partName(app, part)}`); return; }
-  // which group: Ctrl = new; same piece as the current group → it; else the last group on that piece; else new
-  let gi = MS.cur;
-  const pieceOf = (g: number) => MS.groups[g]?.parts[0]?.ref.pieceId;
-  if (p.e.ctrlKey || p.e.metaKey) gi = -1;
-  else if (gi >= 0 && pieceOf(gi) !== hit.piece.id) {
-    let k = -1; for (let j = MS.groups.length - 1; j >= 0; j--) if (pieceOf(j) === hit.piece.id) { k = j; break; }
-    gi = k;
-  }
+  // which group: A until it is finished with right-click, then B (lines may come from any pieces); two groups at most
+  const gi = MS.closed === 0 ? (MS.groups.length ? 0 : -1) : (MS.groups.length > 1 ? 1 : -1);
   if (p.e.shiftKey && gi >= 0 && MS.groups[gi]) {
     // extend: every segment from the last picked one of this contour up to the clicked one
     const g = MS.groups[gi]; const last = [...g.parts].reverse().find(q => q.ref.contourId === hit.contour.id && !!q.cut === !!part.cut);
@@ -163,7 +159,7 @@ function pickLine(app: App, p: Ptr) {
   }
   const ngi = addPart(part, gi);
   const g = MS.groups[ngi];
-  afterChange(app, `${MS.groups.length > 1 ? g.name + '·' : ''}${g.parts[g.parts.length - 1].label} = ${partName(app, part)}${MS.groups.length > 1 && gi < 0 ? ' · new group (comparison)' : ''}`);
+  afterChange(app, `${MS.groups.length > 1 ? g.name + '·' : ''}${g.parts[g.parts.length - 1].label} = ${partName(app, part)}${MS.groups.length > 1 && gi < 0 ? ' · group B started' : ''}`);
 }
 
 function afterChange(app: App, msg: string) {
@@ -181,9 +177,27 @@ function afterChange(app: App, msg: string) {
   app.invalidate('canvas');
 }
 
+/** total of a group in the active size (for the status line) */
+function groupTotal(app: App, gi: number): string {
+  try { const g = MS.groups[gi]; const rows = ops.measureGroup(app.doc, g.parts, MS.mode); const row = rows.find(r => r.sizeId === app.activeSize) ?? rows.find(r => r.total !== null); return row && row.total !== null ? `${fmt(row.total)} ${unitLabel()}` : '—'; } catch { return '—'; }
+}
+/** Right-click / Enter: finish group A, then finish group B (= show the comparison), then keep it in the list. */
 function okMeasure(app: App) {
-  const r = commitMeasure();
-  if (r) { toast(`Kept “${r.name}” (Measure window)`, 'ok'); app.status(`Measure OK · kept “${r.name}”`); }
+  if (!hasOpen()) return;
+  if (MS.closed === 0) {
+    MS.closed = 1;
+    app.status(`Group A done: ${groupTotal(app, 0)} · now click the lines of group B, then right-click to compare · right-click again now = keep A on its own`);
+  } else if (MS.closed === 1 && MS.groups.length > 1) {
+    MS.closed = 2; MS.diff = 'AB';
+    try {
+      const a = ops.measureGroup(app.doc, MS.groups[0].parts, MS.mode), b = ops.measureGroup(app.doc, MS.groups[1].parts, MS.mode);
+      const ra = a.find(r => r.sizeId === app.activeSize), rb = b.find(r => r.sizeId === app.activeSize);
+      app.status(ra && rb && ra.total !== null && rb.total !== null ? `A ${fmt(ra.total)} − B ${fmt(rb.total)} = ${fmt(ra.total - rb.total)} ${unitLabel()} (${ra.sizeName}) · all sizes in the Measure window · a new line starts a blank measurement` : 'Comparison A − B: see the Measure window');
+    } catch { app.status('Comparison A − B: see the Measure window'); }
+  } else {
+    const r = commitMeasure();
+    if (r) { toast(`Kept “${r.name}” (Measure window)`, 'ok'); app.status(`Measure OK · kept “${r.name}”`); }
+  }
   renderMeasureWindow(app); app.invalidate('canvas');
 }
 
@@ -245,22 +259,16 @@ function pointAcross(app: App, w: Vec): boolean {
 // ───────────────────────── the tool ─────────────────────────
 
 export const measureTool: Tool = {
-  id: 'measure', title: 'Measure', group: 'measure', hotkey: 'M', icon: ICON.measure, cursor: 'crosshair',
+  id: 'measure', title: 'Measure Lines', group: 'measure', hotkey: 'M', icon: ICON.measure, cursor: 'crosshair',
   activate(app) {
     pts = []; hover = null; result = ''; hoverHit = null;
-    mode = (settings.toolState?.measure?.mode as 'line' | 'distance') ?? 'line';
+    mode = 'line';
     if (mode === 'line') renderMeasureWindow(app);
     setMeasureHooks({ onOK: () => app.invalidate('canvas'), onCancel: () => app.invalidate('canvas') });
   },
   // leaving the Measure tool closes its window (it reopens with the tool; open and kept measurements are not lost)
   deactivate(app) { pts = []; hover = null; hoverHit = null; closeMeasureWindow(); app.invalidate('canvas'); },
   busy: () => (mode === 'line' ? hasOpen() : pts.length > 0 && pts.length < (angleMode ? 3 : 2)),
-  modes: () => [
-    { id: 'line', label: 'Line', title: 'Measure Line (AccuMark Line Length): click lines, they add up per size; another piece = comparison' },
-    { id: 'distance', label: 'Distance', title: 'Point to point: L / dX / dY / angle; Ctrl = 3-point angle; Alt-click a point = per-size position' },
-  ],
-  mode: () => mode,
-  setMode(app, id) { mode = id as 'line' | 'distance'; (settings.toolState ??= {}).measure = { ...(settings.toolState.measure ?? {}), mode }; saveSettings(); pts = []; hoverHit = null; if (mode === 'line') renderMeasureWindow(app); app.invalidate(); },
   toggles: () => (mode === 'line' ? [
     { id: 'internal', label: 'Internal lines', title: 'On: internal lines can be measured too — one click takes the whole line, end to end. Off: only the outline is picked', on: internalOn() },
     { id: 'cut', label: 'Cut line', title: 'Measure the cut line instead of the sew line (Alt inverts per click)', on: !!settings.toolState?.measure?.cut },
@@ -269,10 +277,11 @@ export const measureTool: Tool = {
     if (id === 'internal') { (settings.toolState ??= {}).measure = { ...(settings.toolState.measure ?? {}), internal: !internalOn() }; saveSettings(); hoverHit = null; app.status(internalOn() ? 'Internal lines can be measured (one click = the whole line)' : 'Only the outline is measured'); app.invalidate(); }
     if (id === 'cut') { (settings.toolState ??= {}).measure = { ...(settings.toolState.measure ?? {}), cut: !settings.toolState?.measure?.cut }; saveSettings(); app.invalidate(); } },
   hint: () => {
-    if (mode === 'distance') return result || 'Measure ▸ Distance: click two points · Ctrl-click 3 points = angle · Alt-click a point = per-size position · Tab = Line mode';
+    if (mode === 'distance') return result || 'Measure Distance: click one point, then another · Ctrl-click 3 points = angle · Alt-click a point = per-size position · Esc = Select';
     const g = MS.groups[MS.cur];
-    if (!hasOpen()) return 'Measure ▸ Line: click an outline segment or an internal line · Shift+click = extend the run · Alt = cut line · another piece / Ctrl = compare · Tab = Distance';
-    return `Measure ▸ Line: ${g ? g.name + ' = ' + g.parts.map(p => p.label).join(' + ') : ''} · click to add / click again to remove · Backspace = last off · Ctrl / another piece = new group · Enter / right-click = OK · Esc = cancel`;
+    if (!hasOpen()) return 'Measure Lines: click lines on any pieces (group A) · right-click = done with A · then the lines of group B · right-click = A − B · Shift+click = extend the run · Alt = cut line';
+    if (MS.closed >= 2) return 'Measure Lines: comparison A − B is in the Measure window · click a new line = blank measurement · right-click = keep it in the list · Esc = cancel';
+    return `Measure Lines: group ${MS.closed === 0 ? 'A' : 'B'}${g ? ' = ' + g.parts.map(p => p.label).join(' + ') : ''} · click to add / click again to remove · Backspace = last off · right-click / Enter = ${MS.closed === 0 ? 'done with A' : MS.groups.length > 1 ? 'compare A − B' : 'keep A on its own'} · Esc = cancel`;
   },
   down(app, p) {
     try {
@@ -299,11 +308,10 @@ export const measureTool: Tool = {
     app.invalidate('canvas');
   },
   context(app) {
-    if (mode !== 'line') return false;
+    if (mode !== 'line' || !hasOpen()) return false; // nothing picked: the canvas menu
     okMeasure(app); return true;
   },
   key(app, e) {
-    if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) { this.setMode!(app, mode === 'line' ? 'distance' : 'line'); return true; }
     if (mode === 'line') {
       if (e.key === 'Enter') { if (!hasOpen()) return false; okMeasure(app); return true; }
       if (e.key === 'Escape') { if (!hasOpen()) return false; cancelMeasure(); renderMeasureWindow(app); app.status('Measure cancelled'); app.invalidate('canvas'); return true; }
@@ -356,4 +364,17 @@ export const measureTool: Tool = {
     }
     return s;
   },
+};
+
+/** Measure Distance: its own tool (point to point; Ctrl = 3-point angle; Alt-click a point = per-size position). */
+export const measureDistTool: Tool = {
+  id: 'measureDist', title: 'Measure Distance', group: 'measuredist', hotkey: 'Q', icon: ICON.measureDist, cursor: 'crosshair',
+  activate() { pts = []; hover = null; result = ''; hoverHit = null; mode = 'distance'; },
+  deactivate(app) { pts = []; hover = null; closeWindow('measure'); app.invalidate('canvas'); },
+  busy: () => pts.length > 0 && pts.length < (angleMode ? 3 : 2),
+  hint: () => measureTool.hint!(null as unknown as App),
+  down(app, p) { mode = 'distance'; measureTool.down!(app, p); },
+  move(app, p) { mode = 'distance'; measureTool.move!(app, p); },
+  key(app, e) { if (e.key === 'Escape' && pts.length) { pts = []; result = ''; app.invalidate(); return true; } return false; },
+  overlay(app) { return mode === 'distance' ? measureTool.overlay!(app) : ''; },
 };

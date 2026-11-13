@@ -718,7 +718,9 @@ const ML: {
   pick: LPick | null; before: ReturnType<App['snapshotSel']> | null; op: LOp | null; frozen: boolean; hover: SelItem | null; last: { mode: string; v: Record<string, number> } | null;
   /** Copy internal: the picked line is stuck to the mouse (world polyline, grab point, cursor) */
   carry: { pk: LPick; pts: Vec[]; grabW: Vec; cur: Vec; add: Vec } | null;
-} = { pick: null, before: null, op: null, frozen: false, hover: null, last: null, carry: null };
+  /** Copy internal: a whole panel is picked; all its lines go onto the next piece clicked, where the panel lies */
+  panel: Id | null;
+} = { pick: null, before: null, op: null, frozen: false, hover: null, last: null, carry: null, panel: null };
 type MLMode = Settings['moveLineMode'];
 const mlMode = (): MLMode => settings.moveLineMode ?? 'translate';
 const mlCopy = () => !!settings.moveLineCopy && mlMode() !== 'copyTo';
@@ -827,6 +829,25 @@ function mlPaste(app: App, atW: Vec): boolean {
   app.invalidate();
   return ok;
 }
+/** Copy internal by overlay: every line of the picked panel is copied onto `target`, exactly where the panel lies on it. */
+function mlPastePanel(app: App, target: Piece): boolean {
+  const src = app.doc.style.pieces.find(p => p.id === ML.panel); if (!src) { ML.panel = null; return false; }
+  if (target.locked) { toast(lockedMsg(target), 'warn'); return false; }
+  const f = (q: Vec) => toLocal(target, toWorld(src, q));
+  const o = f({ x: 0, y: 0 }), ex = f({ x: 1, y: 0 }), ey = f({ x: 0, y: 1 });
+  const m = { a: ex.x - o.x, b: ex.y - o.y, c: ey.x - o.x, d: ey.y - o.y, e: o.x, f: o.y };
+  const lines = [src.sew, ...src.internals.filter(c => c.type !== 'dartAxis' && c.type !== 'pleatAxis')].map(c => c.id);
+  const ok = commitWith(app, [src.id, target.id], 'Copy panel lines', d => { for (const cid of lines) ops.copyLineTo(d, { pieceId: src.id, contourId: cid }, target.id, m); });
+  if (ok) { app.status(`${lines.length} line${lines.length > 1 ? 's' : ''} of “${src.name}” copied onto “${target.name}” as internal lines, where the panel lies · click another piece to copy again · Esc = done`); app.applySel({ k: 'piece', pieceId: target.id }, 'replace'); }
+  app.invalidate();
+  return ok;
+}
+/** the pieces under a point, top candidate first */
+function piecesAt(app: App, w: Vec): Piece[] {
+  const ids: Id[] = [];
+  for (const c of candidatesAt(app, w, 'all', { kinds: ['piece', 'segment'] })) { const id = c.item.k === 'piece' ? c.item.pieceId : (c.item as { seg: SegSel }).seg.pieceId; if (!ids.includes(id)) ids.push(id); }
+  return ids.map(id => app.doc.piece(id));
+}
 async function mlCarryStart(app: App, w: Vec) {
   const pk = ML.pick!; const pts = mlWorld(app, pk); if (pts.length < 2) return;
   if (!(await confirmDialog('Copy internal', 'Copy this line? It sticks to the mouse: left-click a panel to put it there, or right-click to type a movement from the click position.', 'OK'))) return;
@@ -892,19 +913,20 @@ async function mlInput(app: App, typed?: string) {
 }
 export const moveLineTool: Tool = {
   id: 'moveLine', title: 'Move / Copy Line', group: 'moveline', hotkey: 'Shift+G', icon: ICON.moveLine, cursor: 'crosshair',
-  activate(app) { ML.op = null; ML.frozen = false; ML.carry = null; mlAdopt(app); },
-  deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); ML.op = null; ML.carry = null; ML.frozen = false; ML.hover = null; app.cancelPreview(); },
-  busy: () => !!ML.op || !!ML.carry,
+  activate(app) { ML.op = null; ML.frozen = false; ML.carry = null; ML.panel = null; mlAdopt(app); },
+  deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); ML.op = null; ML.carry = null; ML.panel = null; ML.frozen = false; ML.hover = null; app.cancelPreview(); },
+  busy: () => !!ML.op || !!ML.carry || !!ML.panel,
   modes: () => ML_MODES,
   mode: () => mlMode(),
-  setMode(app, id) { settings.moveLineMode = id as MLMode; saveSettings(); ML.op = null; ML.carry = null; app.cancelPreview(); app.invalidate(); },
+  setMode(app, id) { settings.moveLineMode = id as MLMode; saveSettings(); ML.op = null; ML.carry = null; ML.panel = null; app.cancelPreview(); app.invalidate(); },
   toggles: () => mlMode() === 'copyTo' ? [] : [{ id: 'copy', label: 'Copy', title: 'On: the original line stays and a copy is made (an internal line). Off: the line itself moves.', on: !!settings.moveLineCopy }],
   toggle(app, id) { if (id === 'copy') { settings.moveLineCopy = !settings.moveLineCopy; saveSettings(); ML.op = null; app.cancelPreview(); app.invalidate(); } },
   badge(app) { return sizeBadge(app, mlValid(app) ? mlSid(app, ML.pick!) : editSidActive(app)); },
   hint(app) {
     const head = mlHead();
     if (ML.carry) return `${head} · The line is on the mouse · left-click a panel to put it there · right-click = type a movement from the click position · Esc cancel`;
-    if (mlMode() === 'copyTo') return mlValid(app) ? `${head} · Right-click the picked line, then OK: it sticks to the mouse · or click another line · Esc = Select` : `${head} · Click the line to copy (any outline segment or internal line) · Tab = mode · Esc = back to Select`;
+    if (mlMode() === 'copyTo' && ML.panel) return `${head} · Panel picked with all its lines · click the piece it lies on: the lines are copied there, exactly where the panel is · Esc = done`;
+    if (mlMode() === 'copyTo') return mlValid(app) ? `${head} · Right-click the picked line, then OK: it sticks to the mouse · or click another line · Esc = Select` : `${head} · Lay a small panel on a piece and click inside the panel = all its lines · or click one line to copy just that · Tab = mode · Esc = back to Select`;
     if (!mlValid(app)) return `${head} · Select segment (or internal line) to ${mlCopy() ? 'copy' : 'move'} · Tab = mode · Esc = back to Select`;
     if (ML.op && ML.op.kind !== 'press') {
       const pc = app.doc.piece(mlPieceId(ML.pick!));
@@ -921,11 +943,24 @@ export const moveLineTool: Tool = {
       if (Math.hypot(p.s.x - ML.op.s.x, p.s.y - ML.op.s.y) < 6) { ML.op = { ...ML.op, kind: 'press', s: p.s, again: true }; app.cancelPreview(); return; }
       mlCommit(app, mlDeltaFromCursor(app, ML.op, p.w, p.e)); return;
     }
+    if (mlMode() === 'copyTo' && ML.panel) {
+      // a panel is picked: the next piece clicked receives its lines
+      const target = piecesAt(app, p.w).find(q => q.id !== ML.panel);
+      if (target) mlPastePanel(app, target); else app.status('Copy internal: click the piece under the panel that should receive its lines · Esc = done');
+      return;
+    }
     const c = candidatesAt(app, p.w, 'all', { kinds: ['segment', 'internal'] })[0];
+    if (!c && mlMode() === 'copyTo') {
+      // off the lines, inside a piece: the whole panel is picked
+      // where pieces overlap, the smallest one under the cursor is the panel
+      const area = (q: Piece) => { const b = pieceWorldBox(app.doc, q, app.sizeOf(q)); return (b.maxX - b.minX) * (b.maxY - b.minY); };
+      const pc0 = piecesAt(app, p.w).sort((x, y) => area(x) - area(y))[0];
+      if (pc0) { ML.panel = pc0.id; ML.pick = null; app.applySel({ k: 'piece', pieceId: pc0.id }, 'replace'); app.status(`Panel “${pc0.name}” picked with all its lines: now click the piece it lies on`); app.invalidate(); return; }
+    }
     if (!c) { app.status('Nothing to pick here: click a segment or an internal line'); return; }
     const pk: LPick = c.item.k === 'segment' ? { kind: 'segment', seg: c.item.seg } : { kind: 'internal', c: (c.item as { c: ContourSel }).c };
     const pc = app.doc.piece(mlPieceId(pk));
-    if (mlMode() === 'copyTo') { ML.pick = pk; ML.before = null; app.applySel(mlItem(pk), 'replace'); app.status('Line picked: right-click it, then OK, to copy it onto a panel'); app.invalidate(); return; }
+    if (mlMode() === 'copyTo') { ML.panel = null; ML.pick = pk; ML.before = null; app.applySel(mlItem(pk), 'replace'); app.status('Line picked: right-click it, then OK, to copy it onto a panel'); app.invalidate(); return; }
     if (pc.locked) { toast(lockedMsg(pc), 'warn'); return; }
     const why = pk.kind === 'internal' && !mlCopy() ? lockBlock(app, pc.id, pk.c.contourId, null, 'line') : null;
     if (why) { app.applySel(mlItem(pk), 'replace'); toast(why, 'warn'); app.status('🔒 ' + why); return; }
@@ -971,6 +1006,7 @@ export const moveLineTool: Tool = {
   },
   key(app, e) {
     if (inputBoxOpen()) return false;
+    if (e.key === 'Escape' && ML.panel) { ML.panel = null; app.status('Panel released'); app.invalidate(); return true; }
     if (e.key === 'Escape') { if (ML.carry) { ML.carry = null; app.status('Copy cancelled'); app.invalidate(); return true; } if (ML.op) { ML.op = null; app.cancelPreview(); app.status('Move cancelled'); return true; } app.setTool('select'); return true; }
     if (e.key === 'Backspace') {
       if (ML.carry) { ML.carry = null; app.invalidate(); return true; }
@@ -1005,6 +1041,7 @@ export const moveLineTool: Tool = {
       const sid = mlSid(app, ML.pick!);
       out.push(itemHighlight(app, mlItem(ML.pick!), 1, sid ? AMBER : SEL_COLOR));
     }
+    if (ML.panel && app.doc.style.pieces.some(q => q.id === ML.panel)) out.push(itemHighlight(app, { k: 'piece', pieceId: ML.panel }, 1, '#d6309b'));
     const cy = ML.carry;
     if (cy) {
       const dx = cy.cur.x + cy.add.x - cy.grabW.x, dy = cy.cur.y + cy.add.y - cy.grabW.y;
@@ -1443,15 +1480,89 @@ export const curveTool: Tool = {
   },
 };
 
-/** Flip Piece: its own tool (click = left ⇄ right, Shift+click = up ⇄ down). */
-export const flipTool: Tool = {
-  id: 'flipPiece', title: 'Flip Piece', group: 'flip', icon: ICON.flip, cursor: 'crosshair',
+/**
+ * Grain tool (replaces the Flip tool). Options on top:
+ *   Flip horizontal / Flip vertical   click a piece: it flips left ⇄ right / up ⇄ down
+ *   Grain to piece position           click a piece: its grain line becomes screen-horizontal again, the piece stays
+ *   Piece to grain                    click a piece: the piece turns so that its grain line lies screen-horizontal
+ */
+type GrainMode = 'flipH' | 'flipV' | 'grainSet' | 'pieceToGrain';
+const GRAIN_MODES: { id: GrainMode; label: string; title: string }[] = [
+  { id: 'flipH', label: 'Flip horizontal', title: 'Click a piece: flip it left ⇄ right (selected pieces flip together)' },
+  { id: 'flipV', label: 'Flip vertical', title: 'Click a piece: flip it up ⇄ down (selected pieces flip together)' },
+  { id: 'grainSet', label: 'Grain to piece position', title: 'After a piece was rotated or flipped: click it and its grain line is set to screen-horizontal. The piece stays where it is.' },
+  { id: 'pieceToGrain', label: 'Piece to grain', title: 'Click a piece: it turns back so that its grain line lies screen-horizontal (its original direction)' },
+];
+const grainMode = (): GrainMode => (settings.toolState?.grain?.mode as GrainMode) ?? 'flipH';
+/** screen angle (degrees) of a piece's grain line */
+function grainAngle(p: Piece): number { const d = dirToWorld(p, { x: p.grain.b.x - p.grain.a.x, y: p.grain.b.y - p.grain.a.y }); return Math.atan2(d.y, d.x) * 180 / Math.PI; }
+/** Grain line → screen-horizontal; the piece does not move. */
+export function grainToHorizontal(app: App, ids: Id[]) {
+  if (!ids.length) { app.status('Select a piece first'); return; }
+  const locked = ids.map(id => app.doc.piece(id)).find(p => p.locked);
+  if (locked) { toast(lockedMsg(locked), 'warn'); return; }
+  try {
+    app.doc.transact('Set grain to piece position', () => {
+      for (const id of ids) {
+        const p = app.doc.piece(id); const g = p.grain;
+        const L = Math.hypot(g.b.x - g.a.x, g.b.y - g.a.y) || 100; const m = { x: (g.a.x + g.b.x) / 2, y: (g.a.y + g.b.y) / 2 };
+        const u = dirToLocal(p, { x: 1, y: 0 }); const ul = Math.hypot(u.x, u.y) || 1;
+        const d = { x: u.x / ul * L, y: u.y / ul * L };
+        p.grain = { ...g, a: { x: m.x - d.x / 2, y: m.y - d.y / 2 }, b: { x: m.x + d.x / 2, y: m.y + d.y / 2 } };
+      }
+    });
+    app.status(`Grain line set to screen-horizontal on ${ids.length} piece(s) · the piece${ids.length > 1 ? 's' : ''} did not move`);
+  } catch (err) { reportError(err, 'Set grain'); }
+  app.invalidate();
+}
+/** Turn the piece so that its grain line lies screen-horizontal (layout only). */
+export function pieceToGrain(app: App, ids: Id[]) {
+  if (!ids.length) { app.status('Select a piece first'); return; }
+  const locked = ids.map(id => app.doc.piece(id)).find(p => p.locked);
+  if (locked) { toast(lockedMsg(locked), 'warn'); return; }
+  try {
+    let turned = 0;
+    app.doc.transact('Piece to grain', () => {
+      for (const id of ids) {
+        const p = app.doc.piece(id);
+        let rot = -grainAngle(p); rot = ((rot + 90) % 180 + 180) % 180 - 90; // the smaller turn: the grain has no head or tail
+        if (Math.abs(rot) < 1e-9) continue;
+        p.layout = rotatedLayout(layoutOf(p), rot, pcCentre(app, [id])); turned++;
+      }
+    });
+    app.status(turned ? `${turned} piece(s) turned back onto the grain (grain line screen-horizontal)` : 'Already on the grain');
+  } catch (err) { reportError(err, 'Piece to grain'); }
+  app.invalidate();
+}
+export const grainTool: Tool = {
+  id: 'grain', title: 'Grain / Flip', group: 'grain', icon: ICON.grain, cursor: 'crosshair',
   activate() { PCS.op = null; PCS.frozen = false; PCS.pin = null; PCS.active = 'flip'; },
-  deactivate(app) { PCS.op = null; PCS.pin = null; app.cancelPreview(); },
-  hint: () => 'Flip · Click a piece = flip left ⇄ right · Shift+click = up ⇄ down (selected pieces flip together) · Esc = Select',
-  down(app, p) { rotateTool.down!(app, p); },
-  move(app, p) { rotateTool.move!(app, p); },
-  key(app, e) { if (e.key === 'Escape') { app.setTool('select'); return true; } return false; },
+  deactivate(app) { PCS.op = null; PCS.pin = null; PCS.hover = null; app.cancelPreview(); },
+  modes: () => GRAIN_MODES,
+  mode: () => grainMode(),
+  setMode(app, id) { (settings.toolState ??= {}).grain = { ...(settings.toolState.grain ?? {}), mode: id }; saveSettings(); app.invalidate(); },
+  hint: () => {
+    const m = grainMode();
+    return m === 'flipH' ? 'Grain · Flip horizontal: click a piece = flip left ⇄ right (selected pieces flip together) · Tab = next option · Esc = Select'
+      : m === 'flipV' ? 'Grain · Flip vertical: click a piece = flip up ⇄ down · Tab = next option · Esc = Select'
+      : m === 'grainSet' ? 'Grain · Grain to piece position: click a piece, its grain line becomes screen-horizontal and the piece stays · Tab = next option · Esc = Select'
+      : 'Grain · Piece to grain: click a piece, it turns so that its grain line lies screen-horizontal · Tab = next option · Esc = Select';
+  },
+  down(app, p) {
+    const pc = pcPieceAt(app, p.w);
+    if (!pc) { app.status('Nothing to pick here: click a piece'); return; }
+    const ids = pcIdsFor(app, pc); if (!ids) return;
+    const m = grainMode();
+    if (m === 'flipH' || m === 'flipV') flipPieces(app, ids, m === 'flipH' ? 'h' : 'v');
+    else if (m === 'grainSet') grainToHorizontal(app, ids);
+    else pieceToGrain(app, ids);
+  },
+  move(app, p) { const pc = pcPieceAt(app, p.w); const id = pc?.id ?? null; if (id !== PCS.hover) { PCS.hover = id; app.invalidate('canvas'); } },
+  key(app, e) {
+    if (e.key === 'Escape') { app.setTool('select'); return true; }
+    if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) { const i = GRAIN_MODES.findIndex(m => m.id === grainMode()); grainTool.setMode!(app, GRAIN_MODES[(i + (e.shiftKey ? GRAIN_MODES.length - 1 : 1)) % GRAIN_MODES.length].id); return true; }
+    return false;
+  },
   overlay(app) { return PCS.hover ? itemHighlight(app, { k: 'piece', pieceId: PCS.hover }, 0.5) : ''; },
 };
 
