@@ -85,6 +85,32 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
     });
     app.sel = { pieces: ids, anchors: [] };
   } });
+  // Piece ▸ Copy piece / Paste piece: an in-app clipboard (it survives File ▸ New / Open within the session)
+  registerCommand({ id: 'piece.copy', title: 'Copy piece', menu: 'Piece', group: 0, hotkey: 'Ctrl+C', enabled: hasPiece, run: () => {
+    const ps = selPieces(); if (!ps.length) { app.status('Copy piece: select a piece first'); return; }
+    pieceClip.items = ps.map(p => { const b = pieceWorldBox(app.doc, p, app.sizeOf(p)); return { piece: deepClone(p), w: b.maxX - b.minX }; });
+    pieceClip.n = 0;
+    toast(`${ps.length} piece${ps.length > 1 ? 's' : ''} copied · Ctrl+V = paste`, 'ok');
+  } });
+  registerCommand({ id: 'piece.paste', title: 'Paste piece', menu: 'Piece', group: 0, hotkey: 'Ctrl+V', run: () => {
+    if (!pieceClip.items.length) { app.status('Paste piece: nothing copied yet (select a piece, Ctrl+C)'); return; }
+    const ids: string[] = []; const n = ++pieceClip.n;
+    const names = new Set(app.style.pieces.map(p => p.name));
+    tx('Paste piece', () => {
+      for (const it of pieceClip.items) {
+        const c = remapIds(deepClone(it.piece));
+        let name = it.piece.name + ' COPY'; for (let k = 2; names.has(name); k++) name = `${it.piece.name} COPY ${k}`;
+        c.name = name; names.add(name);
+        if (!app.style.sizeTables.some(t => t.id === c.sizeTableId)) c.sizeTableId = app.style.activeSizeTableId;
+        const L = layoutOf(it.piece);
+        c.layout = { ...L, x: L.x + (it.w + 30) * n, y: L.y };
+        c.locked = false;
+        app.style.pieces.push(c); ids.push(c.id);
+      }
+    });
+    app.sel = { pieces: ids, anchors: [] };
+    app.status(`${ids.length} piece${ids.length > 1 ? 's' : ''} pasted · Ctrl+V again = another copy`);
+  } });
   registerCommand({ id: 'edit.selectAll', title: 'Select all (current filter; All = pieces)', menu: 'Edit', group: 2, hotkey: 'Ctrl+A', run: () => selectAllByFilter(app) });
   registerCommand({ id: 'edit.selectAllPoints', title: 'Select all points of piece', menu: 'Edit', group: 2, hotkey: 'Ctrl+Shift+A', enabled: hasPiece, run: () => {
     const p = onePiece();
@@ -180,6 +206,9 @@ function mixGrade(app: App, cur: Record<SizeId, GradeInc>, src: Record<SizeId, G
 }
 
 /** Fresh ids for a duplicated piece (anchors, contours, live objects) with references remapped. */
+/** Piece ▸ Copy piece clipboard: deep copies of the copied pieces, their sheet width, and how many pastes were made. */
+const pieceClip: { items: { piece: Piece; w: number }[]; n: number } = { items: [], n: 0 };
+
 function remapIds(p: Piece): Piece {
   const map = new Map<string, string>();
   const re = (old: string, prefix: string) => { const n = newId(prefix); map.set(old, n); return n; };

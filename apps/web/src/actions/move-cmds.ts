@@ -44,9 +44,15 @@ export function registerMoveCmds(app: App) {
   // ───── Piece ▸ Modify Piece ─────
   const selPieceIds = () => app.sel.pieces.filter(id => !app.hasSubSelection(id) || app.sel.pieces.length === 1);
   const rot = (id: string, title: string, mode: 'point' | 'piece') => registerCommand({
-    id, title, menu: 'Piece/Modify Piece', checked: () => app.tool?.id === 'rotatePiece' && (settings.rotateMode ?? 'point') === mode,
-    run: () => { settings.rotateMode = mode; saveSettings(); app.setTool('rotatePiece'); },
+    id, title, menu: 'Piece/Modify Piece', checked: () => app.tool?.id === 'rotatePiece' && !settings.rotateLine && (settings.rotateMode ?? 'point') === mode,
+    run: () => { settings.rotateMode = mode; settings.rotateLine = false; saveSettings(); app.setTool('rotatePiece'); app.invalidate(); },
   });
+  const rotLine = (id: string, title: string, mode: 'point' | 'piece') => registerCommand({
+    id, title, menu: 'Segment/Modify Line', checked: () => app.tool?.id === 'rotatePiece' && !!settings.rotateLine && (settings.rotateMode ?? 'point') === mode,
+    run: () => { settings.rotateMode = mode; settings.rotateLine = true; saveSettings(); app.setTool('rotatePiece'); app.invalidate(); },
+  });
+  rotLine('move.lineRotatePoint', 'Rotate internal line by point (pin + second point)', 'point');
+  rotLine('move.lineRotate', 'Rotate internal line (about its centre, 0–360°)', 'piece');
   rot('move.pieceRotatePoint', 'Rotate by point (pin + second point)', 'point');
   rot('move.pieceRotate', 'Rotate Piece (about its centre, 0–360°)', 'piece');
   registerCommand({ id: 'move.rotateKeepGrain', title: 'Rotate: keep grain direction', menu: 'Piece/Modify Piece', checked: () => !!settings.rotateKeepGrain, run: () => { settings.rotateKeepGrain = !settings.rotateKeepGrain; saveSettings(); app.status(settings.rotateKeepGrain ? 'Rotate: the grain line keeps its direction on the sheet' : 'Rotate: the grain line turns with the piece'); app.invalidate(); } });
