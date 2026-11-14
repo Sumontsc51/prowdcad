@@ -2,7 +2,7 @@
  * Walk tool (W) — drives the kernel walk state machine (ops/walk).
  *   1. click a sew point on the MOVING piece        (anchor = contact start)
  *   2. click a sew point on the STATIONARY piece
- *   then:  →/↑ or wheel-down = step forward · ←/↓ or wheel-up = step back (Shift ×10, Alt ×0.1)
+ *   then:  click a seam = walk there (never past the next grade point) · →/↑ = step forward · ←/↓ = step back (Shift ×10, Alt ×0.1)
  *          [ / ] step size ÷2 / ×2 · S step-size dialog · R walk ratio dialog · K toggle skip darts
  *          F flip moving direction · G flip stationary direction · B flip both
  *          N drop notch on both · Shift+N stationary only · Alt+N moving only
@@ -63,6 +63,29 @@ function ptAt(side: WalkState['stationary'], sv0: number): Vec {
 function travelDir(side: WalkState['stationary'], dir: 1 | -1 = side.dir, eps = 0.5): Vec {
   const a = ptAt(side, side.s), b = ptAt(side, side.s + dir * eps); const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
   return { x: (b.x - a.x) / d, y: (b.y - a.y) / d };
+}
+/** distance along a side, in its walk direction (sign = +1) or against it (−1), from the contact to the nearest grade point beyond it */
+function toGrade(side: WalkState['stationary'], sign: 1 | -1): number {
+  const cum = side.r.cum; const tot = cum[cum.length - 1] || 1;
+  let best = tot;
+  for (const gi of side.r.gradeIdx) {
+    const g = cum[side.r.anchorIndex[gi]] ?? 0;
+    const d = ((((g - side.s) * side.dir * sign) % tot) + tot) % tot;
+    if (d > 1e-4 && d < best) best = d;
+  }
+  return best;
+}
+/**
+ * A walk never runs past the next grade point: the target (distance walked on the stationary piece) is held at
+ * the nearest grade point ahead of the contact on either seam (or behind it, when walking back).
+ */
+function limitTarget(st: WalkState, target: number): { target: number; stopped: boolean } {
+  const cur = st.stationary.run; const ratio = st.options.walkRatio || 1;
+  if (Math.abs(target - cur) < 1e-9) return { target, stopped: false };
+  const sign = (target > cur ? 1 : -1) as 1 | -1;
+  const room = Math.min(toGrade(st.stationary, sign), toGrade(st.moving, sign) / ratio);
+  const lim = cur + sign * room;
+  return sign > 0 ? { target: Math.min(target, lim), stopped: target > lim + 1e-6 } : { target: Math.max(target, lim), stopped: target < lim - 1e-6 };
 }
 /** Direction of the seam around the contact, in the walk direction: from up to 1 cm behind (only what was walked) to 1 cm ahead. */
 function matchChord(side: WalkState['stationary'], span = 10): Vec {
@@ -154,7 +177,11 @@ function step(app: App, mult: number) {
   if (!W.state) return;
   try {
     if (W.rev !== app.doc.revision()) { W.state = ops.refreshWalk(app.doc, W.state); W.rev = app.doc.revision(); }
-    W.state = ops.walkStep(W.state, W.stepMm * mult);
+    const lim = limitTarget(W.state, W.state.stationary.run + W.stepMm * mult);
+    W.state = ops.walkTo(W.state, lim.target);
+    showMoving(app);
+    app.status((lim.stopped ? 'Stopped at the grade point · ' : '') + hud()); app.invalidate('canvas');
+    return;
   } catch (err) { reportError(err, 'Walk'); }
   showMoving(app);
   app.status(hud()); app.invalidate('canvas');
@@ -207,7 +234,7 @@ export const walkTool: Tool = {
   activate(app) { reset(app); },
   deactivate(app) { finish(app); },
   busy: () => !!W.moving,
-  hint: () => W.state ? hud() + ' · click the seam = walk to there · arrows/wheel step · N notch · F/G/B flip · [ ] step · R ratio · K darts · Esc = end (the piece stays here)'
+  hint: () => W.state ? hud() + ' · click the seam = walk there (stops at the next grade point) · arrows step · N notch · F/G/B flip · [ ] step · R ratio · K darts · Esc = end (the piece stays here)'
     : W.moving ? 'Walk: click the point on the second piece (it stays): the first piece is placed onto it' : 'Walk: click a point on the first piece (the one that walks)',
   down(app, p) {
     if (W.state) {
@@ -221,7 +248,7 @@ export const walkTool: Tool = {
       const b = pl ? alongSide(st.moving, pl.toLocal(p.w)) : { dist: 0, off: Infinity, tot: 1 };
       const useMoving = b.off < a.off;
       const hit = useMoving ? b : a;
-      if (hit.off * app.view.scale > 25) { app.status('Walk: click on (or near) a seam line to walk there · arrows / wheel step · Esc = end'); return; }
+      if (hit.off * app.view.scale > 25) { app.status('Walk: click on (or near) a seam line to walk there · arrows step · Esc = end'); return; }
       const ratio = st.options.walkRatio || 1;
       let dist = useMoving ? hit.dist / ratio : hit.dist; const tot = useMoving ? hit.tot / ratio : hit.tot;
       try {
@@ -242,7 +269,9 @@ export const walkTool: Tool = {
           }
           W.delta = undefined; W.lastAng = undefined; // nothing walked yet: the piece keeps the direction the user set
         }
-        W.state = ops.walkTo(cur, dist); showMoving(app); app.status(`Walked to the click · ${hud()}`);
+        const lim = limitTarget(cur, dist);
+        W.state = ops.walkTo(cur, lim.target); showMoving(app);
+        app.status(`${lim.stopped ? 'Walked to the next grade point (a walk stops there; click again to go on)' : 'Walked to the click'} · ${hud()}`);
       } catch (err) { reportError(err, 'Walk'); }
       app.invalidate('canvas'); return;
     }
@@ -252,12 +281,6 @@ export const walkTool: Tool = {
     start(app, { pieceId: h.piece.id, anchorId: h.anchor.id });
   },
   move(app, p) { if (W.moving && !W.state) { const h = anchorNear(app, p.w, { contour: 'sew' }); hoverW = h ? h.world : p.w; app.invalidate('canvas'); } },
-  wheel(app, e) {
-    if (!W.state || e.ctrlKey) return false;
-    const k = e.shiftKey ? 10 : e.altKey ? 0.1 : 1;
-    step(app, (e.deltaY > 0 ? 1 : -1) * k);
-    return true;
-  },
   key(app, e) {
     if (!W.moving && !W.state) return false;
     if (e.key === 'Escape') { const kept = finish(app); app.status(kept ? 'Walk ended · the piece stays at its last walk position, so you can match or adjust there (Ctrl+Z puts it back)' : 'Walk ended'); return true; }
@@ -280,7 +303,7 @@ export const walkTool: Tool = {
         W.state = ops.refreshWalk(app.doc, W.state); showMoving(app); app.status(hud()); return true;
       }
       case 's': void (async () => {
-        const r = await showDialog({ title: 'Walk step', fields: [{ kind: 'length', key: 'v', label: 'Step (arrow / wheel)', value: W.stepMm, min: 0.001 }] });
+        const r = await showDialog({ title: 'Walk step', fields: [{ kind: 'length', key: 'v', label: 'Step (arrow keys)', value: W.stepMm, min: 0.001 }] });
         if (r) { W.stepMm = r.v as number; app.status(hud()); }
       })(); return true;
       case 'r': void (async () => {
@@ -289,7 +312,7 @@ export const walkTool: Tool = {
       })(); return true;
       case 't': void (async () => {
         const r = await showDialog({ title: 'Walk to', fields: [{ kind: 'length', key: 'v', label: 'Stationary distance', value: ops.walkReport(W.state!).stationary }] });
-        if (r && W.state) { W.state = ops.walkTo(W.state, r.v as number); showMoving(app); app.status(hud()); app.invalidate('canvas'); }
+        if (r && W.state) { const lim = limitTarget(W.state, r.v as number); W.state = ops.walkTo(W.state, lim.target); showMoving(app); app.status((lim.stopped ? 'Stopped at the grade point · ' : '') + hud()); app.invalidate('canvas'); }
       })(); return true;
     }
     return false;
