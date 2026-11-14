@@ -19,7 +19,7 @@
  * points tied to it by a point connection (Piece ▸ Connections), which follow by design and are
  * marked on the sheet.
  */
-import { Document, rotatedLayout, flippedLayout, normalizeLayout, signedArea, type Vec, type Id, type SizeId, type Piece, type PieceLayout, type Contour } from '@prowdcad/kernel';
+import { Document, rotatedAnchors, rotatedLayout, flippedLayout, normalizeLayout, signedArea, type Vec, type Id, type SizeId, type Piece, type PieceLayout, type Contour } from '@prowdcad/kernel';
 import type { App, SelItem, SegSel, ContourSel } from '../app';
 import type { Tool, Ptr } from './tool';
 import { ICON } from './tool';
@@ -1158,18 +1158,159 @@ async function pcInput(app: App, typed?: string) {
   set(res.mode, res.v);
   pcCommit(app, mode === 'rotate' ? 'Rotate piece' : 'Move piece');
 }
+
+// ───────────────────────── Rotate: an internal line (same options as a piece) ─────────────────────────
+
+interface RLOp { kind: 'press' | 'drag' | 'carry'; pieceId: Id; contourId: Id; pivot: Vec; a0: number; deg: number; s: Vec; lastW: Vec }
+const LN: { op: RLOp | null; pin: { w: Vec; pieceId: Id; contourId: Id } | null; hover: ContourSel | null; frozen: boolean } = { op: null, pin: null, hover: null, frozen: false };
+const lineOn = () => !!settings.rotateLine;
+function lnReset(app: App) { LN.op = null; LN.pin = null; LN.hover = null; LN.frozen = false; app.cancelPreview(); }
+function lnLine(app: App, pieceId: Id, contourId: Id): { piece: Piece; contour: Contour } | null {
+  const piece = app.doc.style.pieces.find(q => q.id === pieceId); const contour = piece?.internals.find(c => c.id === contourId);
+  return piece && contour ? { piece, contour } : null;
+}
+/** The internal line under the cursor, else the one selected internal line. */
+function lnPick(app: App, w: Vec, orSelected: boolean): { piece: Piece; contour: Contour } | null {
+  const h = contourNear(app, w, { contour: 'internal', tolPx: 10 });
+  if (h) return { piece: h.piece, contour: h.contour };
+  if (!orSelected) return null;
+  const si = app.sel.internals[app.sel.internals.length - 1];
+  return si ? lnLine(app, si.pieceId, si.contourId) : null;
+}
+/** A turn of `deg` on the sheet, as the angle in the piece's own frame (a flipped piece turns the other way). */
+function lnLocalDeg(piece: Piece, deg: number): number {
+  const r = deg * Math.PI / 180;
+  const a = dirToLocal(piece, { x: 1, y: 0 }), b = dirToLocal(piece, { x: Math.cos(r), y: Math.sin(r) });
+  return Math.atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y) * 180 / Math.PI;
+}
+function lnCentre(app: App, piece: Piece, contour: Contour): Vec {
+  const rc = resolveFor(app.doc, piece, app.sizeOf(piece)).internals[piece.internals.indexOf(contour)];
+  const pts = rc?.pts.length ? rc.pts : contour.points;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const q of pts) { minX = Math.min(minX, q.x); minY = Math.min(minY, q.y); maxX = Math.max(maxX, q.x); maxY = Math.max(maxY, q.y); }
+  return toWorld(piece, { x: (minX + maxX) / 2, y: (minY + maxY) / 2 });
+}
+function lnPreview(app: App) {
+  const op = LN.op!; const l = lnLine(app, op.pieceId, op.contourId); if (!l) { lnReset(app); return; }
+  const pv = app.beginPreview(op.pieceId);
+  const dst = pv.internals.find(c => c.id === op.contourId);
+  if (dst) dst.points = rotatedAnchors(l.contour.points, toLocal(l.piece, op.pivot), lnLocalDeg(l.piece, op.deg));
+  app.invalidate('canvas', 'panels', 'status');
+}
+function lnCommit(app: App) {
+  const op = LN.op!; LN.op = null; app.preview.clear();
+  const l = lnLine(app, op.pieceId, op.contourId);
+  if (!l || Math.abs(op.deg) < 1e-9) { app.status('Not rotated'); app.invalidate(); return; }
+  try { ops.rotateInternal(app.doc, op.pieceId, op.contourId, toLocal(l.piece, op.pivot), lnLocalDeg(l.piece, op.deg)); app.status(`Line rotated ${deg360(op.deg)}°`); } catch (err) { reportError(err, 'Rotate line'); }
+  app.invalidate();
+}
+function lnStart(app: App, l: { piece: Piece; contour: Contour }, pivot: Vec, from: Vec, s: Vec, kind: RLOp['kind']): RLOp | null {
+  if (l.piece.locked) { toast(lockedMsg(l.piece), 'warn'); return null; }
+  app.applySel({ k: 'internal', c: { pieceId: l.piece.id, contourId: l.contour.id } }, 'replace');
+  return { kind, pieceId: l.piece.id, contourId: l.contour.id, pivot, a0: Math.atan2(from.y - pivot.y, from.x - pivot.x), deg: 0, s, lastW: from };
+}
+async function lnInput(app: App, typed?: string) {
+  if (inputBoxOpen()) return;
+  if (!LN.op) {
+    // noun → verb: the pinned line about its pin, else the selected line about its centre
+    const l = LN.pin ? lnLine(app, LN.pin.pieceId, LN.pin.contourId) : lnPick(app, { x: NaN, y: NaN }, true);
+    if (!l) { app.status('Rotate line: click an internal line first'); return; }
+    const pivot = LN.pin ? LN.pin.w : lnCentre(app, l.piece, l.contour);
+    LN.op = lnStart(app, l, pivot, { x: pivot.x + 1, y: pivot.y }, app.view.toScreen(pivot), 'carry'); LN.pin = null;
+    if (!LN.op) return;
+  }
+  const op = LN.op; op.kind = 'carry'; LN.frozen = true;
+  const res = await openInputBox({ title: 'Rotate Line', modes: [{ id: 'rot', label: 'Angle', fields: [{ key: 'a', label: 'Angle 0–360° (counter-clockwise)', kind: 'angle', value: deg360(op.deg) }] }], at: lastClient, typed, onPreview: (_m, v) => { if (v) { op.deg = v.a; lnPreview(app); } } });
+  LN.frozen = false;
+  if (!res) { LN.op = null; app.cancelPreview(); return; }
+  op.deg = res.v.a; lnCommit(app);
+}
+function lnDown(app: App, p: Ptr) {
+  if (inputBoxOpen() || LN.frozen) return;
+  if (LN.op?.kind === 'carry') { lnCommit(app); return; }
+  const e = p.e as MouseEvent;
+  const pt = rotMode() === 'point';
+  if (pt && LN.pin) {
+    const pin = LN.pin; const rot = e.altKey ? p.w : snapPoint(app, p.w).p;
+    const ps = app.view.toScreen(pin.w);
+    if (Math.hypot(ps.x - p.s.x, ps.y - p.s.y) < 6) { app.status('The second point must be away from the pin'); return; }
+    const l = lnLine(app, pin.pieceId, pin.contourId); LN.pin = null;
+    if (l) LN.op = lnStart(app, l, pin.w, rot, p.s, 'press');
+    app.invalidate(); return;
+  }
+  const l = lnPick(app, p.w, pt);
+  if (!l) { app.status(pt ? 'Rotate line: click the pin point on an internal line' : 'Rotate line: click or drag an internal line'); return; }
+  if (l.piece.locked) { toast(lockedMsg(l.piece), 'warn'); return; }
+  if (pt) {
+    app.applySel({ k: 'internal', c: { pieceId: l.piece.id, contourId: l.contour.id } }, 'replace');
+    LN.pin = { w: e.altKey ? p.w : snapPoint(app, p.w).p, pieceId: l.piece.id, contourId: l.contour.id };
+    app.status('Pin set: click the second point, then move the mouse to turn the line'); app.invalidate(); return;
+  }
+  LN.op = lnStart(app, l, lnCentre(app, l.piece, l.contour), p.w, p.s, 'press');
+}
+function lnMove(app: App, p: Ptr) {
+  const op = LN.op;
+  if (!op) {
+    const h = contourNear(app, p.w, { contour: 'internal', tolPx: 10 });
+    const nv = h ? { pieceId: h.piece.id, contourId: h.contour.id } : null;
+    if (nv?.contourId !== LN.hover?.contourId) { LN.hover = nv; app.invalidate('canvas'); }
+    return;
+  }
+  if (LN.frozen) return;
+  op.lastW = p.w;
+  if (op.kind === 'press') { if (Math.hypot(p.s.x - op.s.x, p.s.y - op.s.y) < THRESH_PX) return; op.kind = 'drag'; }
+  let deg = (Math.atan2(p.w.y - op.pivot.y, p.w.x - op.pivot.x) - op.a0) * 180 / Math.PI;
+  deg = ((deg + 540) % 360) - 180;
+  if ((p.e as MouseEvent).ctrlKey) deg = Math.round(deg / 15) * 15;
+  op.deg = deg;
+  lnPreview(app);
+}
+function lnUp(app: App) {
+  const op = LN.op; if (!op || LN.frozen) return;
+  if (op.kind === 'press') { op.kind = 'carry'; app.invalidate(); return; }
+  if (op.kind === 'drag') lnCommit(app);
+}
+function lnKey(app: App, e: KeyboardEvent): boolean {
+  if (inputBoxOpen()) return false;
+  if (e.key === 'Escape') { if (LN.op) { LN.op = null; app.cancelPreview(); app.status('Cancelled'); return true; } if (LN.pin) { LN.pin = null; app.status('Pin removed'); app.invalidate(); return true; } app.setTool('select'); return true; }
+  if (e.key === 'Tab' && !LN.op) { rotateTool.setMode!(app, rotMode() === 'point' ? 'piece' : 'point'); return true; }
+  if (e.key === 'Backspace') { if (LN.op) { LN.op = null; app.cancelPreview(); } else if (LN.pin) { LN.pin = null; app.invalidate(); } return true; }
+  if (isNumKey(e) && (LN.op || LN.pin || app.sel.internals.length)) { void lnInput(app, e.key); return true; }
+  return false;
+}
+function lnHint(app: App): string {
+  const pt = rotMode() === 'point'; const head = `Rotate line · ${pt ? 'By point' : 'Centre'}`;
+  const op = LN.op;
+  if (op && op.kind !== 'press') return `${head} · ${deg360(op.deg)}° · ${op.kind === 'carry' ? 'click to set' : 'release to set'} · Ctrl = 15° steps · type an angle or right-click = input box · Esc cancel`;
+  if (pt) return LN.pin ? `${head} · Pin set · click the second point (the one you turn), then move the mouse · or type an angle · Esc cancel` : `${head} · Click the pin point on an internal line (with a line selected: any place) · Tab = mode · Esc = Select`;
+  return app.sel.internals.length ? `${head} · type an angle 0–360 (or right-click) · or drag an internal line · Esc = Select` : `${head} · Click or drag an internal line to turn it about its centre · type an angle 0–360 · Tab = mode · Esc = Select`;
+}
+function lnOverlay(app: App): string {
+  const out: string[] = [];
+  if (LN.hover && !LN.op && lnLine(app, LN.hover.pieceId, LN.hover.contourId)) out.push(itemHighlight(app, { k: 'internal', c: LN.hover }, 0.5));
+  if (LN.pin && !LN.op) { const c = app.view.toScreen(LN.pin.w); out.push(screenMarker(c, 'cross', '#c0392b', 8) + screenMarker(c, 'ring', '#c0392b', 5) + `<text x="${fs(c.x + 10)}" y="${fs(c.y - 10)}" class="tool-note">pin</text>`); }
+  const op = LN.op;
+  if (op) {
+    const c = app.view.toScreen(op.pivot);
+    out.push(screenMarker(c, 'cross', SEL_COLOR, 8) + screenMarker(c, 'ring', SEL_COLOR, 5));
+    if (op.kind !== 'press') { const w = app.view.toScreen(op.lastW); out.push(`<path d="M${fs(c.x)} ${fs(c.y)}L${fs(w.x)} ${fs(w.y)}" stroke="${SEL_COLOR}" stroke-dasharray="4 3"/><text x="${fs(w.x + 10)}" y="${fs(w.y - 10)}" class="tool-note">${deg360(op.deg)}°</text>`); }
+  }
+  return out.join('');
+}
+
 export const rotateTool: Tool = {
-  id: 'rotatePiece', title: 'Rotate Piece', group: 'rotate', hotkey: 'Ctrl+Shift+G', icon: ICON.rotate, cursor: 'crosshair',
-  activate() { PCS.op = null; PCS.frozen = false; PCS.pin = null; PCS.active = 'rotate'; },
-  deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); PCS.op = null; PCS.pin = null; PCS.frozen = false; app.cancelPreview(); },
-  busy: () => !!PCS.op || !!PCS.pin,
-  modes: () => ROT_MODES,
+  id: 'rotatePiece', title: 'Rotate Piece / Line', group: 'rotate', hotkey: 'Ctrl+Shift+G', icon: ICON.rotate, cursor: 'crosshair',
+  activate() { PCS.op = null; PCS.frozen = false; PCS.pin = null; PCS.active = 'rotate'; LN.op = null; LN.pin = null; LN.hover = null; LN.frozen = false; },
+  deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); PCS.op = null; PCS.pin = null; PCS.frozen = false; lnReset(app); },
+  busy: () => !!PCS.op || !!PCS.pin || !!LN.op || !!LN.pin,
+  modes: () => (lineOn() ? [ROT_MODES[0], { id: 'piece', label: 'Centre', title: 'The line turns about its own centre; drag or type an angle 0–360° (Ctrl = 15° steps)' }] : ROT_MODES),
   mode: () => rotMode(),
-  setMode(app, id) { settings.rotateMode = id as 'point' | 'piece'; saveSettings(); PCS.op = null; PCS.pin = null; app.cancelPreview(); app.invalidate(); },
-  toggles: () => [{ id: 'grain', label: 'Keep grain direction', title: 'On: the grain line keeps its direction on the sheet while the piece turns. Off: the grain line turns with the piece.', on: !!settings.rotateKeepGrain }],
-  toggle(app, id) { if (id === 'grain') { settings.rotateKeepGrain = !settings.rotateKeepGrain; saveSettings(); if (PCS.op) pcPreview(app); app.invalidate(); } },
+  setMode(app, id) { settings.rotateMode = id as 'point' | 'piece'; saveSettings(); PCS.op = null; PCS.pin = null; lnReset(app); app.invalidate(); },
+  toggles: () => [{ id: 'line', label: 'Internal line', title: 'On: the tool turns an internal line (same options: by a pin point, or about its centre, drag or typed angle). Off: it turns the piece.', on: lineOn() }, { id: 'grain', label: 'Keep grain direction', title: 'On: the grain line keeps its direction on the sheet while the piece turns. Off: the grain line turns with the piece.', on: !!settings.rotateKeepGrain }],
+  toggle(app, id) { if (id === 'line') { settings.rotateLine = !settings.rotateLine; saveSettings(); PCS.op = null; PCS.pin = null; lnReset(app); app.invalidate(); return; } if (id === 'grain') { settings.rotateKeepGrain = !settings.rotateKeepGrain; saveSettings(); if (PCS.op) pcPreview(app); app.invalidate(); } },
   badge: () => null,
   hint(app) {
+    if (lineOn()) return lnHint(app);
     const pt = rotMode() === 'point'; const head = `Rotate · ${pt ? 'By point' : 'Piece'}`;
     const g = settings.rotateKeepGrain ? 'grain direction kept' : 'grain turns with the piece';
     const op = PCS.op;
@@ -1180,6 +1321,7 @@ export const rotateTool: Tool = {
   },
   down(app, p) {
     trackClient(p);
+    if (lineOn()) { lnDown(app, p); return; }
     if (inputBoxOpen() || PCS.frozen) return;
     const mode = pcMode();
     if (PCS.op?.kind === 'carry') {
@@ -1210,6 +1352,7 @@ export const rotateTool: Tool = {
   },
   move(app, p) {
     trackClient(p);
+    if (lineOn()) { lnMove(app, p); return; }
     const op = PCS.op;
     if (!op) { const pc = pcPieceAt(app, p.w); const id = pc?.id ?? null; if (id !== PCS.hover) { PCS.hover = id; app.invalidate('canvas'); } return; }
     if (PCS.frozen) return;
@@ -1229,6 +1372,7 @@ export const rotateTool: Tool = {
     pcPreview(app);
   },
   up(app) {
+    if (lineOn()) { lnUp(app); return; }
     const op = PCS.op; if (!op || PCS.frozen) return;
     if (op.kind === 'press' && op.again) { PCS.op = null; app.cancelPreview(); app.status('Put back'); return; }
     if (op.kind === 'press') { op.kind = 'carry'; app.invalidate(); return; }
@@ -1237,6 +1381,7 @@ export const rotateTool: Tool = {
   context(app, p) {
     trackClient(p);
     if (inputBoxOpen()) { inputBoxCommit(); return true; }
+    if (lineOn()) { if (LN.op || LN.pin || (app.sel.internals.length && !!contourNear(app, p.w, { contour: 'internal', tolPx: 10 }))) { void lnInput(app); return true; } return false; }
     // the movement box opens only on a selected piece (or during a move); elsewhere the canvas menu opens
     const under = PCS.op ? null : pcPieceAt(app, p.w);
     if (PCS.op || (pcMode() !== 'flip' && !PCS.pin && under && app.sel.pieces.includes(under.id))) { void pcInput(app); return true; }
@@ -1244,6 +1389,7 @@ export const rotateTool: Tool = {
   },
   key(app, e) {
     if (inputBoxOpen()) return false;
+    if (lineOn()) return lnKey(app, e);
     const op = PCS.op;
     if (e.key === 'Escape') { if (op) { PCS.op = null; app.cancelPreview(); app.status('Cancelled'); return true; } if (PCS.pin) { PCS.pin = null; app.status('Pin removed'); app.invalidate(); return true; } app.setTool('select'); return true; }
     if (e.key === 'Tab' && !op && pcMode() === 'rotate') { rotateTool.setMode!(app, rotMode() === 'point' ? 'piece' : 'point'); return true; }
@@ -1264,6 +1410,7 @@ export const rotateTool: Tool = {
     try { ops.transformPieceLayouts(app.doc, ids, { dx, dy }, 'Nudge piece'); } catch (err) { reportError(err, 'Nudge piece'); }
   },
   overlay(app) {
+    if (lineOn()) return lnOverlay(app);
     const out: string[] = [];
     if (PCS.hover && !PCS.op) out.push(itemHighlight(app, { k: 'piece', pieceId: PCS.hover }, 0.5));
     const op = PCS.op;
