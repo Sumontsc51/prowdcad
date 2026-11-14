@@ -12,7 +12,7 @@ import { newId, makeContour } from '../model/factory';
 import { deletePoint } from './points';
 import {
   contourOf, idx, resolveBase, arcS, spanLen, spanPoly, pointAt, closestArc, closedPoly, extractRange, transformAnchor,
-  nextGrade, prevGrade, jsonClone, type Xf,
+  nextGrade, prevGrade, jsonClone, xfRotate, type Xf,
 } from '../geom/draft-geom';
 
 /** A line: a run of a contour (from → to, contour direction) or, without from / to, the whole contour. */
@@ -230,5 +230,37 @@ export function lineFollowShape(doc: Document, ref: LineRef, d: Vec, o: { copy?:
     }
     const rr = resolveBase(contour, line); res.lengthAfter = spanLen(rr, ia, ib);
     return res;
+  });
+}
+
+// ───────────────────────── rotate an internal line ─────────────────────────
+
+/** Copies of the anchors turned by `deg` (counter-clockwise, piece frame) about `pivot`: positions, handles and grading. */
+export function rotatedAnchors(points: Anchor[], pivot: Vec, deg: number): Anchor[] {
+  const xf = xfRotate(pivot, deg * Math.PI / 180);
+  return points.map(a => { const c = jsonClone(a); transformAnchor(c, xf); return c; });
+}
+
+/**
+ * Rotate one internal line (open or closed) about `pivot` (piece-local, base size) by `deg`
+ * counter-clockwise. The line turns rigidly in every size. Ends that were locked to the outline and
+ * move are released (the pin end of a locked line stays attached); a line locked parallel / to a
+ * point must be unlocked first. Notches on the line follow its points. One undo step.
+ */
+export function rotateInternal(doc: Document, pieceId: Id, contourId: Id, pivot: Vec, deg: number): void {
+  if (!Number.isFinite(deg)) throw new Error('Angle must be a number');
+  doc.transact('Rotate line', () => {
+    const piece = doc.piece(pieceId);
+    if (piece.locked) throw new Error('Piece is locked');
+    const c = piece.internals.find(q => q.id === contourId);
+    if (!c) throw new Error('No internal line ' + contourId);
+    if (c.lock && c.lock.kind !== 'ends') throw new Error('This line is locked ' + (c.lock.kind === 'parallel' ? 'parallel to the outline' : 'to a point') + ' — unlock it first (right-click ▸ Unlock)');
+    const before = c.points.map(a => ({ id: a.id, x: a.x, y: a.y }));
+    c.points = rotatedAnchors(c.points, pivot, deg);
+    if (c.lock?.kind === 'ends') {
+      const moved = (id: Id) => { const b = before.find(q => q.id === id), a = c.points.find(q => q.id === id); return !a || !b || Math.hypot(a.x - b.x, a.y - b.y) > 1e-6; };
+      c.lock.ends = c.lock.ends.filter(e => !moved(e.anchorId));
+      if (!c.lock.ends.length) delete c.lock;
+    }
   });
 }
