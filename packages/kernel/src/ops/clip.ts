@@ -19,7 +19,7 @@ import { newId } from '../model/factory';
 import { isStraightSpan, type ResolvedContour } from '../model/contour';
 import { Vec, sub, add, mul, dist, norm, dot } from '../geom/vec';
 import { closestPoint, pointInPolygon } from '../geom/poly';
-import { resolveBase, spanPoly, lengthOf, pointAt, crossings, extractRange, freeze, captureNotches, restoreNotches } from '../geom/draft-geom';
+import { resolveBase, spanPoly, lengthOf, pointAt, crossings, extractRange, freeze, captureNotches, restoreNotches, closedPoly, closestArc } from '../geom/draft-geom';
 import { applyInternalLocks, lockableEnds } from './lock';
 
 /** Default "close" distance (mm): an end this near to the segment is extended onto it. */
@@ -191,5 +191,126 @@ export function clipInternals(doc: Document, pieceId: Id, o: ClipOptions = {}): 
     }
     if (res.lines) applyInternalLocks(piece, line);
     return res;
+  });
+}
+
+// ───────────────────────── clip one line to another (no lock) ─────────────────────────
+
+/** The line to clip to: a sew segment (`span`), the whole outline, or another internal line. */
+export interface ClipTarget { contourId: Id; span?: ClipSpan }
+export interface ClipToOptions {
+  /** the end to change; default: the end nearest to `near`, else whichever end can reach the target */
+  end?: 'start' | 'end';
+  /** a point on the line near the end to change (piece-local) */
+  near?: Vec;
+}
+export interface ClipToPlan {
+  end: 'start' | 'end';
+  /** 'trim' = the line is shortened to the target, 'extend' = lengthened straight onto it */
+  how: 'trim' | 'extend';
+  /** where the end will be / where it is now (base size, piece-local) */
+  pt: Vec; tip: Vec;
+  /** arc position (base) on the line where it is cut ('trim') */
+  s?: number;
+  /** length added (+) or removed (−), base size */
+  delta: number;
+}
+
+function targetPoly(piece: Piece, line: SizeLine, t: ClipTarget): Vec[] {
+  if (t.contourId === piece.sew.id) {
+    const r = resolveBase(piece.sew, line);
+    if (t.span) {
+      const ia = piece.sew.points.findIndex(a => a.id === t.span!.from), ib = piece.sew.points.findIndex(a => a.id === t.span!.to);
+      if (ia < 0 || ib < 0) throw new Error('The segment must run between two points of the sew line');
+      return spanPoly(r, ia, ib);
+    }
+    return closedPoly(r);
+  }
+  const c = piece.internals.find(q => q.id === t.contourId);
+  if (!c) throw new Error('No line ' + t.contourId);
+  return closedPoly(resolveBase(c, line));
+}
+
+/**
+ * What `clipLineTo` would do (null = the line neither crosses the target nor reaches it when
+ * extended). The end nearest to `near` is the one that changes: it is cut back to the target when
+ * the line crosses it, or extended straight along the line's own direction until it meets it. When
+ * that end cannot reach the target, the other end is tried.
+ */
+export function clipToPlan(piece: Piece, line: SizeLine, contourId: Id, target: ClipTarget, o: ClipToOptions = {}): ClipToPlan | null {
+  const c = piece.internals.find(q => q.id === contourId);
+  if (!c || c.closed || c.points.length < 2 || target.contourId === contourId) return null;
+  const r = resolveBase(c, line), P = r.pts, L = lengthOf(r);
+  if (P.length < 2 || L < 1e-6) return null;
+  const T = targetPoly(piece, line, target);
+  if (T.length < 2) return null;
+  const X = crossings(P, T);
+  const forEnd = (end: 'start' | 'end'): ClipToPlan | null => {
+    const tip = end === 'start' ? P[0] : P[P.length - 1];
+    if (closestPoint(T, tip).d < 1e-6) return null;               // already on the target
+    let best: ClipToPlan | null = null;
+    const x = end === 'start' ? X.find(q => q.sPath > 1e-6 && q.sPath < L - 1e-6) : [...X].reverse().find(q => q.sPath > 1e-6 && q.sPath < L - 1e-6);
+    if (x) { const tail = end === 'start' ? x.sPath : L - x.sPath; best = { end, how: 'trim', pt: x.pt, tip, s: x.sPath, delta: -tail }; }
+    let k = end === 'end' ? P.length - 2 : 1;
+    while (k > 0 && k < P.length - 1 && dist(P[k], tip) < 1e-9) k += end === 'end' ? -1 : 1;
+    const t = norm(sub(tip, P[k]));
+    const hit = crossings([tip, add(tip, mul(t, 1e5))], T).find(h => h.sPath > 1e-6);
+    if (hit && (!best || hit.sPath < -best.delta)) best = { end, how: 'extend', pt: hit.pt, tip, delta: hit.sPath };
+    return best;
+  };
+  let first: 'start' | 'end' | undefined = o.end;
+  if (!first && o.near) first = closestArc(r, o.near).s <= L / 2 ? 'start' : 'end';
+  if (first) return forEnd(first) ?? (o.end ? null : forEnd(first === 'start' ? 'end' : 'start'));
+  const a = forEnd('start'), b = forEnd('end');
+  if (a && b) return Math.abs(a.delta) <= Math.abs(b.delta) ? a : b;
+  return a ?? b;
+}
+
+/**
+ * Clip an open internal line to another line of the same piece (a sew segment, the outline or an
+ * internal line): one end is cut back to it or extended onto it. Nothing is locked: lock the line
+ * afterwards with `lockInternalEnds` when wanted. A lock that held the changed end is released for
+ * that end. One undo step.
+ */
+export function clipLineTo(doc: Document, pieceId: Id, contourId: Id, target: ClipTarget, o: ClipToOptions = {}): ClipToPlan {
+  return doc.transact('Clip line', () => {
+    const piece = doc.piece(pieceId), line = doc.sizeLine(piece);
+    if (piece.locked) throw new Error('Piece is locked');
+    const c = piece.internals.find(q => q.id === contourId);
+    if (!c) throw new Error('No internal line ' + contourId);
+    if (c.closed) throw new Error('Clip Line needs an open internal line');
+    if (target.contourId === contourId) throw new Error('Pick a different line to clip to');
+    if (c.lock && c.lock.kind !== 'ends') throw new Error('This line is locked ' + (c.lock.kind === 'parallel' ? 'parallel to the outline' : 'to a point') + ' — unlock it first (right-click ▸ Unlock)');
+    const p = clipToPlan(piece, line, contourId, target, o);
+    if (!p) throw new Error('The line does not cross the 2nd line and does not reach it when extended');
+    const endId = () => c.points[p.end === 'end' ? c.points.length - 1 : 0].id;
+    const free = (id: Id) => { if (c.lock?.kind === 'ends') { c.lock.ends = c.lock.ends.filter(e => e.anchorId !== id); if (!c.lock.ends.length) delete c.lock; } };
+    free(endId());
+    if (p.how === 'trim') {
+      const L = lengthOf(resolveBase(c, line));
+      const caps = captureNotches(piece, line, [c.id]);
+      c.points = p.end === 'start' ? extractRange(c, line, p.s!, L, { keepIds: true }) : extractRange(c, line, 0, p.s!, { keepIds: true });
+      piece.connections = (piece.connections ?? []).filter(pc => pc.internalContourId !== c.id || c.points.some(a => a.id === pc.internalAnchorId));
+      if (c.lock?.kind === 'ends') { c.lock.ends = c.lock.ends.filter(e => c.points.some(a => a.id === e.anchorId)); if (!c.lock.ends.length) delete c.lock; }
+      restoreNotches(piece, line, caps, 1e-3);
+    } else {
+      const r = resolveBase(c, line);
+      const n = c.points.length;
+      const ia = p.end === 'end' ? n - 1 : 0, ib = p.end === 'end' ? n - 2 : 1;
+      const lo = Math.min(ia, ib), hi = Math.max(ia, ib);
+      const straight = isStraightSpan(r.anchorPos[lo], r.handles[lo].hOut, r.handles[hi].hIn, r.anchorPos[hi]);
+      const a = c.points[ia];
+      if (straight && !a.hIn && !a.hOut) { a.x = p.pt.x; a.y = p.pt.y; }
+      else {
+        freeze(c, r, ia);
+        a.kind = 'grade'; a.smooth = false;
+        if (p.end === 'end') delete a.hOut; else delete a.hIn;
+        const na: Anchor = { id: newId('p'), x: p.pt.x, y: p.pt.y, kind: 'grade', smooth: false, grade: {}, flags: {} };
+        if (p.end === 'end') c.points.push(na); else c.points.unshift(na);
+      }
+    }
+    c.points[0].kind = 'grade'; c.points[c.points.length - 1].kind = 'grade';
+    if (c.lock) applyInternalLocks(piece, line);
+    return p;
   });
 }
