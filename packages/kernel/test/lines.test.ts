@@ -104,3 +104,60 @@ describe('copyLineTo', () => {
     expect(doc.piece(id).sew.points.length).toBe(4);
   });
 });
+
+// ───────────────────────── rotate an internal line ─────────────────────────
+import { rotateInternal as _rotateInternal } from '../src/ops/lines';
+import { lockInternalEnds as _lockEnds } from '../src/ops/lock';
+import { makeStyle as _mkStyle, makePiece as _mkPiece, gradePoint as _gp, curvePoint as _cp, makeContour as _mkContour } from '../src/model/factory';
+import { Document as _Doc } from '../src/model/doc';
+import { anchorPositions as _apos, absoluteToIncremental as _a2i, resolveContour as _res } from '../src/model/contour';
+import { polylineLength as _plen } from '../src/geom/poly';
+
+describe('rotateInternal', () => {
+  function setup() {
+    const doc = new _Doc(_mkStyle('t', ['S', 'M', 'L'], 'M'));
+    const line = doc.sizeLine();
+    const g = (abs: Record<string, [number, number]>) => { const a: Record<string, { dx: number; dy: number }> = {}; for (const s of line.sizes) { const v = abs[s.name] ?? [0, 0]; a[s.id] = { dx: v[0], dy: v[1] }; } return _a2i(a, line); };
+    const piece = _mkPiece('P', _mkContour([_gp(0, 0), _gp(200, 0), _gp(200, 300), _gp(0, 300)]), doc.style.activeSizeTableId);
+    doc.transact('add', s => s.pieces.push(piece));
+    const add = (c: ReturnType<typeof _mkContour>) => { doc.transact('i', () => doc.piece(piece.id).internals.push(c)); return c.id; };
+    const pos = (id: string, size = 'M') => { const c = doc.piece(piece.id).internals.find(q => q.id === id)!; return _apos(c.points, line, line.sizes.find(s => s.name === size)!.id, c.closed); };
+    return { doc, line, pid: piece.id, add, pos, g };
+  }
+  it('turns a line 90° about a pivot, in every size, keeping its length and curve', () => {
+    const t = setup();
+    const id = t.add(_mkContour([_gp(50, 100), _cp(80, 120), _gp(110, 100, { grade: t.g({ S: [-5, 0], L: [5, 0] }) })], { type: 'internal', closed: false }));
+    const len0 = _plen(_res(t.doc.piece(t.pid).internals[0], t.line, t.line.baseSizeId).pts);
+    _rotateInternal(t.doc, t.pid, id, { x: 50, y: 100 }, 90);
+    const p = t.pos(id);
+    expect(p[0].x).toBeCloseTo(50, 9); expect(p[0].y).toBeCloseTo(100, 9);
+    expect(p[2].x).toBeCloseTo(50, 9); expect(p[2].y).toBeCloseTo(160, 9);
+    expect(p[1].x).toBeCloseTo(30, 9); expect(p[1].y).toBeCloseTo(130, 9);
+    // the graded end turned with the line: +5 in x became +5 in y
+    expect(t.pos(id, 'L')[2].x).toBeCloseTo(50, 9); expect(t.pos(id, 'L')[2].y).toBeCloseTo(165, 9);
+    expect(_plen(_res(t.doc.piece(t.pid).internals[0], t.line, t.line.baseSizeId).pts)).toBeCloseTo(len0, 6);
+    t.doc.undo();
+    expect(t.pos(id)[2].x).toBeCloseTo(110, 9);
+  });
+  it('a closed shape turns about any pivot; a full turn puts it back', () => {
+    const t = setup();
+    const id = t.add(_mkContour([_gp(60, 60), _gp(100, 60), _gp(100, 90), _gp(60, 90)], { type: 'internal', closed: true }));
+    _rotateInternal(t.doc, t.pid, id, { x: 80, y: 75 }, 180);
+    expect(t.pos(id)[0].x).toBeCloseTo(100, 9); expect(t.pos(id)[0].y).toBeCloseTo(90, 9);
+    _rotateInternal(t.doc, t.pid, id, { x: 80, y: 75 }, 180);
+    expect(t.pos(id)[0].x).toBeCloseTo(60, 9); expect(t.pos(id)[0].y).toBeCloseTo(60, 9);
+  });
+  it('a locked end that is the pin stays locked; a locked end that moves is released', () => {
+    const t = setup();
+    const id = t.add(_mkContour([_gp(200, 100), _gp(120, 100)], { type: 'internal', closed: false }));
+    expect(_lockEnds(t.doc, t.pid, id)).toBe(1);
+    _rotateInternal(t.doc, t.pid, id, { x: 200, y: 100 }, -90);
+    let c = t.doc.piece(t.pid).internals[0];
+    expect(c.lock?.kind).toBe('ends');
+    expect(t.pos(id)[1].x).toBeCloseTo(200, 6); expect(t.pos(id)[1].y).toBeCloseTo(180, 6);
+    _rotateInternal(t.doc, t.pid, id, { x: 150, y: 150 }, 30);
+    c = t.doc.piece(t.pid).internals[0];
+    expect(c.lock).toBeUndefined();
+    expect(Math.hypot(t.pos(id)[0].x - t.pos(id)[1].x, t.pos(id)[0].y - t.pos(id)[1].y)).toBeCloseTo(80, 6);
+  });
+});
