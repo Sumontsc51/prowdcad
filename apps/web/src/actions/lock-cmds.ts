@@ -108,15 +108,46 @@ export async function lockInteractive(app: App, piece: Piece, c: Contour, kind?:
   app.applySel({ k: 'internal', c: { pieceId: pid, contourId: cid } }, 'replace');
 }
 
+/** Every selected internal line (internal selections, then lines owning a selected point), without duplicates. */
+export function selectedInternals(app: App): { piece: Piece; contour: Contour }[] {
+  const out: { piece: Piece; contour: Contour }[] = [];
+  const add = (pieceId: Id, contourId: Id) => {
+    const p = app.doc.style.pieces.find(x => x.id === pieceId); const c = p?.internals.find(x => x.id === contourId);
+    if (p && c && !out.some(o => o.contour === c)) out.push({ piece: p, contour: c });
+  };
+  for (const si of app.sel.internals) add(si.pieceId, si.contourId);
+  if (!out.length) for (const a of app.sel.anchors) add(a.pieceId, a.contourId);
+  return out;
+}
+
+/** Lock the ends of several internal lines that lie on the outline (Endpoints, proportional). */
+function lockMany(app: App, lines: { piece: Piece; contour: Contour }[]): void {
+  let ends = 0, done = 0; const skipped: string[] = [];
+  app.doc.transact('Lock internal lines', () => {
+    for (const { piece, contour } of lines) {
+      if (contour.closed || (contour.lock && contour.lock.kind !== 'ends')) { skipped.push(contour.id); continue; }
+      try { const n = ops.lockInternalEnds(app.doc, piece.id, contour.id); ends += n; done++; } catch { skipped.push(contour.id); }
+    }
+  });
+  const sk = skipped.length ? ` · ${skipped.length} left as is (no end on the outline, closed, or locked another way)` : '';
+  toast(done ? `🔒 ${done} line${done > 1 ? 's' : ''} locked: ${ends} end point${ends > 1 ? 's' : ''} on the outline${sk}` : 'Nothing locked: none of the selected lines has an end on the outline', done ? 'ok' : 'warn');
+  app.invalidate();
+}
+
 export function registerLockCmds(app: App) {
   const sel = () => selectedInternal(app);
   registerCommand({ id: 'internal.lock', title: 'Lock internal to segment…', menu: 'Segment', group: 2, run: async () => {
+    const many = selectedInternals(app);
+    if (many.length > 1) { lockMany(app, many); return; }
     const { piece, contour } = await internalOrPick(app, 'Lock: click the internal line to lock to the outline');
     await lockInteractive(app, piece, contour);
   } });
   registerCommand({ id: 'internal.unlock', title: 'Unlock internal line', menu: 'Segment', group: 2,
-    enabled: needs(() => !!sel()?.contour.lock, 'a selected locked internal line'),
-    run: () => { const s = sel(); if (!s?.contour.lock) return; ops.unlockInternal(app.doc, s.piece.id, s.contour.id); toast('Internal line unlocked: its points move freely', 'ok'); } });
+    enabled: needs(() => selectedInternals(app).some(s => !!s.contour.lock) || !!sel()?.contour.lock, 'a selected locked internal line'),
+    run: () => {
+      const many = selectedInternals(app).filter(s => !!s.contour.lock);
+      if (many.length > 1) { app.doc.transact('Unlock internal lines', () => { for (const s of many) ops.unlockInternal(app.doc, s.piece.id, s.contour.id); }); toast(`${many.length} internal lines unlocked: their points move freely`, 'ok'); return; }
+      const s = many[0] ?? sel(); if (!s?.contour.lock) return; ops.unlockInternal(app.doc, s.piece.id, s.contour.id); toast('Internal line unlocked: its points move freely', 'ok'); } });
 }
 
 /** Inspector rows helper: one-line description of a lock with lengths in the display unit. */
