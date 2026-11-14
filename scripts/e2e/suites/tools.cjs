@@ -30,21 +30,26 @@ const cases = [
   T('select', { invoke: seq(hotkey('g', 'movePoint'), palette('select')), drive: async h => { await h.clickA('FRONT', 'SS_HEM'); }, change: false, expect: (h, c) => req(c.afterSel.anchors[0] === 'FRONT/SS_HEM', 'click did not select the point') }),
   T('internal', { invoke: palette('internal'), drive: seq(W(60, 100), W(60, 300), h => h.key('Enter')), expect: (h, c) => req(count(c.after, 'FRONT', 'internals') === 2, 'no internal') }),
   T('internal#polygon', { title: 'internal: closed polygon by clicking the start', invoke: hotkey('i', 'internal'), drive: seq(W(30, 100), W(100, 100), W(100, 200), W(30, 100)), expect: (h, c) => req(pc(c.after, 'FRONT').internals.some(i => i.closed), 'no closed internal') }),
-  T('clip', { title: 'Clip Line: click the side seam → the line crossing it is cut, the line ending 6 mm short is extended, both locked on it; the far line is left',
-    pre: seq(addInternal([[100, 200, 'CX_A'], [300, 200, 'CX_B']]), addInternal([[100, 300, 'CN_A'], [254, 300, 'CN_B']]), addInternal([[100, 350, 'CF_A'], [200, 350, 'CF_B']])),
-    invoke: palette('clip'), drive: seg('FRONT', 'SS_HEM', 'UA', 0.1),
-    expect: (h, c) => { const ic = pc(c.after, 'FRONT').internals; const end = n => ic.map(i => i.points[i.points.length - 1]).find(a => a.name === n); const L = n => ic.find(i => i.points.some(a => a.name === n));
-      const x = L('CX_A'), xe = x.points[x.points.length - 1];
-      return [req(near(xe.x, 260, 1e-4) && near(xe.y, 200, 1e-4), 'crossing line not cut at the side seam: ' + JSON.stringify([xe.x, xe.y])), req(x.lock && x.lock.kind === 'ends' && x.lock.ends.length === 1, 'cut end not locked'),
-        req(near(end('CN_B').x, 260, 1e-4) && near(end('CN_B').y, 300, 1e-4), 'near line not extended to the side seam'), req(L('CN_A').lock && L('CN_A').lock.kind === 'ends', 'extended end not locked'),
-        req(near(end('CF_B').x, 200, 1e-9) && !L('CF_A').lock, 'far line was changed')]; } }),
-  T('clip#line', { title: 'Clip Line: click an internal line (Shift+I hotkey) → only that line is clipped, to every outline line it crosses; then the side seam moves and the end follows',
-    pre: seq(addInternal([[-30, 200, 'CX_A'], [300, 200, 'CX_B']]), addInternal([[100, 300, 'CN_A'], [254, 300, 'CN_B']])),
-    invoke: hotkey('Shift+I', 'clip'), drive: seq(h => h.clickLocal('FRONT', { x: 150, y: 200 }), h => h.ev(() => { const E = window.__e2e, p = E.P('FRONT'); for (const n of ['SS_HEM', 'UA']) E.ops.movePoint(E.app.doc, p.id, p.sew.points.find(a => a.name === n).id, { dx: 15, dy: 0 }); E.app.invalidate(); })),
-    expect: (h, c) => { const ic = pc(c.after, 'FRONT').internals; const x = ic.find(i => i.points.some(a => a.name === 'CX_A' || a.name === 'CX_B')) ?? ic[1]; const n = ic.find(i => i.points.some(a => a.name === 'CN_A'));
-      const a = x.points[0], b = x.points[x.points.length - 1];
-      return [req(near(a.x, 0, 1e-4) && near(b.x, 275, 1e-4), 'line not clipped to CF and the (moved) side seam: ' + JSON.stringify([a.x, b.x])), req(x.lock && x.lock.ends.length === 2, 'both ends should be locked'),
-        req(!n.lock && near(n.points[1].x, 254, 1e-9), 'the other line must not change')]; } }),
+  T('clip', { title: 'Clip Line: 1st click the line (near its end), 2nd click the side seam → the line is cut back to the seam and is NOT locked',
+    pre: addInternal([[160, 200, 'CX_A'], [300, 200, 'CX_B']]),
+    invoke: palette('clip'), drive: seq(h => h.clickLocal('FRONT', { x: 290, y: 200 }), seg('FRONT', 'SS_HEM', 'UA', 0.1)),
+    expect: (h, c) => { const x = pc(c.after, 'FRONT').internals.find(i => i.points.some(a => a.name === 'CX_A')); const e = x.points[x.points.length - 1];
+      return [req(near(e.x, 260, 1e-4) && near(e.y, 200, 1e-4), 'line not cut at the side seam: ' + JSON.stringify([e.x, e.y])), req(near(x.points[0].x, 160, 1e-9), 'the other end moved'), req(!x.lock, 'the line must not be locked')]; } }),
+  T('clip#internal', { title: 'Clip Line (Shift+I): a short line is extended onto another internal line; the 2nd line does not change; no lock',
+    pre: seq(addInternal([[200, 250, 'TG_A'], [200, 400, 'TG_B']]), addInternal([[150, 300, 'CN_A'], [170, 300, 'CN_B']])),
+    invoke: hotkey('Shift+I', 'clip'), drive: seq(h => h.clickLocal('FRONT', { x: 168, y: 300 }), h => h.clickLocal('FRONT', { x: 200, y: 380 })),
+    expect: (h, c) => { const ic = pc(c.after, 'FRONT').internals; const n = ic.find(i => i.points.some(a => a.name === 'CN_A')), t = ic.find(i => i.points.some(a => a.name === 'TG_A'));
+      return [req(n.points.length === 2 && near(n.points[1].x, 200, 1e-6) && near(n.points[1].y, 300, 1e-6), 'line not extended to the 2nd line: ' + JSON.stringify(n.points.map(a => [a.x, a.y]))),
+        req(!n.lock, 'the line must not be locked'), req(t.points.length === 2 && t.points[0].y === 250 && t.points[1].y === 400, 'the 2nd line changed')]; } }),
+  T('clip#lock', { title: 'Lock: several internal lines selected → Lock internal to segment locks every end that lies on the outline; Unlock frees them all',
+    pre: seq(addInternal([[160, 200, 'LA_A'], [260, 200, 'LA_B']]), addInternal([[160, 300, 'LB_A'], [260, 300, 'LB_B']]), addInternal([[160, 350, 'LC_A'], [200, 350, 'LC_B']])),
+    invoke: palette('select'), drive: async h => {
+      await h.clickLocal('FRONT', { x: 200, y: 200 }); await h.clickLocal('FRONT', { x: 200, y: 300 }, { mods: ['Shift'] }); await h.clickLocal('FRONT', { x: 180, y: 350 }, { mods: ['Shift'] });
+      const n = await h.ev(() => window.__e2e.app.sel.internals.length); if (n !== 3) throw new Error('Shift+click selected ' + n + ' internal lines, wanted 3');
+      await h.clickLocal('FRONT', { x: 200, y: 300 }, { button: 'right' }); await h.settle();
+      await h.page.getByText('Lock internal to segment…').last().click(); await h.settle(); },
+    expect: (h, c) => { const L = n => pc(c.after, 'FRONT').internals.find(i => i.points.some(a => a.name === n));
+      return [req(L('LA_A').lock && L('LA_A').lock.ends.length === 1 && L('LB_A').lock && L('LB_A').lock.ends.length === 1, 'the two lines on the side seam are not locked'), req(!L('LC_A').lock, 'the free line was locked')]; } }),
   T('smooth', { invoke: palette('smooth'), drive: async h => { await h.clickA('FRONT', 'UA'); await h.clickA('FRONT', 'SH'); await h.key('Enter'); } }),
   T('rect', { invoke: palette('rect'), drive: async h => { await h.dragW({ x: 700, y: 50 }, { x: 850, y: 250 }); }, expect: (h, c) => req(c.after.pieces.length === 3, 'no rectangle') }),
   T('rect#dialog', { title: 'rectangle: click → exact size dialog (inch fractions)', invoke: seq(h => h.page.locator('select.sb-unit').selectOption('in16'), hotkey('r', 'rect')), drive: seq(W(700, 50), DLG({ w: '10 1/2', h: '5' })),
