@@ -292,6 +292,7 @@ const cases = [
   { id: 'seg.globalJoin', pre: addInternal([[130, 380, 'J1'], [200, 450, 'J2']]), expect: (h, c) => req(count(c.after, 'FRONT', 'internals') === 1, 'not joined') },
   { id: 'seg.extend', invoke: h => h.cmd('seg.extend'), drive: seq(at('FRONT', 'IL_B'), DLG({ how: 'by', by: '20' })), expect: (h, c) => { const ic = pc(c.after, 'FRONT').internals[0]; const ys = ic.points.map(a => +a.y.toFixed(2)); return req(near(Math.max(...ys), 400, 0.05) && near(Math.min(...ys), 80, 0.05), 'internal y-range after extend at IL_B end: ' + JSON.stringify(ys)); } },
   tool('seg.smooth', 'smooth'),
+  tool('seg.clipTool', 'clip'),
 
   // ═════════ Cut ═════════
   tool('cut.slash', 'slash'),
