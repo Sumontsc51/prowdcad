@@ -199,6 +199,7 @@ export function registerPointSeg(app: App) {
     const r = await must(app, { kind: 'contour', prompt: 'Trim: click the PART of the internal line to keep', contour: 'internal' }, 'contour');
     ops.trimAtIntersections(app.doc, r.hit.piece.id, r.hit.contour.id, { keep: r.hit.local });
   } });
+  registerCommand({ id: 'seg.clipTool', title: 'Clip Line tool (clip internal lines to a line and lock)', menu: 'Segment', group: 3, run: () => app.setTool('clip') });
   registerCommand({ id: 'seg.globalTrim', title: 'Global check & trim internals', menu: 'Segment', group: 3, run: () => { const k = ops.globalCheckAndTrimInternals(app.doc, app.sel.pieces.length ? app.sel.pieces : undefined); toast(`${k} internal(s) trimmed`, 'ok'); } });
   registerCommand({ id: 'seg.globalJoin', title: 'Global join internals', menu: 'Segment', group: 3, run: () => { const k = ops.globalJoinInternals(app.doc, app.sel.pieces.length ? app.sel.pieces : undefined); toast(`${k} join(s)`, 'ok'); } });
   registerCommand({ id: 'seg.extend', title: 'Extend contour / internal…', menu: 'Segment', group: 3, run: async () => {
