@@ -35,6 +35,7 @@ interface WalkUI {
 const W: WalkUI = { stepMm: 5, ratio: 1, skipDarts: true, rev: -1 };
 
 let hoverW: Vec | null = null;
+let lastApp: App | null = null;
 function reset(app: App) { W.moving = undefined; W.state = undefined; W.delta = undefined; W.lastAng = undefined; hoverW = null; app.cancelPreview(); app.invalidate('canvas', 'status'); }
 
 /** point and unit tangent (contour-forward) of a walk side at its current arc position, piece-local */
@@ -63,6 +64,12 @@ function travelDir(side: WalkState['stationary'], dir: 1 | -1 = side.dir, eps = 
   const a = ptAt(side, side.s), b = ptAt(side, side.s + dir * eps); const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
   return { x: (b.x - a.x) / d, y: (b.y - a.y) / d };
 }
+/** Direction of the seam around the contact, in the walk direction: from up to 1 cm behind (only what was walked) to 1 cm ahead. */
+function matchChord(side: WalkState['stationary'], span = 10): Vec {
+  const back = Math.min(span, Math.abs(side.run));
+  const a = ptAt(side, side.s - side.dir * back), b = ptAt(side, side.s + side.dir * span); const d = Math.hypot(b.x - a.x, b.y - a.y);
+  return d > 1e-9 ? { x: (b.x - a.x) / d, y: (b.y - a.y) / d } : travelDir(side);
+}
 /** Walk the moving piece along whichever of its two lines at the contact runs WITH the stationary line (as the pieces lie on the sheet). */
 function matchMovingDir(app: App, st: WalkState): WalkState {
   const stat = app.doc.piece(st.stationary.pieceId), mv = app.doc.piece(st.moving.pieceId);
@@ -72,9 +79,10 @@ function matchMovingDir(app: App, st: WalkState): WalkState {
 }
 const rot = (v: Vec, a: number): Vec => ({ x: v.x * Math.cos(a) - v.y * Math.sin(a), y: v.x * Math.sin(a) + v.y * Math.cos(a) });
 /**
- * Where the moving piece is shown (world): its contact point lies on the stationary contact point and it keeps
- * the direction the user gave it on the sheet (rotation and flip of its own placement). While it walks it rolls
- * along the seam from that direction: the angle between the two seams at the contact stays what it was at the start.
+ * Where the moving piece is shown (world): its contact point lies on the stationary contact point and it is turned
+ * just enough for the two seams to lie on each other around the contact (1 cm ahead, 1 cm behind). Of the two ways
+ * to do that, the walk direction is chosen that needs the smaller turn from the direction the user gave the piece
+ * (matchMovingDir), so a piece the user rotated or flipped to face the seam stays that way round.
  */
 function placement(app: App): { ang: number; o: Vec; toWorld: (q: Vec) => Vec; toLocal: (w: Vec) => Vec } | null {
   const st = W.state; if (!st) return null;
@@ -82,11 +90,11 @@ function placement(app: App): { ang: number; o: Vec; toWorld: (q: Vec) => Vec; t
   if (!stat || !mv) return null;
   const m = sideAt(st.moving), c = sideAt(st.stationary);
   const angOf = (v: Vec) => Math.atan2(v.y, v.x);
-  // directions of travel (the lines being walked along), so a corner at the contact is read the right way
-  const tm = dirToWorld(mv, travelDir(st.moving)), ts = dirToWorld(stat, travelDir(st.stationary));
-  // the seam angle the user set is kept through the walk; after a direction change the piece keeps its present turn
-  if (W.delta === undefined) W.delta = (W.lastAng ?? 0) + angOf(tm) - angOf(ts);
-  const ang = angOf(ts) + W.delta - angOf(tm);
+  // The two seams are laid on each other AT the contact: the stretch of the moving seam from 1 cm behind the
+  // contact to 1 cm ahead of it is turned onto the same stretch of the stationary seam (as TUKA does). "Behind"
+  // only reaches back over what was already walked, so at the start it is the 1 cm ahead that is matched.
+  const tm = dirToWorld(mv, matchChord(st.moving)), ts = dirToWorld(stat, matchChord(st.stationary));
+  const ang = angOf(ts) - angOf(tm);
   W.lastAng = ang;
   const cw = toWorld(stat, c.p);
   const lin = (v: Vec) => rot(dirToWorld(mv, v), ang);
@@ -98,6 +106,7 @@ function placement(app: App): { ang: number; o: Vec; toWorld: (q: Vec) => Vec; t
  * preview: nothing is written to the document, and the piece is back in its own place when the walk ends.
  */
 function showMoving(app: App) {
+  lastApp = app;
   const st = W.state; const pl = placement(app); if (!st || !pl) return;
   const mv = app.doc.piece(st.moving.pieceId); const L = layoutOf(mv);
   app.preview.delete(mv.id);
@@ -163,7 +172,13 @@ function start(app: App, stat: { pieceId: string; anchorId: string }) {
     });
     W.rev = app.doc.revision();
     // walk the way the pieces lie: the moving seam is followed in the direction that runs with the stationary one
-    W.state = matchMovingDir(app, W.state);
+    // of the four ways to pair the lines at the two points, start with the pair that lies closest together on the
+    // sheet (the smallest turn of the piece); a click on a seam then says which way to walk
+    {
+      const fit = (st: WalkState) => { const stat = app.doc.piece(st.stationary.pieceId), mvp = app.doc.piece(st.moving.pieceId); const a = dirToWorld(stat, travelDir(st.stationary, st.stationary.dir, 5)), b = dirToWorld(mvp, travelDir(st.moving, st.moving.dir, 5)); return a.x * b.x + a.y * b.y; };
+      const a = matchMovingDir(app, W.state), b = matchMovingDir(app, ops.flipDirection(W.state, 'stationary'));
+      W.state = fit(b) > fit(a) + 1e-9 ? b : a;
+    }
     W.delta = undefined; W.lastAng = undefined;
     showMoving(app);
     app.status(`Placed on the point · now click along the seam to walk there · ${hud()}`);
@@ -329,6 +344,14 @@ export const walkTool: Tool = {
 };
 
 export function walkActive() { return !!W.state; }
+/** largest distance between the two seams 1 cm behind and 1 cm ahead of the contact, on the sheet (null = no walk). For tests. */
+export function walkGap(): number | null {
+  const st = W.state; const app = lastApp; if (!st || !app) return null;
+  const pl = placement(app); const stat = app.doc.style.pieces.find(x => x.id === st.stationary.pieceId); if (!pl || !stat) return null;
+  let g = 0;
+  for (const k of [-10, 10]) { const a = pl.toWorld(ptAt(st.moving, st.moving.s + st.moving.dir * k)), b = toWorld(stat, ptAt(st.stationary, st.stationary.s + st.stationary.dir * k)); g = Math.max(g, Math.hypot(a.x - b.x, a.y - b.y)); }
+  return g;
+}
 /** distance walked on the stationary piece (null = no walk) */
 /** contact point on the moving piece, piece-local (null = no walk) */
 export function walkMovingPoint(): Vec | null { return W.state ? ptAt(W.state.moving, W.state.moving.s) : null; }
