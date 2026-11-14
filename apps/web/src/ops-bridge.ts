@@ -45,7 +45,7 @@ export const KERNEL_GROUPS = {
   'ops/cut': ['slashPiece', 'cutAlongInternal', 'cutHV', 'cutByGuideline', 'cutParallel'],
   'ops/parallel': ['createParallelInternal', 'extendParallel'],
   'ops/lock': ['lockInternalEnds', 'lockInternalParallel', 'lockInternalFollow', 'unlockInternal', 'setLockMeasure', 'setLockOffset', 'isLockDriven', 'lockSummary',
-    'sewSegmentAt', 'lockableEnds', 'lockDistance', 'setLockRange', 'lockSpanLength'],
+    'sewSegmentAt', 'lockableEnds', 'lockDistance', 'setLockRange', 'lockSpanLength', 'clipInternals', 'clipPlan'],
   'ops/shapers': ['shapeArc', 'shapeWave', 'shapeScallop', 'circularSkirt', 'ruffle'],
   'ops/pieces': ['traceSegments', 'regionAt', 'buildPiece', 'joinPieces', 'foldIn', 'foldOut', 'symmetryCheck', 'setHalf', 'openHalf', 'deleteHalf',
     'snapshotReference', 'restoreReference', 'showReference', 'clearReference', 'globalCheckConnections', 'globalClearConnections', 'lockPiece',
