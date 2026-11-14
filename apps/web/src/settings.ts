@@ -62,6 +62,8 @@ export interface Settings {
   rotateMode?: 'point' | 'piece';
   /** Rotate tool: the grain line keeps its direction on the sheet */
   rotateKeepGrain?: boolean;
+  /** Rotate tool: turn an internal line instead of the piece */
+  rotateLine?: boolean;
   /** Move / Copy Line: leave the original and create a copy */
   moveLineCopy?: boolean;
   /** last-used dialog values, keyed by dialog id */

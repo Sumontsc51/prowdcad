@@ -101,11 +101,11 @@ canvas.onContext = p => {
     const k = sub.item.k;
     ctxMenu(e.clientX, e.clientY, k === 'segment'
       ? ['move.line', 'move.lineParallel', 'move.curve', '-', 'seg.length', 'seg.rotate', 'point.add', 'point.cutTool', 'point.splineSupport', '-', 'seam.segment', 'seg.copy', 'seg.paste', '-', 'grade.pasteAround']
-      : k === 'internal' ? ['move.line', 'move.lineParallel', 'move.curve', 'point.cutTool', '-', 'internal.lock', 'internal.unlock', '-', 'seg.swap', 'seg.dashed', 'seg.trim', '-', 'edit.delete']
+      : k === 'internal' ? ['move.line', 'move.lineParallel', 'move.lineRotatePoint', 'move.lineRotate', 'move.curve', 'point.cutTool', '-', 'internal.lock', 'internal.unlock', '-', 'seg.swap', 'seg.dashed', 'seg.trim', '-', 'edit.delete']
         : ['edit.delete']);
   } else if (h.kind === 'piece' && h.pieceId) {
     if (!app.sel.pieces.includes(h.pieceId)) app.selectPiece(h.pieceId);
-    ctxMenu(e.clientX, e.clientY, ['move.pieceRotatePoint', 'move.pieceRotate', 'piece.flipH', 'piece.flipV', '-', 'piece.rename', 'piece.lock', 'edit.duplicate', 'piece.saveAsNew', '-', 'piece.rotate90', 'piece.rotate', 'piece.grain', 'piece.rotateToGrain', '-', 'seam.piece', 'seam.reseam', 'seam.lockGrading', 'seam.noSeam', '-', 'piece.scale', 'notch.grid', 'measure.piece', 'view.fitSel', '-', 'piece.delete']);
+    ctxMenu(e.clientX, e.clientY, ['move.pieceRotatePoint', 'move.pieceRotate', 'piece.flipH', 'piece.flipV', '-', 'piece.rename', 'piece.lock', 'piece.copy', 'piece.paste', 'edit.duplicate', 'piece.saveAsNew', '-', 'piece.rotate90', 'piece.rotate', 'piece.grain', 'piece.rotateToGrain', '-', 'seam.piece', 'seam.reseam', 'seam.lockGrading', 'seam.noSeam', '-', 'piece.scale', 'notch.grid', 'measure.piece', 'view.fitSel', '-', 'piece.delete']);
   } else {
     ctxMenu(e.clientX, e.clientY, ['view.fit', 'view.zoom100', '-', 'view.grid', 'view.rulers', 'grade.nested', '-', 'edit.selectAll', 'edit.deselect', 'edit.prefs', '-', 'file.new']);
   }

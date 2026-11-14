@@ -68,7 +68,7 @@ export const KERNEL_GROUPS = {
   'ops/rules': ['createLibrary', 'createRuleFromValues', 'createRuleFromPoint', 'createRuleSetFromContour', 'findRule', 'applyRule', 'detachRule', 'ruleName', 'loadSizesFromLibrary',
     'refreshRuleLinks', 'outwardSteps', 'totalsFromSteps', 'affectedSizes', 'smartFill', 'sizeBreaks', 'setSizeBreaks', 'setRuleValues', 'copyRule', 'renameRule', 'deleteRule', 'gradeStatus'],
   'ops/spec': ['addSpecItem', 'updateSpecItem', 'setSpecTargets', 'removeSpecItem', 'specValue', 'specRows', 'defaultSpecMovers', 'applySpec', 'specDetails', 'setSpecQty', 'specLineRows', 'setSpecLineTargets', 'setSpecLineMovers'],
-  'ops/lines': ['copyLineTo', 'lineFollowShape'],
+  'ops/lines': ['copyLineTo', 'lineFollowShape', 'rotateInternal'],
   'ops/movement': ['createProgram', 'addMove', 'removeMove', 'applyMeasurementDelta', 'applyMeasurementSet', 'addMeasurementSet'],
   'io/dxf': ['importDXF', 'addImportToDocument', 'exportDXF'],
   'io/svg': ['importSVG', 'exportSVG'],
