@@ -98,5 +98,6 @@ export const ICON = {
   measureDist: '<circle cx="5" cy="19" r="2.2" fill="currentColor" stroke="none"/><circle cx="19" cy="5" r="2.2" fill="currentColor" stroke="none"/><path d="M6.8 17.2L17.2 6.8"/><path d="M9.5 11.5l3 3M12.5 8.5l3 3" opacity=".7"/>',
   grain: '<path d="M4 12h16"/><path d="M4 12l4-3M4 12l4 3M20 12l-4-3M20 12l-4 3"/><path d="M7 5h10l2 14H5z" opacity=".45"/>',
   rotate: '<path d="M6 9h8l3 4-3 6H6z"/><path d="M14 5a6 6 0 016 6"/><path d="M20 11l-2.4-1M20 11l1-2.4"/><circle cx="6" cy="19" r="1.4" fill="currentColor" stroke="none"/>',
+  clip: '<path d="M17 3v18"/><path d="M4 12h13"/><path d="M17 12h4.5" stroke-dasharray="1.6 1.6" opacity=".55"/><circle cx="17" cy="12" r="2.3" fill="currentColor" stroke="none"/><path d="M4 6l4 3M4 18l4-3" opacity=".55"/>',
   flip: '<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7L3 17h6z"/><path d="M15 7l6 10h-6z" opacity=".55"/>',
 };
