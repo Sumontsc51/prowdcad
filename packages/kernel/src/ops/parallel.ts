@@ -15,6 +15,7 @@ import { splitOpenAt } from './segments';
 
 // internal-line locks (ops/lock.ts) are published through this module
 export * from './lock';
+export * from './clip';
 
 export type SegmentRef = { from: Id; to: Id } | { internalId: Id };
 
