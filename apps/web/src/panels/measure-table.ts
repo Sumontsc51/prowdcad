@@ -147,92 +147,79 @@ export function measureTSV(app: App, rec?: MRecord): string {
   return gridTSV(t.rows, t.cols);
 }
 
-let hooks: { onOK?: () => void; onCancel?: () => void; gradeToSpec?: (groups: MGroupUI[], mode: MeasureMode) => void; adjust?: () => void; addToSpec?: () => void } = {};
+let hooks: { onOK?: () => void; onCancel?: () => void; gradeToSpec?: (groups: MGroupUI[], mode: MeasureMode) => void; adjust?: () => void; addToSpec?: (group?: MGroupUI, mode?: MeasureMode) => void } = {};
+export function measureHooks() { return hooks; }
 export function setMeasureHooks(h2: typeof hooks) { hooks = { ...hooks, ...h2 }; }
 
 export function measureWindowOpen() { return windowOpen('mline'); }
-export function closeMeasureWindow() { closeWindow('mline'); }
+let closingByTool = false;
+/** Close the result windows without forgetting what they show (the Measure tool reopens them). */
+export function closeMeasureWindow() { closingByTool = true; try { closeWindow('mline'); closeWindow('mline2'); } finally { closingByTool = false; } }
 
-/** (Re)render the docked Measure window. */
-export function renderMeasureWindow(app: App) {
-  const W = 540;
-  const win = floatingWindow('mline', 'Measure — lines per size', { width: W, x: Math.max(60, window.innerWidth - W - 310), y: 74 });
+/** What the result windows show: the group(s) as they were when finished with right-click (they stay until the next result). */
+export const SHOWN: { a: MGroupUI | null; b: MGroupUI | null; mode: MeasureMode } = { a: null, b: null, mode: 'contour' };
+/** Canvas / window tag of a group: CH1 = the first set of lines, CH2 = the second. */
+export const chartTag = (gi: number) => 'CH' + (gi + 1);
+/** Right-click finished group `gi` (0 = first set, 1 = second set): its result window is (re)built from a snapshot. */
+export function showResult(gi: number) {
+  const g = MS.groups[gi]; if (!g) return;
+  const snap = JSON.parse(JSON.stringify(g)) as MGroupUI;
+  SHOWN.mode = MS.mode;
+  if (gi === 0) { SHOWN.a = snap; SHOWN.b = null; } else SHOWN.b = snap;
+}
+export function clearResults() { SHOWN.a = null; SHOWN.b = null; }
+
+/**
+ * Result table of one finished set of lines, as AccuMark Grade ▸ Measure ▸ Line shows it:
+ * Size · L1 · L2 · … · Total · Size Diff; the second set adds Difference (first total − second total)
+ * and Overall (how much that difference changes from the previous size).
+ */
+export function resultTable(app: App, g: MGroupUI, gi: number, first?: MGroupUI | null): MeasureTable {
+  const [live] = liveGroups(app, [g]);
+  if (!live) return { rows: [], cols: [], pass: [] };
+  const piece = app.doc.piece(live.parts[0].ref.pieceId);
+  const line = app.doc.sizeLine(piece);
+  const fl = first ? liveGroups(app, [first])[0] : undefined;
+  const res = ops.compareGroups(app.doc, fl ? [fl.parts, live.parts] : [live.parts], SHOWN.mode, { line });
+  const k0 = fl ? 1 : 0;
+  const rows: SGRow[] = line.sizes.map(s => ({ id: s.id, name: s.name, base: s.id === line.baseSizeId, active: s.id === app.activeSize }));
+  const tot = (r: number, k: number) => res[r]?.totals[k] ?? null;
+  const diff = (r: number) => (fl && tot(r, 0) !== null && tot(r, 1) !== null ? tot(r, 0)! - tot(r, 1)! : null);
+  const G = String(gi);
+  const cols: SGCol[] = live.parts.map((p, k) => ({ key: `p${k}`, head: p.label, title: partName(app, p), attrs: { 'data-g': G, 'data-part': p.label }, get: (r: number) => res[r].parts[k0]?.[k] ?? null }));
+  cols.push({ key: 'sum', head: 'Total', title: live.parts.map(p => p.label).join(' + '), attrs: { 'data-g': G, 'data-part': 'sum' }, cls: () => 'sum', get: r => tot(r, k0) });
+  cols.push({ key: 'dprev', head: 'Size Diff', title: 'Total minus the total of the previous size', attrs: { 'data-g': G, 'data-part': 'dprev' }, get: r => (r > 0 && tot(r, k0) !== null && tot(r - 1, k0) !== null ? tot(r, k0)! - tot(r - 1, k0)! : null) });
+  if (fl) {
+    cols.push({ key: 'diff', head: 'Difference', title: `Total of ${chartTag(0)} minus total of ${chartTag(1)}`, attrs: { 'data-g': G, 'data-part': 'diff' }, cls: () => 'diff', get: r => diff(r) });
+    cols.push({ key: 'overall', head: 'Overall', title: 'Change of the difference from the previous size', attrs: { 'data-g': G, 'data-part': 'overall' }, get: r => (r > 0 && diff(r) !== null && diff(r - 1) !== null ? diff(r)! - diff(r - 1)! : null) });
+  }
+  return { rows, cols, pass: rows.map(() => null) };
+}
+
+const scrollA: SGState = { scrollTop: 0 }, scrollB: SGState = { scrollTop: 0 };
+function resultWindow(app: App, id: 'mline' | 'mline2', g: MGroupUI, gi: number, first: MGroupUI | null) {
+  let t: MeasureTable; let err = '';
+  try { t = resultTable(app, g, gi, first); } catch (e) { t = { rows: [], cols: [], pass: [] }; err = (e as Error).message; }
+  const W = Math.min(640, 150 + t.cols.length * 78);
+  const x0 = Math.max(70, Math.min(260, window.innerWidth - 2 * W - 340));
+  const win = floatingWindow(id, `Measure Line · ${chartTag(gi)}`, { width: W, x: gi === 0 ? x0 : Math.min(window.innerWidth - W - 20, x0 + (document.querySelector<HTMLElement>('.fwin[data-win="mline"]')?.offsetWidth ?? W) + 14), y: 150, onClose: () => { if (closingByTool) return; if (id === 'mline') { SHOWN.a = null; SHOWN.b = null; closeWindow('mline2'); } else SHOWN.b = null; } });
   win.el.classList.add('mwin');
-  keepScroll(win.body, MS.scroll); clear(win.body); clear(win.foot);
-  const run = (label: string, fn: () => void) => { try { fn(); } catch (err) { reportError(err, label); } };
-  const rerender = () => { renderMeasureWindow(app); app.invalidate('canvas'); };
-
-  // controls
-  const mode = h('select.m-mode', { title: 'What each line contributes' }) as HTMLSelectElement;
-  for (const [v, l] of [['contour', 'Along the line (length)'], ['diagonal', 'Straight distance'], ['x', 'dX only'], ['y', 'dY only']]) mode.append(h('option', { value: v }, l));
-  mode.value = MS.mode; mode.onchange = () => { MS.mode = mode.value as MeasureMode; rerender(); };
-  mode.addEventListener('keydown', e => e.stopPropagation());
-  const ctl = h('div.m-ctl', {}, h('span.dim', {}, 'Measure'), mode);
-  win.body.append(ctl);
-
-  // group chips
-  const chips = h('div.m-groups');
-  MS.groups.forEach((g, gi) => {
-    const nm = textInput(g.name, v => { g.name = v.trim() || g.name; rerender(); }, 'name');
-    nm.classList.add('m-gname'); nm.setAttribute('data-g', String(gi));
-    chips.append(h('div.m-chip' + (gi === MS.cur ? '.on' : ''), { style: `--gc:${groupColor(gi)}`, title: g.parts.map(p => `${p.label}: ${partName(app, p)}`).join('\n'), onclick: (e: Event) => { if ((e.target as Element).closest('input,button')) return; MS.cur = gi; rerender(); } },
-      h('span.m-dot'), nm, h('span.dim', {}, `${g.parts.length} line${g.parts.length === 1 ? '' : 's'}`),
-      h('button.mini', { title: 'Remove this group', onclick: () => { MS.groups.splice(gi, 1); renameDefault(); MS.cur = MS.groups.length - 1; MS.closed = Math.min(MS.closed, MS.groups.length); rerender(); } }, '×')));
-  });
-  if (MS.groups.length) win.body.append(chips);
-  if (hasOpen()) win.body.append(h('div.dim.m-stage', { 'data-stage': String(MS.closed) }, MS.closed === 0 ? 'Group A: click its lines (any pieces), then right-click = done with A' : MS.closed === 1 ? (MS.groups.length > 1 ? 'Group B: click its lines (any pieces), then right-click = compare' : 'Group A is done. Click the lines of group B, then right-click = compare (right-click now keeps A on its own)') : 'Comparison: A − B per size. Clicking a new line starts a blank measurement.'));
-
-  if (MS.groups.length > 1) {
-    const dir = h('div.seg.m-dir');
-    for (const [v, l] of [['BA', `${MS.groups[1].name} − ${MS.groups[0].name}`], ['AB', `${MS.groups[0].name} − ${MS.groups[1].name}`]] as const) dir.append(h('button' + (MS.diff === v ? '.on' : ''), { 'data-diff': v, onclick: () => { MS.diff = v; rerender(); } }, l));
-    const ease = lengthInput(MS.ease, v => { MS.ease = v; if (MS.tol === null) MS.tol = 1; rerender(); }, { title: 'Target ease: the wanted difference (e.g. sleeve cap − armhole)' });
-    ease.classList.add('m-ease');
-    const tol = lengthInput(MS.tol ?? NaN, v => { MS.tol = Math.abs(v); rerender(); }, { min: 0, title: 'Tolerance ±: rows within target ± tolerance pass (green), others fail (red)' });
-    tol.classList.add('m-tol');
-    win.body.append(h('div.m-ctl', {},
-      h('span.dim', {}, 'Difference'), dir,
-      h('label.chk', {}, h('input', { type: 'checkbox', checked: MS.showParts, onchange: (e: Event) => { MS.showParts = (e.target as HTMLInputElement).checked; rerender(); } }), ' parts'),
-      h('span.dim', {}, 'Target ease'), ease, h('span.dim', {}, '±'), tol, h('span.dim', {}, unitLabel()),
-      MS.tol !== null ? h('button.mini', { title: 'No pass / fail check', onclick: () => { MS.tol = null; rerender(); } }, '×') : null));
-  }
-
-  if (!hasOpen()) {
-    win.body.append(h('div.empty', {}, 'Click lines on the canvas (Measure tool, M): any lines, on any pieces. They add up per size as group A. Right-click = done with A; then click the lines of group B and right-click again: the window shows total A, total B and A − B per size. Two groups at most; a new line after that starts a blank measurement. Esc = cancel.'));
-  } else {
-    let t: MeasureTable;
-    try { t = measureTable(app, MS.groups, MS.mode, MS); } catch (err) { win.body.append(h('div.warnline', {}, (err as Error).message)); t = { rows: [], cols: [], pass: [] }; }
-    if (t.rows.length) {
-      const grid = sizeGrid({ rows: t.rows, cols: t.cols, state: MS.scroll, maxHeight: Math.min(440, window.innerHeight - 330), cls: 'mtab', onRowClick: r => { app.activeSize = t.rows[r].id; app.invalidate(); renderMeasureWindow(app); } });
-      win.body.append(grid.el);
-      const failing = t.pass.filter(p => p === false).length;
-      if (MS.groups.length > 1 && MS.tol !== null) win.body.append(h('div.fw-sum' + (failing ? '.bad' : ''), { 'data-check': failing ? 'fail' : 'pass' }, failing ? `${failing} size(s) outside ${fmt(MS.ease)} ± ${fmt(MS.tol)} ${unitLabel()}` : `All sizes within ${fmt(MS.ease)} ± ${fmt(MS.tol)} ${unitLabel()}`));
-      const g = MS.groups[MS.cur] ?? MS.groups[0];
-      win.body.append(h('div.dim.m-formula', {}, `${g.name}: ${g.parts.map(p => p.label).join(' + ')} = Σ · ${MS.mode === 'contour' ? 'along the line' : MS.mode === 'diagonal' ? 'straight' : MS.mode === 'x' ? 'dX' : 'dY'} · ${unitLabel()}`));
-    }
-  }
-  // history
-  if (MS.history.length) {
-    const hist = h('div.m-hist', {}, h('div.insp-title', {}, `Kept measurements (${MS.history.length})`));
-    for (const rec of MS.history) {
-      const nm = textInput(rec.name, v => { rec.name = v.trim() || rec.name; rerender(); });
-      nm.classList.add('m-hname');
-      hist.append(h('div.m-hrow' + (MS.editing === rec.id ? '.on' : ''), { 'data-rec': rec.id }, nm,
-        h('span.dim', {}, `${rec.groups.length > 1 ? rec.groups.length + ' groups' : rec.groups[0]?.parts.length + ' lines'}`),
-        h('button.btn.sm', { title: 'Reopen: show it again and add / remove lines', onclick: () => { reopen(rec.id); app.setTool('measure'); rerender(); } }, 'Reopen'),
-        h('button.btn.sm', { title: 'Copy as TSV (Excel): rows = sizes', onclick: () => void copyText(measureTSV(app, rec)).then(ok => toast(ok ? 'Copied (TSV, rows = sizes)' : 'Copy refused by the browser', ok ? 'ok' : 'warn')) }, 'Copy'),
-        h('button.btn.sm', { title: 'Grade to spec: solve points so this measurement hits a spec per size', onclick: () => hooks.gradeToSpec?.(rec.groups, rec.mode) }, 'Grade to spec…'),
-        h('button.mini', { title: 'Delete', onclick: () => { MS.history.splice(MS.history.indexOf(rec), 1); rerender(); } }, '×')));
-    }
-    win.body.append(hist);
-  }
+  win.el.style.width = W + 'px';
+  const st = gi === 0 ? scrollA : scrollB;
+  keepScroll(win.body, st); clear(win.body); clear(win.foot);
+  if (err) win.body.append(h('div.warnline', {}, err));
+  else if (!t.rows.length) win.body.append(h('div.empty', {}, 'These lines no longer exist.'));
+  else win.body.append(sizeGrid({ rows: t.rows, cols: t.cols, state: st, maxHeight: Math.min(440, window.innerHeight - 300), cls: 'mtab', onRowClick: r => { app.activeSize = t.rows[r].id; app.invalidate(); renderMeasureWindow(app); } }).el);
   win.foot.append(
-    h('button.btn.sm' + (hasOpen() ? '' : '.disabled'), { 'data-act': 'copy', title: 'Copy the table as TSV (Excel): rows = sizes', onclick: () => run('Copy', () => { if (!hasOpen()) return; void copyText(measureTSV(app)).then(ok => toast(ok ? 'Copied (TSV, rows = sizes)' : 'Copy refused by the browser', ok ? 'ok' : 'warn')); }) }, 'Copy TSV'),
-    h('button.btn.sm' + (hasOpen() ? '' : '.disabled'), { 'data-act': 'spec', title: 'Grade the selected points so this measurement hits a spec per size', onclick: () => { if (hasOpen()) hooks.gradeToSpec?.(liveGroups(app, MS.groups), MS.mode); } }, 'Grade to spec…'),
-    h('button.btn.sm' + (hasOpen() ? '' : '.disabled'), { 'data-act': 'adjust', title: 'Change the pattern: make one of these lines an exact length, or make the difference between two groups (ease) a value', onclick: () => { if (hasOpen()) hooks.adjust?.(); } }, 'Adjust segment…'),
-    h('button.btn.sm' + ((hasOpen() || MS.history.length) && MS.groups.length < 2 ? '' : '.disabled'), { 'data-act': 'tospec', title: MS.groups.length > 1 ? 'Not available while two groups are compared: a point of measure is one group of lines' : 'Keep this measurement in the style as a point of measure with a target per size (Measure spec)', onclick: () => { if ((hasOpen() || MS.history.length) && MS.groups.length < 2) hooks.addToSpec?.(); } }, 'Add to spec'),
+    h('span.dim', {}, `${g.parts.length} line${g.parts.length === 1 ? '' : 's'} · ${unitLabel()}`),
     h('span.spacer'),
-    h('button.btn.sm', { 'data-act': 'cancel', title: 'Cancel (Esc)', onclick: () => { cancelMeasure(); hooks.onCancel?.(); rerender(); } }, 'Cancel'),
-    h('button.btn.sm.primary' + (hasOpen() ? '' : '.disabled'), { 'data-act': 'ok', title: 'OK (Enter / right-click): keep it in the list below', onclick: () => { const r = commitMeasure(); if (r) toast(`Kept “${r.name}”`, 'ok'); hooks.onOK?.(); rerender(); } }, 'OK'),
+    h('button.btn.sm.primary', { 'data-act': 'tospec', title: 'Keep this set of lines in the style as a point of measure with a target per size (Measure spec)', onclick: () => hooks.addToSpec?.(g, SHOWN.mode) }, 'Add to spec'),
   );
-  void ([] as Id[]); void ({} as SegRef);
+}
+
+/** (Re)render the Measure result windows: one per finished set of lines (none while the first set is still being picked). */
+export function renderMeasureWindow(app: App) {
+  if (SHOWN.a) resultWindow(app, 'mline', SHOWN.a, 0, null); else closeWindow('mline');
+  if (SHOWN.a && SHOWN.b) resultWindow(app, 'mline2', SHOWN.b, 1, SHOWN.a); else closeWindow('mline2');
+  void ([] as Id[]); void ({} as SegRef); void fmt; void lengthInput; void textInput; void gridTSV; void copyText; void toast; void reportError; void windowOpen;
 }
