@@ -688,6 +688,47 @@ export function mergeFromStyle(doc: Document, other: Style, pieceIds: Id[], size
 export function recenterGrain(doc: Document, pieceId: Id): void {
   doc.transact('Recenter grain', () => { const p = doc.piece(pieceId); p.grain.centered = true; recenterGrainRaw(p, doc.sizeLine(p)); });
 }
+export interface FitGrainOptions {
+  /** length of the grain line as a part (0–1] of the piece measured along the grain direction; omit to keep the current length */
+  portion?: number;
+}
+/**
+ * Put the grain line in the middle of the piece, keeping its direction: the line through the piece
+ * centre along the grain direction is cut by the outline, and the grain line is centred on the part
+ * inside the piece. With `portion` the grain line also gets that share of the inside length (0.8 = it
+ * stops 10 % short of the outline at each end), so it always fits the piece. Returns the new length.
+ */
+export function fitGrain(doc: Document, pieceId: Id, o: FitGrainOptions = {}): number {
+  if (o.portion !== undefined && !(o.portion > 0 && o.portion <= 1)) throw new Error('Portion must be between 0 and 100 %');
+  return doc.transact(o.portion === undefined ? 'Grain to centre' : 'Grain fit to piece', () => {
+    const p = doc.piece(pieceId), line = doc.sizeLine(p);
+    if (p.locked) throw new Error('Piece is locked');
+    const r = resolveBase(p.sew, line);
+    const poly = closedPoly(r);
+    const g = p.grain;
+    let d = sub(g.b, g.a); const L0 = len(d);
+    d = L0 > 1e-9 ? mul(d, 1 / L0) : { x: 1, y: 0 };
+    const c = centroid(r.pts);
+    const far = 1e5;
+    const X = crossings([sub(c, mul(d, far)), add(c, mul(d, far))], poly).map(x => x.sPath - far).sort((u, v) => u - v);
+    // the inside stretch that holds the centre (a concave piece can have several): nearest crossing behind and ahead of it
+    let lo = -L0 / 2, hi = L0 / 2;
+    if (X.length >= 2) {
+      const behind = X.filter(t => t <= 1e-9), ahead = X.filter(t => t >= -1e-9);
+      if (behind.length && ahead.length && ahead[0] - behind[behind.length - 1] > 1e-6) { lo = behind[behind.length - 1]; hi = ahead[0]; }
+      else {
+        // centre outside the outline: take the longest inside stretch on that line
+        let best = 0;
+        for (let i = 0; i + 1 < X.length; i += 2) if (X[i + 1] - X[i] > best) { best = X[i + 1] - X[i]; lo = X[i]; hi = X[i + 1]; }
+      }
+    }
+    const mid = add(c, mul(d, (lo + hi) / 2));
+    const L = o.portion === undefined ? (L0 > 1e-9 ? L0 : (hi - lo) * 0.6) : (hi - lo) * o.portion;
+    g.a = sub(mid, mul(d, L / 2)); g.b = add(mid, mul(d, L / 2));
+    g.centered = true;
+    return L;
+  });
+}
 /** Make the grain parallel to the chord of a segment (keeps grain length and midpoint). */
 export function grainParallelToSegment(doc: Document, pieceId: Id, from: Id, to: Id): void {
   doc.transact('Grain parallel', () => {
