@@ -92,7 +92,6 @@ input[type=checkbox], input[type=radio] { accent-color: var(--accent); width: au
 #right-dock { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; min-height: 0; }
 #bottom-dock { background: var(--panel); border-top: 1px solid var(--line); max-height: 42vh; display: flex; flex-direction: column; }
 #bottom-dock.collapsed { max-height: none; }
-body.grade-tool #bottom-dock:not(.collapsed) { height: 38vh; } /* Edit Delta: a steady table height */
 #bottom-dock .panel { display: flex; flex-direction: column; min-height: 0; }
 #bottom-dock .panel-body { overflow: auto; min-height: 0; }
 .panel { border-bottom: 1px solid var(--line); }
@@ -331,7 +330,11 @@ td.sg-rh.brk { border-bottom: 1px solid var(--warn); }
 
 /* grading table (dock) */
 .gr-body { display: flex; gap: 8px; align-items: flex-start; min-height: 0; }
-#bottom-dock .gr-body .sg-wrap { max-height: calc(42vh - 120px); flex: 0 1 auto; }
+.gradewin { resize: both; overflow: hidden; min-width: 360px; min-height: 160px; max-width: calc(100vw - 20px); max-height: calc(100vh - 60px); }
+.gradewin .fw-body { flex: 1 1 auto; min-height: 0; max-height: 52vh; }
+.gradewin[style*="height"] .fw-body { max-height: none; }
+.gradewin .gr-body .sg-wrap { flex: 0 1 auto; max-height: 38vh; }
+.gradewin[style*="height"] .gr-body .sg-wrap { max-height: none; }
 .gr-strip { flex: 0 0 158px; font-size: 10px; color: var(--dim); }
 .gr-strip svg { background: #18181c; border: 1px solid var(--line); border-radius: 4px; display: block; }
 .gr-strip svg .ax { stroke: #3a3a42; stroke-width: 1; }
