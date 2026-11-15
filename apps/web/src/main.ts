@@ -9,6 +9,7 @@ import './styles.css';
 import { makePiece, makeStyle, rectangleContour } from '@prowdcad/kernel';
 import { App } from './app';
 import { Canvas } from './canvas/canvas';
+import { dropImages } from './actions/view-cmds';
 import { TOOLS } from './tools/index';
 import { mountPalette, closeFly } from './ui/palette';
 import { mountMenubar, openContextMenu, closeMenus } from './ui/menu';
@@ -184,6 +185,8 @@ window.addEventListener('drop', e => {
   e.preventDefault(); dragDepth = 0; dropHint.remove();
   if (dialogOpen()) return;
   const files = [...(e.dataTransfer?.files ?? [])];
+  // image files dropped on the sheet become artwork on the piece under the cursor
+  if (files.length && files.every(f => /^image\//.test(f.type))) { dropImages(app, files, e.clientX, e.clientY).catch(err => reportError(err, 'Place image')); return; }
   if (files.length) openDropped(app, files).catch(err => reportError(err, 'Open'));
 });
 

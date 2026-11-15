@@ -50,6 +50,14 @@ export interface Settings {
   ruleBadges: boolean;
   /** reference blocks (dashed) */
   showReference: boolean;
+  /** View switches (off by default) */
+  showLineLabels?: boolean;
+  showPointTypes?: boolean;
+  hideAnnotations?: boolean;
+  showPieceInfo?: boolean;
+  showPrevShape?: boolean;
+  /** fill opacity of pieces on the sheet, percent (default 3) */
+  pieceOpacity?: number;
   /** Select tool: what a click / box can select */
   selFilter: SelFilter;
   /** Select tool opt-in: dragging moves ONLY the grabbed point / handle / piece (off = Select never moves geometry) */

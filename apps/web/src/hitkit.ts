@@ -149,3 +149,21 @@ export function screenPath(app: App, pts: Vec[], closed = false): string {
   pts.forEach((q, i) => { const s = app.view.toScreen(q); d += `${i ? 'L' : 'M'}${f(s.x)} ${f(s.y)}`; });
   return closed ? d + 'Z' : d;
 }
+
+/** Nested view: the size whose outline is under the cursor (nearest within tolPx), with its name. */
+export function nestSizeAt(app: App, w: Vec, tolPx = 6): { piece: Piece; sizeId: string; name: string } | null {
+  if (!app.nested) return null;
+  let best: { piece: Piece; sizeId: string; name: string; d: number } | null = null;
+  for (const p of app.doc.style.pieces) {
+    if (app.hiddenPieces.has(p.id)) continue;
+    const l = toLocal(p, w); const line = app.doc.sizeLine(p);
+    for (const sid of app.doc.sizesOf(p)) {
+      if (app.nestedHidden.has(sid)) continue;
+      let r; try { r = resolveFor(app.doc, p, sid); } catch { continue; }
+      const rc = r.sew; if (rc.pts.length < 2) continue;
+      const d = closestPoint(rc.closed ? [...rc.pts, rc.pts[0]] : rc.pts, l).d * app.view.scale;
+      if (d <= tolPx && (!best || d < best.d)) best = { piece: p, sizeId: sid, name: line.sizes.find(z => z.id === sid)?.name ?? sid, d };
+    }
+  }
+  return best;
+}
