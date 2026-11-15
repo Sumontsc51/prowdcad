@@ -14,7 +14,7 @@ import { toast } from '../ui/toast';
 import { pick } from '../tools/pick';
 import { runWorld, screenPath } from '../hitkit';
 import { fmt, unitLabel } from '../units-ui';
-import { hasPiece, onePiece, selPieces } from './cmd-util';
+import { hasPiece, onePiece, selPieces, needs } from './cmd-util';
 import { resolveFor } from '../geometry';
 import { totalLength, perimeter, area } from '@prowdcad/kernel';
 import { reportError } from '../commands';
@@ -140,7 +140,7 @@ export function registerMeasure(app: App) {
   setMeasureHooks({
     gradeToSpec: (groups, mode) => openGradeFit(app, groups, mode),
     adjust: () => void adjustSegment(app).catch(err => reportError(err, 'Adjust segment')),
-    addToSpec: () => { try { addSpecFromMeasure(app); openSpecWindow(app); toast('Added to the Measure spec — type a target and Apply', 'ok'); } catch (err) { reportError(err, 'Add to spec'); } },
+    addToSpec: (group, mode) => { try { addSpecFromMeasure(app, group, mode); openSpecWindow(app); toast('Added to the Measure spec — type a target and Apply', 'ok'); } catch (err) { reportError(err, 'Add to spec'); } },
   });
   registerCommand({ id: 'measure.tool', title: 'Measure tool', menu: 'Measure', group: 0, hint: 'M', run: () => app.setTool('measure') });
   // no menu entry: Measure tool already opens Line mode with the per-size window; kept for its shortcut and the command finder
@@ -148,6 +148,8 @@ export function registerMeasure(app: App) {
     (settings.toolState ??= {}).measure = { ...(settings.toolState.measure ?? {}), mode: 'line' }; saveSettings();
     app.setTool('measure'); renderMeasureWindow(app);
   } });
+  registerCommand({ id: 'measure.adjust', title: 'Adjust segment… (measured line to an exact length)', menu: 'Measure', group: 0, enabled: needs(() => MS.groups.some(g => g.parts.length), 'lines picked with the Measure tool'), run: () => adjustSegment(app) });
+  registerCommand({ id: 'measure.gradeToSpec', title: 'Grade to spec… (measured lines to a spec per size)', menu: 'Measure', group: 0, enabled: needs(() => MS.groups.some(g => g.parts.length), 'lines picked with the Measure tool'), run: () => openGradeFit(app, MS.groups.filter(g => g.parts.length), MS.mode) });
   registerCommand({ id: 'measure.spec', title: 'Measure spec…', menu: 'Measure', group: 0, hotkey: 'Ctrl+Shift+M', hint: 'Points of measure with targets: the pattern follows the spec', run: () => openSpecWindow(app) });
   registerCommand({ id: 'measure.walk', title: 'Walk tool', menu: 'Measure', group: 0, run: () => app.setTool('walk') });
   registerCommand({ id: 'measure.piece', title: 'Piece info', menu: 'Measure', group: 0, hotkey: 'Ctrl+I', enabled: hasPiece, run: async () => {

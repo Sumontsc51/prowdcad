@@ -56,10 +56,12 @@ export function registerMoveCmds(app: App) {
   rot('move.pieceRotatePoint', 'Rotate by point (pin + second point)', 'point');
   rot('move.pieceRotate', 'Rotate Piece (about its centre, 0–360°)', 'piece');
   registerCommand({ id: 'move.rotateKeepGrain', title: 'Rotate: keep grain direction', menu: 'Piece/Modify Piece', checked: () => !!settings.rotateKeepGrain, run: () => { settings.rotateKeepGrain = !settings.rotateKeepGrain; saveSettings(); app.status(settings.rotateKeepGrain ? 'Rotate: the grain line keeps its direction on the sheet' : 'Rotate: the grain line turns with the piece'); app.invalidate(); } });
-  const gr = (id: string, title: string, mode: string) => registerCommand({ id, title, menu: 'Piece/Modify Piece', checked: () => app.tool?.id === 'grain' && (settings.toolState?.grain?.mode ?? 'flipH') === mode, run: () => { (settings.toolState ??= {}).grain = { mode }; saveSettings(); app.setTool('grain'); app.invalidate(); } });
+  const gr = (id: string, title: string, mode: string) => registerCommand({ id, title, menu: 'Piece/Modify Piece', checked: () => app.tool?.id === 'grain' && (settings.toolState?.grain?.mode ?? 'flipH') === mode, run: () => { (settings.toolState ??= {}).grain = { ...(settings.toolState.grain ?? {}), mode }; saveSettings(); app.setTool('grain'); app.invalidate(); } });
   gr('move.pieceFlip', 'Grain tool: Flip horizontal', 'flipH');
   gr('move.pieceFlipV', 'Grain tool: Flip vertical', 'flipV');
   gr('move.grainSet', 'Grain tool: Grain to piece position', 'grainSet');
+  gr('move.grainCenter', 'Grain tool: Grain to centre', 'grainCenter');
+  gr('move.grainFit', 'Grain tool: Grain fit to piece', 'grainFit');
   gr('move.pieceToGrain', 'Grain tool: Piece to grain', 'pieceToGrain');
   registerCommand({ id: 'piece.grainHorizontal', title: 'Set grain to piece position (selected)', menu: 'Piece/Modify Piece', group: 1, enabled: () => app.sel.pieces.length > 0, run: () => grainToHorizontal(app, selPieceIds()) });
   registerCommand({ id: 'piece.toGrain', title: 'Set piece to grain (selected)', menu: 'Piece/Modify Piece', group: 1, enabled: () => app.sel.pieces.length > 0, run: () => pieceToGrain(app, selPieceIds()) });
