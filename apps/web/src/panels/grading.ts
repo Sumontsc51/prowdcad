@@ -26,7 +26,8 @@ import { fmt, unitLabel } from '../units-ui';
 import { resolveFor, toWorld, sizeColor } from '../geometry';
 import { ops } from '../ops-bridge';
 import { getCommand, isEnabled, runCommand, effectiveHotkey, reportError } from '../commands';
-import { sizeGrid, keepScroll, sizeRows, type SGCol, type SGState } from './sizegrid';
+import { sizeGrid, keepScroll, sizeRows, VIRT, type SGCol, type SGState } from './sizegrid';
+import { lengthInput, numberInput } from './widgets';
 import { toast } from '../ui/toast';
 import type { FillMethod } from '@prowdcad/kernel';
 
@@ -44,6 +45,12 @@ const GS = {
   live: null as { r: number; c: number; v: number } | null,
   method: 'linear' as FillMethod,
   pieceKey: '',
+  /** Calculate: which cells a calculation changes, its constant (mm) and factor, and the size range it is limited to */
+  calcScope: 'col' as 'cell' | 'col' | 'all',
+  calcK: 5,
+  calcF: 2,
+  from: -1,
+  to: -1,
 };
 
 const VIEW_TIP = {
@@ -162,13 +169,17 @@ export function renderGrading(app: App, host: HTMLElement) {
     GS.live = null;
   };
 
+  // size range (AccuMark Edit Delta ▸ Sizes): rows outside it are hidden and no calculation touches them
+  const n = sizes.length;
+  const lo = () => (GS.from >= 0 && GS.from < n ? GS.from : 0), hi = () => (GS.to >= 0 && GS.to < n ? GS.to : n - 1);
+  const inRange = (r: number) => r === b || (r >= Math.min(lo(), hi()) && r <= Math.max(lo(), hi()));
   let note = noteEl(app, view, null);
   const strip = h('div.gr-strip');
   const grid = sizeGrid({
     rows: sizeRows(line, app.activeSize, breaks), cols, state: GS.scroll, cls: 'gr',
     onCommit: commit,
     onRowClick: r => { app.activeSize = sizes[r].id; app.invalidate(); },
-    rowClass: r => (GS.aff.has(r) ? 'aff' : ''),
+    rowClass: r => [GS.aff.has(r) ? 'aff' : '', inRange(r) || n > VIRT ? '' : 'out'].join(' ').trim(),
     rowExtra: r => h('button.sg-brk' + (brkIdx.includes(r) ? '.on' : ''), {
       title: brkIdx.includes(r) ? 'Size break (click to remove) — Split by break fills between breaks' : 'Make this a size break (AccuMark Edit Size Breaks)',
       onclick: (e: Event) => { e.stopPropagation(); if (r === b) { toast('The base size is always a break', 'info'); return; } const s = new Set(breaks); if (s.has(sizes[r].id)) s.delete(sizes[r].id); else s.add(sizes[r].id); try { ops.setSizeBreaks(app.doc, line.id, sizes.filter(x => s.has(x.id)).map(x => x.id)); } catch (err) { reportError(err, 'Size breaks'); } },
@@ -196,6 +207,46 @@ export function renderGrading(app: App, host: HTMLElement) {
     h('span.dim', {}, breaks.length ? `Breaks: ${breaks.map(id => sizes.find(s => s.id === id)?.name).join(' ')}` : 'Breaks: click ◆ next to a size'),
   );
   host.append(fill);
+  // ── Calculate (AccuMark Edit Delta calculations): halve, double, or a constant, on a cell, a column or every column ──
+  const calc = h('div.gr-calc');
+  const scope = h('select.gr-scope', { title: 'Which values a calculation changes. The base size ★ and sizes outside the range never change.' }) as HTMLSelectElement;
+  for (const [v, l] of [['cell', 'The cell I am in'], ['col', 'The column I am in'], ['all', 'Every dX / dY column shown']] as const) scope.append(h('option', { value: v }, l));
+  scope.value = GS.calcScope; scope.onchange = () => { GS.calcScope = scope.value as typeof GS.calcScope; };
+  scope.addEventListener('keydown', e => e.stopPropagation());
+  const kIn = lengthInput(GS.calcK, v => { GS.calcK = v; }, { title: 'Constant (a length) for +, − and =' }); kIn.classList.add('gr-k');
+  const fIn = numberInput(GS.calcF, v => { GS.calcF = v || 1; }, { title: 'Factor for × and ÷', decimals: 3 }); fIn.classList.add('gr-f');
+  const apply = (label: string, fn: (v: number) => number) => {
+    if (readOnly) { toast(`${live.name} is locked`, 'warn'); return; }
+    kIn.dispatchEvent(new Event('change')); fIn.dispatchEvent(new Event('change'));
+    const f = GS.focus;
+    if (GS.calcScope !== 'all' && (!f || !cols[f.c]?.edit)) { toast('Click a dX or dY cell first, so the calculation knows which ' + (GS.calcScope === 'cell' ? 'cell' : 'column'), 'warn'); return; }
+    const cs = GS.calcScope === 'all' ? editCols.map(x => x.i) : [f!.c];
+    const rs = GS.calcScope === 'cell' ? [f!.r] : sizes.map((_, r) => r);
+    const cells: { r: number; c: number; v: number }[] = [];
+    for (const c of cs) for (const r of rs) { if (r === b || !inRange(r)) continue; const v0 = cols[c].get(r); if (v0 === null || !Number.isFinite(v0)) continue; const v = fn(v0); if (Number.isFinite(v) && Math.abs(v - v0) > 1e-12) cells.push({ r, c, v }); }
+    if (!cells.length) { app.status('Calculate: nothing to change'); return; }
+    commit(cells);
+    grid.refresh();
+    app.status(`Calculate ${label}: ${cells.length} value${cells.length > 1 ? 's' : ''} changed · Ctrl+Z undoes`);
+    app.invalidate('panels', 'canvas');
+  };
+  const cb = (txt: string, act: string, tip: string, fn: () => void) => h('button.btn.sm', { 'data-calc': act, title: tip, onmousedown: (e: Event) => e.preventDefault(), onclick: fn }, txt);
+  const sizeSel = (cur: number, set: (i: number) => void, tip: string) => { const s2 = h('select.gr-range', { title: tip }) as HTMLSelectElement; sizes.forEach((z, i) => s2.append(h('option', { value: String(i) }, z.name))); s2.value = String(cur); s2.onchange = () => { set(+s2.value); s2.blur(); const ae = document.activeElement as HTMLElement | null; if (ae && host.contains(ae)) ae.blur(); app.invalidate('panels'); }; s2.addEventListener('keydown', e => e.stopPropagation()); return s2; };
+  calc.append(h('span.dim', {}, 'Calculate:'), scope,
+    cb('½ Halve', 'half', 'Halve the values', () => apply('halve', v => v / 2)),
+    cb('×2 Double', 'double', 'Double the values', () => apply('double', v => v * 2)),
+    cb('± Negate', 'neg', 'Change the sign of the values', () => apply('negate', v => -v)),
+    h('span.gr-sep'), h('span.dim', {}, 'Constant'), kIn,
+    cb('+', 'add', 'Add the constant', () => apply('+ constant', v => v + GS.calcK)),
+    cb('−', 'sub', 'Subtract the constant', () => apply('− constant', v => v - GS.calcK)),
+    cb('=', 'set', 'Set the values to the constant', () => apply('= constant', () => GS.calcK)),
+    h('span.gr-sep'), h('span.dim', {}, 'Factor'), fIn,
+    cb('×', 'mul', 'Multiply by the factor', () => apply('× factor', v => v * GS.calcF)),
+    cb('÷', 'div', 'Divide by the factor', () => apply('÷ factor', v => (GS.calcF ? v / GS.calcF : v))),
+    h('span.gr-sep'), h('span.dim', {}, 'Sizes'), sizeSel(lo(), i => { GS.from = i; }, 'First size shown and calculated'), h('span.dim', {}, 'to'), sizeSel(hi(), i => { GS.to = i; }, 'Last size shown and calculated'),
+  );
+  if (lo() !== 0 || hi() !== n - 1) calc.append(h('button.mini', { title: 'Show every size again', 'data-calc': 'allsizes', onclick: () => { GS.from = -1; GS.to = -1; app.invalidate('panels'); } }, '×'));
+  host.append(calc);
   const body = h('div.gr-body', {}, grid.el, strip);
   host.append(body);
   drawStrip(strip, app, pts, cols, b, view, sizes.map(s => s.id), live.id);
