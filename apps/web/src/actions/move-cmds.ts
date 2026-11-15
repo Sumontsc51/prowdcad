@@ -76,10 +76,11 @@ export function registerMoveCmds(app: App) {
       { kind: 'checkbox', key: 'dm', label: 'Allow dragging points in Select (moves only the point you grab)', value: settings.selectDragMove, hint: 'Off (default): in Select a drag on a piece moves the whole piece; points and lines move only with the Move tools (G, Shift+G).' },
       { kind: 'number', key: 'pr', label: 'Pick radius', value: settings.pickRadiusPx, min: 4, max: 20, suffix: 'px' },
       { kind: 'length', key: 'nu', label: 'Arrow-key nudge step (Move tools; Shift = ×10)', value: settings.nudgeMm, min: 0.001 },
+      { kind: 'number', key: 'op', label: 'Piece fill opacity', value: settings.pieceOpacity ?? 3, min: 0, max: 100, suffix: '%', hint: '0 = see-through pieces, 100 = solid. A piece with its own colour (Inspector) is never fainter than 14 %.' },
       { kind: 'checkbox', key: 'al', label: 'Internal line: lock ends drawn on the outline to their segment', value: settings.autoLockInternal, hint: 'On (default): like CLO / AccuMark attach, an end on the outline keeps its proportional position when the segment changes. Right-click the line ▸ Unlock to free it.' },
     ] });
     if (!r) return;
-    settings.selectDragMove = !!r.dm; settings.pickRadiusPx = Math.round(r.pr as number); settings.nudgeMm = r.nu as number; settings.autoLockInternal = !!r.al; saveSettings(); app.invalidate();
+    settings.selectDragMove = !!r.dm; settings.pickRadiusPx = Math.round(r.pr as number); settings.nudgeMm = r.nu as number; settings.pieceOpacity = Math.max(0, Math.min(100, Number(r.op) || 0)); settings.autoLockInternal = !!r.al; saveSettings(); app.invalidate();
   } });
 }
 

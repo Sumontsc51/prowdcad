@@ -12,6 +12,7 @@ import { registerSeamNotch } from './seam-notch';
 import { registerMeasure } from './measure-cmds';
 import { registerPointSeg } from './point-seg';
 import { registerLockCmds } from './lock-cmds';
+import { registerViewExtras } from './view-cmds';
 import { registerCutPiece } from './cut-piece';
 import { registerGrade } from './grade-cmds';
 import { registerLive, deleteLive } from './live-cmds';
@@ -137,6 +138,7 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
   registerMeasure(app);
   registerPointSeg(app);
   registerLockCmds(app);
+  registerViewExtras(app);
   registerMoveCmds(app);
   registerCutPiece(app);
   registerGrade(app);
