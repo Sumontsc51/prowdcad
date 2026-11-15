@@ -139,6 +139,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <li><a href="#darts">Darts, pleats, fullness</a></li>
       <li><a href="#cut">Cut and construct</a></li>
       <li><a href="#grading">Grading</a></li>
+      <li><a href="#viewshow">See more, pick less</a></li>
       <li><a href="#measure">Measure and check</a></li>
       <li><a href="#files">Files: save, import, export</a></li>
       <li><a href="#keys">Keyboard shortcuts</a></li>
@@ -169,7 +170,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
         <tbody>
           <tr><td>Menu bar (top)</td><td>File, Edit, Piece, Point, Segment, Seam, Notch, Cut, Dart, Grade, Measure, View, Help. Every command shows its shortcut. A greyed item tells you what it needs when you hover it, for example "needs a selected point".</td></tr>
           <tr><td>Tool-options strip (under the menus)</td><td>The active tool, its modes (Select: the selection filter; Move Point: Single / Smooth / Horizontal / Vertical / Along line / Group) and an amber badge <em>Editing size L grading</em> whenever an edit changes the grading of a size other than the base.</td></tr>
-          <tr><td>Tool palette (left)</td><td>Select, Move Point, Move / Copy Line, Curve, Rotate, Flip, internal lines, Clip Line, Smooth run, shapes, Trace Piece, notch/drill, measure, hand. A small triangle on a button means there are more tools behind it: right-click or long-press to open them.</td></tr>
+          <tr><td>Tool palette (left)</td><td>Twelve buttons. A small triangle on a button means there are more tools behind it: right-click or long-press to open them. <strong>Select</strong> · <strong>Modify</strong> (Move Point, Move / Copy Line, Curve / Handle, Smooth run) · <strong>Piece position</strong> (Rotate Piece / Line, Grain / Flip) · <strong>Lines</strong> (Internal line, Clip Line) · <strong>Shapes</strong> · <strong>Seam</strong> · <strong>Notch / Drill / Text</strong> · <strong>Cut Point</strong> · <strong>Dart / Pleat / Fullness</strong> · <strong>Piece build</strong> (Cut / Merge Piece, Trace Piece) · <strong>Measure / Verify</strong> (Measure Lines, Measure Distance, Walk) · <strong>Navigate</strong>. Every hotkey works whatever the button shows; Grain / Flip is <kbd>Shift+R</kbd>.</td></tr>
           <tr><td>Sheet (centre)</td><td>An endless white sheet in millimetres with rulers and a grid. Drag from a ruler to make a guide line. Wheel zooms at the cursor; hold Space and drag (or middle-drag) to pan.</td></tr>
           <tr><td>Pieces / Sizes / Inspector (right)</td><td>The piece list, the size chips (click one to make it the active size) with <em>Nested view</em>, and the Inspector, which shows and edits whatever is selected.</td></tr>
           <tr><td>Grading table (bottom)</td><td>Opens with <kbd>Ctrl+G</kbd>. One row per grade point, two columns (dX, dY) per size.</td></tr>
@@ -496,10 +497,31 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <p><strong>Movement programs</strong> move points by a set amount per millimetre of a body measurement, e.g. front side seam 0.5 mm per +1 mm chest, the basis for made-to-measure.</p>
     </section>
 
+    <section id="viewshow">
+      <h2><small>Chapter 11b</small>See more, pick less</h2>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Where</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><span class="menu">View ▸ Show ▸ Line labels</span></td><td>Every outline line shows its number and length (L1 · 400); internal lines show I1, I2, …</td></tr>
+          <tr><td><span class="menu">View ▸ Show ▸ Point types</span></td><td>Every outline point shows its number and type: G = grade point, C = curve point, plus its name.</td></tr>
+          <tr><td><span class="menu">View ▸ Show ▸ Hide annotations</span></td><td>Texts on pieces are hidden on the sheet. They stay in the pattern and in exports.</td></tr>
+          <tr><td><span class="menu">View ▸ Show ▸ Piece info on the piece</span></td><td>Material, quantity, number of points and outline length under each piece name.</td></tr>
+          <tr><td><span class="menu">View ▸ Show ▸ Show previous shape</span></td><td>An orange dashed outline shows each changed piece as it was before the last change.</td></tr>
+          <tr><td><em>Only this piece</em> (Select tool strip, or <span class="menu">View ▸ Show</span>)</td><td>Only the selected piece(s) stay on the sheet, so a piece under or beside it cannot be picked by mistake. Switch it off to bring the others back.</td></tr>
+          <tr><td>Nested view (<kbd>Alt+N</kbd>)</td><td>With the Select tool, move over the outline of a size: its name appears next to the cursor.</td></tr>
+          <tr><td>Inspector ▸ Colour · <span class="menu">Edit ▸ Preferences</span> ▸ Piece fill opacity</td><td>Give a piece its own colour, and set how solid pieces look (0 % see-through, 100 % solid).</td></tr>
+          <tr><td><span class="menu">Point ▸ Point from point (dX, dY)…</span></td><td>Select a point, type how far right / left and up / down: a drill point is placed there.</td></tr>
+          <tr><td><span class="menu">Edit ▸ Copy picture of the sheet</span></td><td>Copies the sheet as a picture to paste into a mail or document (if the browser refuses, it is downloaded as a PNG).</td></tr>
+          <tr><td>Drop an image file on a piece</td><td>It is placed there as artwork at 300 dpi. Other files dropped on the window still open as patterns.</td></tr>
+          <tr><td><span class="menu">Edit ▸ Export settings… / Import settings…</span></td><td>Save preferences, shortcuts, toolbar and tool options to a file and load them on another computer or browser. Reload after importing.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
     <section id="measure">
       <h2><small>Chapter 12</small>Measure and check</h2>
       <h3>Measure Line: add up lines in every size</h3>
-      <p>Press <kbd>M</kbd> (Measure Lines). It works like AccuMark <em>Grade ▸ Measure ▸ Line</em>: the lines you click are added up, L1 + L2 + L3 = Total, in every size at once. A <em>line</em> is one piece of a seam or internal line between two grade points (points made with Cut Point count). Measure Lines and Measure Distance share one palette button: right-click or long-press it to choose.</p>
+      <p>Press <kbd>M</kbd> (Measure Lines). It works like AccuMark <em>Grade ▸ Measure ▸ Line</em>: the lines you click are added up, L1 + L2 + L3 = Total, in every size at once. A <em>line</em> is one piece of a seam or internal line between two grade points (points made with Cut Point count). Measure Lines, Measure Distance and Walk share one palette button (Measure / Verify): right-click or long-press it to choose.</p>
       <ol class="steps">
         <li><div>Move over the pattern: the line under the cursor lights up and shows its length. Click it. It is tagged <strong>CH1/L1</strong> on the sheet. Click more lines: CH1/L2, CH1/L3, …</div></li>
         <li><div>Click a picked line again to take it out. <kbd>Backspace</kbd> removes the last one. <kbd>Shift</kbd>+click takes every line from the last one up to the clicked one. Hold <kbd>Alt</kbd> to measure the <em>cut line</em> instead of the sew line (tagged ✂), or switch <em>Cut line</em> on in the tool strip.</div></li>
