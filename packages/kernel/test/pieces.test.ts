@@ -293,3 +293,48 @@ describe('grain (PC5)', () => {
 });
 
 void curvePoint; void polylineLength;
+
+// ───────────────────────── grain to centre / grain fit to piece ─────────────────────────
+import { fitGrain as _fitGrain } from '../src/ops/pieces';
+import { makeStyle as _fgStyle, makePiece as _fgPiece, gradePoint as _fgGp, makeContour as _fgContour } from '../src/model/factory';
+import { Document as _FgDoc } from '../src/model/doc';
+
+describe('fitGrain', () => {
+  function setup(pts: [number, number][]) {
+    const doc = new _FgDoc(_fgStyle('t', ['S', 'M', 'L'], 'M'));
+    const piece = _fgPiece('P', _fgContour(pts.map(([x, y]) => _fgGp(x, y))), doc.style.activeSizeTableId);
+    doc.transact('add', s => s.pieces.push(piece));
+    return { doc, pid: piece.id, g: () => doc.piece(piece.id).grain };
+  }
+  it('Grain to centre: the grain line moves to the middle of the piece, same length and direction', () => {
+    const t = setup([[0, 0], [200, 0], [200, 600], [0, 600]]);
+    t.doc.transact('g', () => { const g = t.doc.piece(t.pid).grain; g.a = { x: 20, y: 30 }; g.b = { x: 20, y: 130 }; });
+    const L = _fitGrain(t.doc, t.pid);
+    expect(L).toBeCloseTo(100, 9);
+    expect(t.g().a.x).toBeCloseTo(100, 6); expect(t.g().b.x).toBeCloseTo(100, 6);
+    expect(t.g().a.y).toBeCloseTo(250, 6); expect(t.g().b.y).toBeCloseTo(350, 6);
+    expect(t.g().centered).toBe(true);
+  });
+  it('Grain fit to piece: 80 % of the piece along the grain, centred; follows the grain direction', () => {
+    const t = setup([[0, 0], [200, 0], [200, 600], [0, 600]]);
+    t.doc.transact('g', () => { const g = t.doc.piece(t.pid).grain; g.a = { x: 20, y: 30 }; g.b = { x: 20, y: 130 }; });
+    expect(_fitGrain(t.doc, t.pid, { portion: 0.8 })).toBeCloseTo(480, 6);
+    expect(t.g().a.y).toBeCloseTo(60, 6); expect(t.g().b.y).toBeCloseTo(540, 6); expect(t.g().a.x).toBeCloseTo(100, 6);
+    // a horizontal grain fits the 200 mm width
+    t.doc.transact('g', () => { const g = t.doc.piece(t.pid).grain; g.a = { x: 10, y: 10 }; g.b = { x: 60, y: 10 }; });
+    expect(_fitGrain(t.doc, t.pid, { portion: 0.5 })).toBeCloseTo(100, 6);
+    expect(t.g().a.x).toBeCloseTo(50, 6); expect(t.g().b.x).toBeCloseTo(150, 6); expect(t.g().a.y).toBeCloseTo(300, 6);
+    t.doc.undo();
+    expect(t.g().a.x).toBeCloseTo(10, 9);
+    expect(() => _fitGrain(t.doc, t.pid, { portion: 0 })).toThrow();
+  });
+  it('a slanted grain on a triangle stays inside the outline', () => {
+    const t = setup([[0, 0], [300, 0], [0, 300]]);
+    t.doc.transact('g', () => { const g = t.doc.piece(t.pid).grain; g.a = { x: 0, y: 0 }; g.b = { x: 50, y: 50 }; });
+    const L = _fitGrain(t.doc, t.pid, { portion: 0.9 });
+    const g = t.g();
+    expect(Math.hypot(g.b.x - g.a.x, g.b.y - g.a.y)).toBeCloseTo(L, 6);
+    for (const q of [g.a, g.b]) { expect(q.x).toBeGreaterThan(0); expect(q.y).toBeGreaterThan(0); expect(q.x + q.y).toBeLessThan(300); }
+    expect((g.b.y - g.a.y) / (g.b.x - g.a.x)).toBeCloseTo(1, 6);
+  });
+});
