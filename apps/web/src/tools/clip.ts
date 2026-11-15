@@ -68,7 +68,7 @@ function commit(app: App, f: First, s: Second) {
 function reset(app: App) { F = null; HF = null; H2 = null; app.invalidate('canvas', 'status'); }
 
 export const clipTool: Tool = {
-  id: 'clip', title: 'Clip Line (cut or extend an internal line to another line)', group: 'clip', hotkey: 'Shift+I', icon: ICON.clip, cursor: 'crosshair',
+  id: 'clip', title: 'Clip Line (cut or extend an internal line to another line)', group: 'pen', hotkey: 'Shift+I', icon: ICON.clip, cursor: 'crosshair',
   activate() { F = null; HF = null; H2 = null; },
   deactivate(app) { reset(app); },
   busy: () => !!F,

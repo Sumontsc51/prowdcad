@@ -448,7 +448,7 @@ function mpFollowOverlay(app: App): string {
 }
 
 export const movePointTool: Tool = {
-  id: 'movePoint', title: 'Move Point', group: 'movepoint', hotkey: 'G', icon: ICON.movePoint, cursor: 'crosshair',
+  id: 'movePoint', title: 'Move Point', group: 'modify', hotkey: 'G', icon: ICON.movePoint, cursor: 'crosshair',
   activate(app) { MP.op = null; MP.frozen = false; MP.tackDrag = null; mpAdopt(app); },
   deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); mpCancelOp(app); MP.tackDrag = null; MP.hover = null; },
   busy: () => !!MP.op || !!MP.tackDrag || !!MP.box || !!MP.ins || apexBusy(),
@@ -917,7 +917,7 @@ async function mlInput(app: App, typed?: string) {
   if (mlCommit(app, toD(res.mode, res.v))) ML.last = { mode: res.mode, v: res.v };
 }
 export const moveLineTool: Tool = {
-  id: 'moveLine', title: 'Move / Copy Line', group: 'moveline', hotkey: 'Shift+G', icon: ICON.moveLine, cursor: 'crosshair',
+  id: 'moveLine', title: 'Move / Copy Line', group: 'modify', hotkey: 'Shift+G', icon: ICON.moveLine, cursor: 'crosshair',
   activate(app) { ML.op = null; ML.frozen = false; ML.carry = null; ML.panel = null; mlAdopt(app); },
   deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); ML.op = null; ML.carry = null; ML.panel = null; ML.frozen = false; ML.hover = null; app.cancelPreview(); },
   busy: () => !!ML.op || !!ML.carry || !!ML.panel,
@@ -1299,7 +1299,7 @@ function lnOverlay(app: App): string {
 }
 
 export const rotateTool: Tool = {
-  id: 'rotatePiece', title: 'Rotate Piece / Line', group: 'rotate', hotkey: 'Ctrl+Shift+G', icon: ICON.rotate, cursor: 'crosshair',
+  id: 'rotatePiece', title: 'Rotate Piece / Line', group: 'position', hotkey: 'Ctrl+Shift+G', icon: ICON.rotate, cursor: 'crosshair',
   activate() { PCS.op = null; PCS.frozen = false; PCS.pin = null; PCS.active = 'rotate'; LN.op = null; LN.pin = null; LN.hover = null; LN.frozen = false; },
   deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); PCS.op = null; PCS.pin = null; PCS.frozen = false; lnReset(app); },
   busy: () => !!PCS.op || !!PCS.pin || !!LN.op || !!LN.pin,
@@ -1481,7 +1481,7 @@ async function cvInput(app: App, typed?: string) {
   commitWith(app, [pk.ref.pieceId], 'Edit handle', apply(res.v));
 }
 export const curveTool: Tool = {
-  id: 'curve', title: 'Curve / Handle', group: 'curve', hotkey: 'Shift+C', icon: ICON.curve, cursor: 'default',
+  id: 'curve', title: 'Curve / Handle', group: 'modify', hotkey: 'Shift+C', icon: ICON.curve, cursor: 'default',
   activate() { CV.op = null; CV.frozen = false; CV.seg = null; CV.segOp = null; },
   deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); CV.op = null; CV.seg = null; CV.segOp = null; app.cancelPreview(); },
   busy: () => !!CV.op || !!CV.segOp,
@@ -1714,7 +1714,7 @@ export function pieceToGrain(app: App, ids: Id[]) {
   app.invalidate();
 }
 export const grainTool: Tool = {
-  id: 'grain', title: 'Grain / Flip', group: 'grain', icon: ICON.grain, cursor: 'crosshair',
+  id: 'grain', title: 'Grain / Flip', group: 'position', hotkey: 'Shift+R', icon: ICON.grain, cursor: 'crosshair',
   activate() { PCS.op = null; PCS.frozen = false; PCS.pin = null; PCS.active = 'flip'; },
   deactivate(app) { PCS.op = null; PCS.pin = null; PCS.hover = null; app.cancelPreview(); },
   modes: () => GRAIN_MODES,

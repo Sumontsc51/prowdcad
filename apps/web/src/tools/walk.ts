@@ -230,7 +230,7 @@ function movingToWorld(app: App, _stat: Piece, p: Vec): Vec {
 }
 
 export const walkTool: Tool = {
-  id: 'walk', title: 'Walk pieces', group: 'walk', hotkey: 'W', icon: ICON.walk, cursor: 'crosshair',
+  id: 'walk', title: 'Walk pieces', group: 'measure', hotkey: 'W', icon: ICON.walk, cursor: 'crosshair',
   activate(app) { reset(app); },
   deactivate(app) { finish(app); },
   busy: () => !!W.moving,

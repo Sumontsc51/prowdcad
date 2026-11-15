@@ -43,7 +43,7 @@ function commitSmooth(app: App) {
 }
 
 export const smoothTool: Tool = {
-  id: 'smooth', title: 'Smooth run', group: 'smooth', hotkey: 'Shift+M', icon: ICON.smooth, cursor: 'crosshair',
+  id: 'smooth', title: 'Smooth run', group: 'modify', hotkey: 'Shift+M', icon: ICON.smooth, cursor: 'crosshair',
   activate() { SM = null; },
   deactivate(app) { SM = null; app.invalidate('canvas'); },
   busy: () => !!SM,
@@ -387,7 +387,7 @@ async function commitTrace(app: App) {
 }
 
 export const traceTool: Tool = {
-  id: 'trace', title: 'Trace Piece', group: 'trace', hotkey: 'Shift+T', icon: ICON.trace, cursor: 'crosshair',
+  id: 'trace', title: 'Trace Piece', group: 'cut', hotkey: 'Shift+T', icon: ICON.trace, cursor: 'crosshair',
   activate() { TR = null; TRH = null; },
   deactivate(app) { TR = null; TRH = null; app.invalidate('canvas'); },
   busy: () => !!TR?.picks.length,

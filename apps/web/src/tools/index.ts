@@ -18,21 +18,23 @@ import { clipTool } from './clip';
 /** Palette order. Tools sharing `group` form one flyout button. */
 export const TOOLS: Tool[] = [
   selectTool,
-  movePointTool, moveLineTool, curveTool,
-  rotateTool, grainTool,
-  internalTool, clipTool, smoothTool,
+  movePointTool, moveLineTool, curveTool, smoothTool,   // Modify
+  rotateTool, grainTool,                                 // Piece position
+  internalTool, clipTool,                                // Lines
   rectTool, circleTool, polygonTool, roundRectTool,
   seamTool,
   notchTool, drillTool, textTool,
   cutPointTool,
   dartTool, pleatTool, fullnessTool,
-  slashTool, traceTool,
+  slashTool, traceTool,                                  // Piece build
   penTool, // not offered to the user (hidden, no key, no menu): kept for the automated test fixture
-  measureTool, measureDistTool, walkTool,
+  measureTool, measureDistTool, walkTool,                // Measure / Verify
   handTool, zoomTool,
   pickTool,
 ];
 
 export const GROUP_TITLES: Record<string, string> = {
-  select: 'Select', movepoint: 'Move Point', moveline: 'Move / Copy Line', curve: 'Curve / Handle', rotate: 'Rotate Piece / Line', grain: 'Grain / Flip', walk: 'Walk pieces', pen: 'Internal line', clip: 'Clip Line', smooth: 'Smooth run', trace: 'Trace Piece', shape: 'Shapes', seam: 'Seam', marks: 'Notch / Drill / Text', cutpoint: 'Cut Point', live: 'Dart / Pleat', cut: 'Cut / Trace', measure: 'Measure Lines / Distance', view: 'Navigate',
+  select: 'Select', modify: 'Modify: Move Point · Move / Copy Line · Curve · Smooth', position: 'Piece position: Rotate · Grain / Flip', pen: 'Lines: Internal line · Clip Line',
+  shape: 'Shapes', seam: 'Seam', marks: 'Notch / Drill / Text', cutpoint: 'Cut Point', live: 'Dart / Pleat / Fullness', cut: 'Piece build: Cut / Merge · Trace',
+  measure: 'Measure / Verify: Lines · Distance · Walk', view: 'Navigate',
 };

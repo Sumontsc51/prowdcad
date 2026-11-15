@@ -21,6 +21,8 @@
 import type { Vec } from '@prowdcad/kernel';
 import type { App, SelItem } from '../app';
 import { selItemKey } from '../app';
+import { nestSizeAt } from '../hitkit';
+import { isIsolated, toggleIsolate } from '../isolate';
 import type { Tool, Ptr } from './tool';
 import { ICON } from './tool';
 import { settings, saveSettings, type SelFilter } from '../settings';
@@ -45,6 +47,8 @@ type Drag =
 let press: Press | null = null;
 let drag: Drag | null = null;
 let hover: Cand | null = null;
+/** nested view: the size name shown next to the cursor while it is over a size's outline */
+let nestTip: { name: string; s: Vec } | null = null;
 let cycle: { s: Vec; cands: Cand[]; idx: number; mode: Mode } | null = null;
 const dbl = new DoubleClick();
 
@@ -88,7 +92,9 @@ function clickSelect(app: App, pr: Press) {
 
 export const selectTool: Tool = {
   id: 'select', title: 'Select', group: 'select', hotkey: 'V', icon: ICON.select, cursor: 'default',
-  deactivate(app) { if (drag && drag.type !== 'marquee') app.cancelPreview(); drag = null; press = null; hover = null; },
+  deactivate(app) { if (drag && drag.type !== 'marquee') app.cancelPreview(); drag = null; press = null; hover = null; nestTip = null; },
+  toggles: () => [{ id: 'isolate', label: 'Only this piece', title: 'On: only the selected piece(s) stay on the sheet, so nothing else can be picked by mistake. Off: every piece is back.', on: isIsolated() }],
+  toggle(app, id) { if (id === 'isolate') toggleIsolate(app); },
   busy: () => !!drag,
   modes: () => FILTERS.map(f => ({ id: f.id, label: f.label, title: f.title })),
   mode: () => settings.selFilter ?? 'all',
@@ -112,6 +118,7 @@ export const selectTool: Tool = {
 
   move(app, p) {
     const e = p.e as MouseEvent;
+    { const t = !drag && app.nested ? nestSizeAt(app, p.w) : null; const nv = t ? { name: t.name, s: p.s } : null; if (nv?.name !== nestTip?.name || nv) { nestTip = nv; app.invalidate('canvas'); } }
     if (drag?.type === 'handle') { curveTool.move!(app, p); return; }
     if (drag?.type === 'marquee') { drag.b = p.w; drag.bs = p.s; app.invalidate('canvas', 'status'); return; }
     if (drag?.type === 'point') {
@@ -221,6 +228,7 @@ export const selectTool: Tool = {
 
   overlay(app) {
     let out = '';
+    if (nestTip && app.nested) { const t = 'Size ' + nestTip.name; out += `<g data-size-tip="${nestTip.name}"><rect x="${fs(nestTip.s.x + 12)}" y="${fs(nestTip.s.y - 26)}" width="${fs(t.length * 6.6 + 12)}" height="18" rx="4" fill="#1c2430" opacity="0.92"/><text x="${fs(nestTip.s.x + 18)}" y="${fs(nestTip.s.y - 13)}" fill="#fff" font-size="11" font-family="sans-serif">${t}</text></g>`; }
     if (hover && !drag && !press && !app.isSelected(hover.item)) out += itemHighlight(app, hover.item, 0.5);
     if (drag?.type === 'marquee') {
       const a = app.view.toScreen(drag.a), b = app.view.toScreen(drag.b);
