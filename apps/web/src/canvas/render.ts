@@ -9,7 +9,8 @@ import { ops } from '../ops-bridge';
 import type { App } from '../app';
 import { settings } from '../settings';
 import { resolveFor, toWorld, layoutOf, layoutSvg, sizeColor, sizeFor, dirToWorld } from '../geometry';
-import { MM_PER_UNIT, pointAtLength } from '@prowdcad/kernel';
+import { MM_PER_UNIT, pointAtLength, resolveContour } from '@prowdcad/kernel';
+import { fmt, unitLabel } from '../units-ui';
 import { liveShapes, hitLines, type LiveShape } from '../live';
 import { selectionOverlay, SEL_COLOR, curvePointsEverywhere } from '../selpick';
 
@@ -84,8 +85,33 @@ export function renderGrid(app: App): string {
 }
 
 // ───────────── world layer ─────────────
+/** Fill of a piece: its own colour (Inspector) or the default, at the opacity set in Preferences. */
+export function pieceFill(p: Piece, isSel: boolean): string {
+  const op = Math.max(0, Math.min(100, settings.pieceOpacity ?? 3)) / 100;
+  const m = /^#?([0-9a-f]{6})$/i.exec(p.color ?? '');
+  if (m) { const n = parseInt(m[1], 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${Math.min(1, Math.max(op, 0.14) + (isSel ? 0.08 : 0)).toFixed(3)})`; }
+  return isSel ? `rgba(78,161,255,${Math.min(1, op + 0.045).toFixed(3)})` : `rgba(30,40,60,${op.toFixed(3)})`;
+}
+/** View ▸ Show previous shape: outlines of every piece as it was before the last edit (only the pieces that changed). */
+function prevShapes(app: App): string {
+  const prev = app.doc.previousStyle(); if (!prev) return '';
+  const out: string[] = [];
+  for (const q of prev.pieces) {
+    if (app.hiddenPieces.has(q.id)) continue;
+    const p = app.doc.style.pieces.find(x => x.id === q.id);
+    if (p && JSON.stringify(p.sew) === JSON.stringify(q.sew) && JSON.stringify(p.internals) === JSON.stringify(q.internals) && JSON.stringify(p.layout ?? null) === JSON.stringify(q.layout ?? null)) continue;
+    try {
+      const line = app.doc.sizeLine(p ?? q), sid = p ? app.sizeOf(p) : line.baseSizeId;
+      const d = [q.sew, ...q.internals].map(c => { const r = resolveContour(c, line, sid); return pathD(r.pts, r.closed); }).join('');
+      out.push(`<g transform="${layoutSvg(layoutOf(q))}" data-prev="${q.id}"><path d="${d}" class="ns" stroke="#e67e22" stroke-width="1.1" stroke-dasharray="6 4" fill="none" opacity="0.85"/></g>`);
+    } catch { /* a piece that cannot resolve is skipped */ }
+  }
+  return out.join('');
+}
+
 export function renderWorld(app: App): string {
   const out: string[] = [];
+  if (settings.showPrevShape) out.push(prevShapes(app));
   const line = app.sizeLine();
   const selected = new Set(app.sel.pieces);
   for (const p of app.pieces()) {
@@ -98,7 +124,7 @@ export function renderWorld(app: App): string {
     try { r = resolveFor(app.doc, p, active); } catch (err) { console.error(err); continue; }
     // fill (cut polygon) for visual mass
     const cutPts = r.cut.length > 2 ? r.cut : r.sew.pts;
-    g.push(`<path d="${pathD(cutPts, true)}" fill="${isSel ? 'rgba(78,161,255,0.07)' : 'rgba(30,40,60,0.025)'}" stroke="none"/>`);
+    g.push(`<path d="${pathD(cutPts, true)}" fill="${pieceFill(p, isSel)}" stroke="none" data-fill="1"/>`);
     if (app.nested) {
       for (const sid of app.doc.sizesOf(p)) {
         if (app.nestedHidden.has(sid) || sid === active) continue;
@@ -248,9 +274,31 @@ export function renderOverlay(app: App): string {
     const sizeName = line.sizes.find(s => s.id === active)?.name ?? '';
     out.push(`<text x="${fs(cen.x)}" y="${fs(cen.y)}" class="plabel${isSel ? ' sel' : ''}" text-anchor="middle">${esc(p.name)}</text>` +
       `<text x="${fs(cen.x)}" y="${fs(cen.y + 13)}" class="psub" text-anchor="middle">${esc(sizeName)}${p.locked ? ' · locked' : ''}</text>`);
+    if (settings.showPieceInfo) {
+      const per = r.sew.cum[r.sew.cum.length - 1] ?? 0;
+      const info = [`${esc(p.order.material || '—')} · qty ${p.order.qtyPerBundle}${p.order.side && p.order.side !== 'none' ? ' ' + p.order.side : ''}`, `${p.sew.points.length} pts · outline ${fmt(per)} ${unitLabel()}`, p.description ? esc(p.description) : ''].filter(Boolean);
+      info.forEach((t, k) => out.push(`<text x="${fs(cen.x)}" y="${fs(cen.y + 26 + k * 12)}" class="psub pinfo" text-anchor="middle" data-pinfo="${p.id}">${t}</text>`));
+    }
+    if (settings.showLineLabels) {
+      // one label per outline line (grade point to grade point): its number and length
+      const rc = r.sew, g = rc.gradeIdx, tot = rc.cum[rc.cum.length - 1] ?? 0;
+      const poly = rc.closed ? [...rc.pts, rc.pts[0]] : rc.pts;
+      const arc = (i: number) => rc.cum[rc.anchorIndex[i]] ?? 0;
+      for (let k = 0; k < g.length - (rc.closed ? 0 : 1); k++) {
+        const sA = arc(g[k]); let L = arc(g[(k + 1) % g.length]) - sA; if (L <= 1e-9 && rc.closed) L += tot;
+        if (L <= 1e-6) continue;
+        let sm = sA + L / 2; if (rc.closed && sm > tot) sm -= tot;
+        const m = v.toScreen(toWorld(p, pointAtLength(poly, sm).pt));
+        out.push(`<text x="${fs(m.x)}" y="${fs(m.y - 5)}" class="cc-idx llabel" text-anchor="middle" data-llabel="${p.id}">L${k + 1} · ${fmt(L)}</text>`);
+      }
+      p.internals.forEach((c, ci) => { const ic = r.internals[ci]; if (!ic || ic.pts.length < 2) return; const L = ic.cum[ic.cum.length - 1] ?? 0; const m = v.toScreen(toWorld(p, pointAtLength(ic.closed ? [...ic.pts, ic.pts[0]] : ic.pts, L / 2).pt)); out.push(`<text x="${fs(m.x)}" y="${fs(m.y - 5)}" class="cc-idx llabel" text-anchor="middle" data-llabel="${p.id}">I${ci + 1} · ${fmt(L)}</text>`); });
+    }
+    if (settings.showPointTypes) {
+      p.sew.points.forEach((a, i) => { const q = r.sew.anchorPos[i]; if (!q) return; const s2 = v.toScreen(toWorld(p, q)); out.push(`<text x="${fs(s2.x + 7)}" y="${fs(s2.y - 7)}" class="cc-idx ptype" data-ptype="${p.id}">${i + 1}${a.kind === 'grade' ? 'G' : 'C'}${a.smooth && a.kind === 'grade' ? 's' : ''}${a.name ? ' ' + esc(a.name) : ''}</text>`); });
+    }
 
     // text annotations (screen space so glyphs stay upright)
-    for (const t of p.texts) {
+    for (const t of settings.hideAnnotations ? [] : p.texts) {
       let tp: Vec = t; try { tp = ops.textPosition(app.doc, p, t, active); } catch { /* base */ }
       const sp = v.toScreen(toWorld(p, tp));
       const px = Math.max(6, t.size * v.scale);
