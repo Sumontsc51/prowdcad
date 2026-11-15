@@ -98,6 +98,7 @@ function pieceInspector(app: App, host: HTMLElement, id: string) {
     h('div.insp-title', {}, 'Piece'),
     row('Name', textInput(p.name, v => set('Rename piece', pc => { pc.name = v.trim() || pc.name; }))),
     row('Description', textInput(p.description ?? '', v => set('Piece description', pc => { pc.description = v; }))),
+    row('Colour', (() => { const inp = h('input', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(p.color ?? '') ? p.color : '#8fa3bf', title: 'Colour of this piece on the sheet', 'data-k': 'color' }) as HTMLInputElement; inp.onchange = () => set('Piece colour', pc => { pc.color = inp.value; }); return inp; })(), h('button.mini', { title: 'Back to the default colour', onclick: () => set('Piece colour', pc => { delete pc.color; }) }, '×')),
     row('Seam default', lengthInput(p.seamDefault, v => set('Seam default', pc => { pc.seamDefault = v; }), { min: 0 }), unitTag()),
     row('No seam', checkbox(p.noSeam, v => set('No seam', pc => { pc.noSeam = v; }))),
     row('Lock grading', checkbox(p.lockGrading, v => { try { ops.setLockGrading(app.doc, id, v); } catch (err) { reportError(err, 'Lock grading'); } })),
