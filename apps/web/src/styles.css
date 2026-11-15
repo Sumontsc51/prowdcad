@@ -92,6 +92,7 @@ input[type=checkbox], input[type=radio] { accent-color: var(--accent); width: au
 #right-dock { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; min-height: 0; }
 #bottom-dock { background: var(--panel); border-top: 1px solid var(--line); max-height: 42vh; display: flex; flex-direction: column; }
 #bottom-dock.collapsed { max-height: none; }
+body.grade-tool #bottom-dock:not(.collapsed) { height: 38vh; } /* Edit Delta: a steady table height */
 #bottom-dock .panel { display: flex; flex-direction: column; min-height: 0; }
 #bottom-dock .panel-body { overflow: auto; min-height: 0; }
 .panel { border-bottom: 1px solid var(--line); }
@@ -336,8 +337,8 @@ td.sg-rh.brk { border-bottom: 1px solid var(--warn); }
 .gr-strip svg .ax { stroke: #3a3a42; stroke-width: 1; }
 .gr-strip svg .path { fill: none; stroke: var(--accent); stroke-width: 1.2; opacity: .8; }
 .gr-strip-h { font-weight: 600; color: var(--text); margin-bottom: 2px; }
-.gr-fill { display: flex; align-items: center; gap: 6px; margin: 2px 0 6px; flex-wrap: wrap; }
-.gr-fill select { padding: 1px 4px; }
+.gr-fill, .gr-calc { display: flex; align-items: center; gap: 6px; margin: 2px 0 6px; flex-wrap: wrap; }
+.gr-fill select, .gr-calc select { padding: 1px 4px; }
 .gr-note .btn.sm { margin-left: 6px; }
 
 /* Measure window */
@@ -468,3 +469,8 @@ table.sp-rules tr { cursor: pointer; }
 table.sp-list tr.sp-det input.sp-ltarget { width: 74px; }
 table.sp-list tr.sp-det input.sp-ltarget::placeholder { color: var(--dim); opacity: .55; }
 table.sp-list tr.sp-det td.pass { color: var(--ok); } table.sp-list tr.sp-det td.fail { color: var(--danger); }
+
+/* Grading table: sizes outside the chosen range (short tables only; long ones are virtualised) */
+table.sg tr.out { display: none; }
+.gr-calc .gr-k, .gr-calc .gr-f { width: 64px; }
+.gr-calc .btn.sm { min-width: 26px; }
