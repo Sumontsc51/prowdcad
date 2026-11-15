@@ -9,15 +9,16 @@ const M = 'Measure+Grade';
 const C = (id, o) => ({ id: 'mgrade#' + id, menu: M, title: o.title ?? id, ...o });
 
 /** the Measure window table: [{size, cells: {"g:part": {t, cls}}}] */
-const mtab = h => h.ev(() => [...document.querySelectorAll('.fwin[data-win="mline"] table.sg tbody tr[data-r]')].map(tr => ({
+const mtab = (h, win = 'mline') => h.ev(win => [...document.querySelectorAll(`.fwin[data-win="${win}"] table.sg tbody tr[data-r]`)].map(tr => ({
   size: tr.dataset.size, cls: tr.className,
   cells: Object.fromEntries([...tr.querySelectorAll('td[data-part]')].map(td => [(td.dataset.g ?? '') + ':' + td.dataset.part, { t: td.textContent, cls: td.className }])),
-})));
+})), win);
+const winOpen = (h, win) => h.ev(win => !!document.querySelector(`.fwin[data-win="${win}"]`), win);
 const num = t => parseFloat(String(t).replace(/[^\d.\-]/g, ''));
 /** hand calculation: kernel measureSegment of each listed segment per size */
 const hand = (h, segs) => h.ev(segs => { const E = window.__e2e; return E.app.sizeLine().sizes.map(s => ({ size: s.name, parts: segs.map(([p, a, b]) => E.segLen(p, a, b, s.id)) })); }, segs);
 const MSmod = h => h.ev(async () => { const m = await import('/src/panels/measure-table.ts'); return { closed: m.MS.closed, groups: m.MS.groups.map(g => ({ name: g.name, parts: g.parts.map(p => ({ label: p.label, cut: !!p.cut, from: p.ref.from, to: p.ref.to })) })), history: m.MS.history.length }; });
-const resetMeasure = async h => { await h.ev(async () => { const m = await import('/src/panels/measure-table.ts'); m.MS.groups = []; m.MS.cur = -1; m.MS.history = []; m.MS.tol = null; m.MS.ease = 0; m.MS.diff = 'BA'; m.MS.mode = 'contour'; m.MS.closed = 0; }); };
+const resetMeasure = async h => { await h.ev(async () => { const m = await import('/src/panels/measure-table.ts'); m.MS.groups = []; m.MS.cur = -1; m.MS.history = []; m.MS.tol = null; m.MS.ease = 0; m.MS.diff = 'BA'; m.MS.mode = 'contour'; m.MS.closed = 0; m.clearResults(); m.renderMeasureWindow(window.__e2e.app); }); };
 const gcell = (h, size, axis) => h.page.locator(`.sg-wrap.gr input[data-size="${size}"][data-axis="${axis}"]`).first();
 async function typeInto(h, loc, text) { await loc.click({ clickCount: 3 }); await loc.fill(text); await loc.press('Enter'); await h.settle(60); }
 async function pasteInto(h, sel, text) {
@@ -30,28 +31,38 @@ const ae = h => h.ev(() => { const a = document.activeElement; return a ? { size
 const cases = [
   // ── A. Measure Line: L1 + L2 + L3 = Σ per size, equal to the hand calculation ──
   C('line-sum', {
-    title: 'Measure Line: hem + side seam + armhole summed per size (L1+L2+L3 = Σ) = hand calc; labels; Enter = OK',
+    title: 'Measure Line (as AccuMark Grade ▸ Measure ▸ Line): 3 lines tagged CH1/L1…L3, no table while picking; right-click/Enter opens the table Size · L1 · L2 · L3 · Total · Size Diff = hand calc; one more Enter finishes, the table stays',
     change: false,
     pre: resetMeasure,
     invoke: async h => { await h.key('m'); },
     drive: async h => { await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); await h.clickSeg('FRONT', 'SS_HEM', 'UA'); await h.clickSeg('FRONT', 'UA', 'SH'); },
     expect: async h => {
-      const t = await mtab(h); const hc = await hand(h, [['FRONT', 'CF_HEM', 'SS_HEM'], ['FRONT', 'SS_HEM', 'UA'], ['FRONT', 'UA', 'SH']]);
+      const hc = await hand(h, [['FRONT', 'CF_HEM', 'SS_HEM'], ['FRONT', 'SS_HEM', 'UA'], ['FRONT', 'UA', 'SH']]);
       const labels = await h.page.locator('text.m-label').allTextContents();
-      const errs = [req(t.length === 4, `table rows ${t.length} (want 4 sizes)`), req(labels.join(',') === 'L1,L2,L3', 'canvas labels ' + labels)];
+      const errs = [req(labels.join(',') === 'CH1/L1,CH1/L2,CH1/L3', 'canvas labels ' + labels), req(!(await winOpen(h, 'mline')), 'the table should open only after right-click / Enter')];
+      await h.key('Enter'); const mid = await MSmod(h);
+      const t = await mtab(h);
+      errs.push(req(t.length === 4, `table rows ${t.length} (want 4 sizes)`));
+      const heads = await h.ev(() => [...document.querySelectorAll('.fwin[data-win="mline"] table.sg thead th')].map(th => th.textContent.trim()).filter(Boolean));
+      errs.push(req(['L1', 'L2', 'L3', 'Total', 'Size Diff'].every(x => heads.includes(x)) && !heads.includes('Difference'), 'table heads ' + heads));
+      const acts = await h.ev(() => [...document.querySelectorAll('.fwin[data-win="mline"] .fw-foot button')].map(b => b.textContent.trim()));
+      errs.push(req(acts.join('|') === 'Add to spec', 'the table should have just the Add to spec button: ' + acts));
       for (const row of hc) {
         const r = t.find(x => x.size === row.size); if (!r) { errs.push('no row ' + row.size); continue; }
         const sum = row.parts.reduce((a, b) => a + b, 0);
         row.parts.forEach((v, k) => { const got = num(r.cells[`0:L${k + 1}`]?.t); if (!near(got, v, 0.006)) errs.push(`${row.size} L${k + 1} ${got} ≠ ${v.toFixed(3)}`); });
-        const got = num(r.cells['0:sum']?.t); if (!near(got, sum, 0.006)) errs.push(`${row.size} Σ ${got} ≠ hand ${sum.toFixed(3)}`);
+        const got = num(r.cells['0:sum']?.t); if (!near(got, sum, 0.006)) errs.push(`${row.size} Total ${got} ≠ hand ${sum.toFixed(3)}`);
       }
-      const dprev = num(t[2].cells[':dprev']?.t ?? t[2].cells['undefined:dprev']?.t);
-      await h.key('Enter'); const mid = await MSmod(h); await h.key('Enter'); // first = done with group A, second = keep A on its own
+      const sums = hc.map(r => r.parts.reduce((a, b) => a + b, 0));
+      const dprev = num(t[2].cells['0:dprev']?.t);
+      errs.push(req(near(dprev, sums[2] - sums[1], 0.006), `Size Diff (L) ${dprev} ≠ ${(sums[2] - sums[1]).toFixed(3)}`));
+      await h.key('Enter');
       const st = await MSmod(h);
-      errs.push(req(mid.closed === 1 && mid.groups.length === 1, `the first Enter should only finish group A: ${JSON.stringify(mid)}`));
-      errs.push(req(st.history === 1 && !st.groups.length, `Enter did not keep the measurement: ${JSON.stringify(st)}`));
-      errs.push(req((await h.page.locator('text.m-label').count()) === 0, 'labels still drawn after OK'));
-      h._note = `S Σ ${t[0].cells['0:sum'].t} · XL Σ ${t[3].cells['0:sum'].t} · Δprev(L) ${dprev}`;
+      errs.push(req(mid.closed === 1 && mid.groups.length === 1, `the first Enter should only finish the first set: ${JSON.stringify(mid)}`));
+      errs.push(req(!st.groups.length, `the second Enter should finish the measurement: ${JSON.stringify(st)}`));
+      errs.push(req((await h.page.locator('text.m-label').count()) === 0, 'labels still drawn after finishing'));
+      errs.push(req(await winOpen(h, 'mline'), 'the table should stay open after finishing'));
+      h._note = `S Total ${t[0].cells['0:sum'].t} · XL Total ${t[3].cells['0:sum'].t} · Size Diff(L) ${dprev}`;
       return errs;
     },
     after: async (h, c, r) => r.notes.push(h._note || ''),
@@ -68,6 +79,7 @@ const cases = [
       await h.key('Backspace'); h._s2 = await MSmod(h);
       await h.clickSeg('FRONT', 'SH', 'HPS', 0.5, { mods: ['Shift'] }); h._s3 = await MSmod(h);
       await h.clickSeg('FRONT', 'CF_NECK', 'CF_HEM', 0.5, { mods: ['Alt'] }); h._s4 = await MSmod(h);
+      await h.key('Enter');
     },
     expect: async h => {
       const n = s => s.groups[0]?.parts.length ?? 0;
@@ -86,65 +98,55 @@ const cases = [
 
   // ── B. comparison across two pieces with a difference column, A−B toggle, ease ± tolerance ──
   C('compare', {
-    title: 'Measure Lines comparison: FRONT side seam (A), right-click, BACK side seam (B), right-click: Σ A, Σ B, A − B per size, toggle, ease ± tol pass/fail',
+    title: 'Measure Lines, two sets: FRONT side seam, right-click (table CH1), BACK side seam, right-click (table CH2): Total, Size Diff, Difference = CH1 − CH2 and Overall per size',
     change: false, pre: resetMeasure,
     invoke: async h => { await h.key('m'); },
     drive: async h => {
       const rc = () => h.clickW({ x: 330, y: 300 }, { button: 'right' });
-      await h.clickSeg('FRONT', 'SS_HEM', 'UA'); await rc(); h._c1 = await MSmod(h);
-      await h.clickSeg('BACK', 'BR', 'TR'); await rc(); h._c2 = await MSmod(h);
-      h._diff = await h.ev(async () => (await import('/src/panels/measure-table.ts')).MS.diff);
-      h._spec = await h.page.locator('.fwin[data-win="mline"] [data-act="tospec"].disabled').count();
-      await h.page.locator('.fwin[data-win="mline"] [data-diff="BA"]').click(); await h.settle(60);
+      await h.clickSeg('FRONT', 'SS_HEM', 'UA'); await rc(); h._c1 = await MSmod(h); h._w1 = [await winOpen(h, 'mline'), await winOpen(h, 'mline2')];
+      await h.clickSeg('BACK', 'BR', 'TR'); h._lab = await h.page.locator('text.m-label').allTextContents(); await rc(); h._c2 = await MSmod(h); h._w2 = [await winOpen(h, 'mline'), await winOpen(h, 'mline2')];
     },
     expect: async h => {
       const errs = [];
-      const st = await MSmod(h);
-      errs.push(req(h._c1.closed === 1 && h._c1.groups.length === 1, 'right-click should finish group A: ' + JSON.stringify(h._c1)));
-      errs.push(req(h._c2.closed === 2 && h._c2.groups.length === 2, 'second right-click should show the comparison: ' + JSON.stringify(h._c2)));
-      errs.push(req(h._diff === 'AB', 'the comparison should open as A − B, got ' + h._diff));
-      errs.push(req(h._spec === 1, 'Add to spec should be inactive while two groups are compared'));
-      errs.push(req(st.groups.length === 2, 'two groups expected: ' + JSON.stringify(st)));
+      errs.push(req(h._c1.closed === 1 && h._c1.groups.length === 1, 'right-click should finish the first set: ' + JSON.stringify(h._c1)));
+      errs.push(req(h._w1[0] && !h._w1[1], 'after the first right-click only the first table should be open: ' + h._w1));
+      errs.push(req(h._lab.join(',') === 'CH1/L1,CH2/L1', 'canvas labels ' + h._lab));
+      errs.push(req(h._c2.closed === 2 && h._c2.groups.length === 2, 'second right-click should open the second table: ' + JSON.stringify(h._c2)));
+      errs.push(req(h._w2[0] && h._w2[1], 'both tables should be open: ' + h._w2));
       const hc = await hand(h, [['FRONT', 'SS_HEM', 'UA'], ['BACK', 'BR', 'TR']]);
-      let t = await mtab(h);
+      const t1 = await mtab(h, 'mline'), t2 = await mtab(h, 'mline2');
+      let prev = null;
       for (const row of hc) {
-        const r = t.find(x => x.size === row.size); const d = row.parts[1] - row.parts[0];
-        const got = num(r?.cells['1:diff']?.t);
-        if (!near(got, d, 0.006)) errs.push(`${row.size} B−A ${got} ≠ ${d.toFixed(3)}`);
-        if (!near(num(r?.cells['0:sum']?.t), row.parts[0], 0.006) || !near(num(r?.cells['1:sum']?.t), row.parts[1], 0.006)) errs.push(`${row.size} Σ A/B wrong`);
+        const r1 = t1.find(x => x.size === row.size), r2 = t2.find(x => x.size === row.size); const d = row.parts[0] - row.parts[1];
+        if (!near(num(r1?.cells['0:sum']?.t), row.parts[0], 0.006) || !near(num(r2?.cells['1:sum']?.t), row.parts[1], 0.006)) errs.push(`${row.size} Total wrong`);
+        if (!near(num(r2?.cells['1:diff']?.t), d, 0.006)) errs.push(`${row.size} Difference ${r2?.cells['1:diff']?.t} ≠ CH1 − CH2 = ${d.toFixed(3)}`);
+        if (prev !== null && !near(num(r2?.cells['1:overall']?.t), d - prev, 0.011)) errs.push(`${row.size} Overall ${r2?.cells['1:overall']?.t} ≠ ${(d - prev).toFixed(3)}`);
+        prev = d;
       }
-      await h.page.locator('.fwin[data-win="mline"] [data-diff="AB"]').click(); await h.settle(60);
-      t = await mtab(h);
-      const mRow = hc.find(r => r.size === 'M'); const dM = mRow.parts[1] - mRow.parts[0];
-      errs.push(req(near(num(t.find(r => r.size === 'M').cells['1:diff'].t), -dM, 0.006), 'A − B toggle did not flip the sign'));
-      await h.page.locator('.fwin[data-win="mline"] [data-diff="BA"]').click(); await h.settle(60);
-      await typeInto(h, h.page.locator('.fwin[data-win="mline"] input.m-ease'), (Math.round(dM * 100) / 100).toString());
-      await typeInto(h, h.page.locator('.fwin[data-win="mline"] input.m-tol'), '0.5');
-      t = await mtab(h);
-      const chk = s => t.find(r => r.size === s)?.cells['undefined:check'] ?? t.find(r => r.size === s)?.cells[':check'];
-      errs.push(req(chk('M')?.t === '✓' && /pass/.test(chk('M')?.cls), 'base size should pass: ' + JSON.stringify(chk('M'))));
-      errs.push(req(chk('XL')?.t === '✗' && /fail/.test(chk('XL')?.cls), 'XL should fail (ease grows 3 mm / size): ' + JSON.stringify(chk('XL'))));
-      errs.push(req(await h.page.locator('.fwin[data-win="mline"] [data-check="fail"]').count() === 1, 'no fail summary'));
+      errs.push(req(!t1[0].cells['0:diff'], 'the first table must not have a Difference column'));
+      const acts = await h.ev(() => [...document.querySelectorAll('.fwin[data-win="mline2"] .fw-foot button')].map(b => b.textContent.trim()));
+      errs.push(req(acts.join('|') === 'Add to spec', 'second table buttons: ' + acts));
       return errs;
     },
   }),
   C('compare-ctrl', {
-    title: 'Measure Lines: a group takes lines from several pieces; two groups at most; a new line after the comparison starts blank; groups can be renamed',
+    title: 'Measure Lines: a set takes lines from several pieces; two sets at most; a new line after the second table starts a new measurement and the tables stay until its result',
     change: false, pre: resetMeasure,
     invoke: async h => { await h.key('m'); },
     drive: async h => {
       const rc = () => h.clickW({ x: 330, y: 300 }, { button: 'right' });
       await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); await h.clickSeg('BACK', 'BL', 'BR'); await rc();
       await h.clickSeg('FRONT', 'CF_NECK', 'CF_HEM', 0.5); await h.clickSeg('BACK', 'BR', 'TR');
-      const nm = h.page.locator('.fwin[data-win="mline"] input.m-gname[data-g="0"]'); await nm.click({ clickCount: 3 }); await nm.fill('Hem'); await nm.press('Enter'); await h.settle(60);
       h._g = await MSmod(h); await rc(); h._done = await MSmod(h);
-      await h.clickSeg('FRONT', 'SS_HEM', 'UA'); h._fresh = await MSmod(h);
+      await h.clickSeg('FRONT', 'SS_HEM', 'UA'); h._fresh = await MSmod(h); h._keep = [await winOpen(h, 'mline'), await winOpen(h, 'mline2')];
+      await rc(); h._after = [await winOpen(h, 'mline'), await winOpen(h, 'mline2')]; h._rows = (await mtab(h, 'mline'))[0];
     },
     expect: async h => [
-      req(h._g.groups.length === 2 && h._g.groups[0].parts.length === 2 && h._g.groups[1].parts.length === 2, 'each group should hold two lines from two pieces: ' + JSON.stringify(h._g)),
-      req(h._g.groups[0].name === 'Hem', 'group not renamed: ' + h._g.groups[0].name),
-      req(h._done.closed === 2, 'comparison not shown after the second right-click'),
-      req(h._fresh.closed === 0 && h._fresh.groups.length === 1 && h._fresh.groups[0].parts.length === 1, 'a new line after the comparison should start a blank measurement: ' + JSON.stringify(h._fresh)),
+      req(h._g.groups.length === 2 && h._g.groups[0].parts.length === 2 && h._g.groups[1].parts.length === 2, 'each set should hold two lines from two pieces: ' + JSON.stringify(h._g)),
+      req(h._done.closed === 2, 'second table not shown after the second right-click'),
+      req(h._fresh.closed === 0 && h._fresh.groups.length === 1 && h._fresh.groups[0].parts.length === 1, 'a new line after the second table should start a new measurement: ' + JSON.stringify(h._fresh)),
+      req(h._keep[0] && h._keep[1], 'the old tables should stay while the new set is picked: ' + h._keep),
+      req(h._after[0] && !h._after[1] && !!h._rows.cells['0:L1'] && !h._rows.cells['0:L2'], 'the new result should replace the first table and close the second: ' + JSON.stringify([h._after, Object.keys(h._rows.cells)])),
     ],
   }),
 
@@ -156,22 +158,28 @@ const cases = [
     drive: async h => {
       const a = await h.W('FRONT', 'SS_HEM', await h.ev(() => window.__e2e.sizeId('XL'))), b = await h.W('FRONT', 'UA', await h.ev(() => window.__e2e.sizeId('XL')));
       await h.clickW({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+      h._st = await MSmod(h); await h.key('Enter');
     },
     expect: async h => {
-      const st = await MSmod(h); const t = await mtab(h); const hc = await hand(h, [['FRONT', 'SS_HEM', 'UA']]);
+      const st = h._st; const t = await mtab(h); const hc = await hand(h, [['FRONT', 'SS_HEM', 'UA']]);
       const errs = [req(st.groups[0]?.parts.length === 1, 'XL outline click did not pick a line')];
       for (const row of hc) if (!near(num(t.find(r => r.size === row.size)?.cells['0:L1']?.t), row.parts[0], 0.006)) errs.push(`${row.size}: ${t.find(r => r.size === row.size)?.cells['0:L1']?.t} ≠ ${row.parts[0]}`);
       return errs;
     },
   }),
 
-  // ── copy as TSV (Excel), rows = sizes ──
-  C('tsv', {
-    title: 'Measure window: Copy TSV gives a header + one row per size',
-    change: false, pre: resetMeasure,
+  // ── Add to spec: the only button of a result table ──
+  C('tospec', {
+    title: 'Measure table ▸ Add to spec: the set of lines becomes a point of measure in the Measure spec',
+    pre: resetMeasure,
     invoke: async h => { await h.key('m'); },
-    drive: async h => { await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); await h.clickSeg('FRONT', 'SS_HEM', 'UA'); await h.page.locator('.fwin[data-win="mline"] [data-act="copy"]').click(); await h.settle(120); },
-    expect: async h => { const t = await h.ev(() => window.__lastCopied || ''); const lines = t.split('\n'); return [req(lines.length === 5, 'TSV lines ' + lines.length), req(/^Size\t/.test(lines[0]) && lines[0].split('\t').length === 5, 'header ' + lines[0]), req(lines[1].startsWith('S\t') && lines[4].startsWith('XL\t'), 'rows are not sizes')]; },
+    drive: async h => {
+      h._n0 = await h.ev(() => (window.__e2e.app.doc.style.measureSpec ?? []).length);
+      await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); await h.clickSeg('FRONT', 'SS_HEM', 'UA'); await h.key('Enter');
+      await h.page.locator('.fwin[data-win="mline"] [data-act="tospec"]').click(); await h.settle(150);
+    },
+    expect: async h => { const it = await h.ev(() => { const st = window.__e2e.app.doc.style; const items = st.measureSpec ?? []; return { n: items.length, parts: items[items.length - 1]?.parts?.length }; });
+      return [req(it.n === h._n0 + 1 && it.parts === 2, 'no point of measure with the two lines: ' + JSON.stringify(it)), req(await winOpen(h, 'mspec'), 'Measure spec window not opened')]; },
   }),
 
   // ── 80 sizes: grading table + Measure window render and scroll under 1 s ──
@@ -199,6 +207,7 @@ const cases = [
         const f = E.P('FRONT'); const pts = f.sew.points; const id = n => pts.find(a => a.name === n).id;
         m.addPart({ ref: { pieceId: f.id, contourId: f.sew.id, from: id('CF_HEM'), to: id('SS_HEM') } }, -1);
         m.addPart({ ref: { pieceId: f.id, contourId: f.sew.id, from: id('SS_HEM'), to: id('UA') } }, 0);
+        m.MS.closed = 1; m.showResult(0);
         const m0 = performance.now(); m.renderMeasureWindow(app); const m1 = performance.now();
         const mw = document.querySelector('.fwin[data-win="mline"] .sg-wrap');
         return { rows: +wrap.dataset.rows, rendered, gradeMs: t1 - t0, scrollMs: s1 - s0, last, scrollable, h: wrap.clientHeight, sh: wrap.scrollHeight, st: wrap.scrollTop, measureMs: m1 - m0, mRows: mw ? +mw.dataset.rows : -1 };
@@ -281,7 +290,7 @@ const cases = [
   C('by-measurement', {
     title: 'Grade by measurement: FRONT hem measured, spec column pasted (S 245 / M 260 / L 276 / XL 291), SS_HEM + UA solved in X → hem = spec ±0.01',
     pre: resetMeasure,
-    invoke: async h => { await h.key('m'); await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); await h.key('Enter'); await h.key('Enter'); await h.selectA('FRONT', 'SS_HEM'); await h.selectA('FRONT', 'UA', true); await h.cmd('grade.byMeasurement'); },
+    invoke: async h => { await h.key('m'); await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); await h.key('Enter'); await h.selectA('FRONT', 'SS_HEM'); await h.selectA('FRONT', 'UA', true); await h.cmd('grade.byMeasurement'); },
     drive: async h => {
       const w = h.page.locator('.fwin[data-win="gradefit"]');
       const opt = await w.locator('select.gf-meas option').nth(1).getAttribute('value');
@@ -504,17 +513,17 @@ const cases = [
     expect: async h => [req(/^Select tool/.test(h._first || ''), 'first item: ' + h._first), req(h._tool === 'select', 'tool ' + h._tool)],
   }),
   C('adjust-segment', {
-    title: 'Measure window ▸ Adjust segment…: FRONT hem made exactly 300 (all sizes follow the base)',
+    title: 'Measure ▸ Adjust segment…: the measured FRONT hem made exactly 300 (all sizes follow the base)',
     pre: resetMeasure,
-    invoke: async h => { await h.key('m'); await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); await h.page.locator('.fwin[data-win="mline"] [data-act="adjust"]').click(); },
+    invoke: async h => { await h.key('m'); await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); void h.cmd('measure.adjust'); },
     drive: async h => { await h.waitDialog(); h._t = await h.dlgTitle(); await h.dlg().locator('input[data-key="v"]').fill('300'); await h.ok(); },
     expect: async h => { const L = await h.ev(() => window.__e2e.segLen('FRONT', 'CF_HEM', 'SS_HEM')); return [req(h._t === 'Adjust segment', 'dialog ' + h._t), req(near(L, 300, 0.05), 'hem ' + L)]; },
   }),
   C('measure-window-follows-tool', {
-    title: 'The Measure window closes when another tool is chosen and reopens with the Measure tool; the open measurement is kept',
+    title: 'The Measure table closes when another tool is chosen and reopens with the Measure tool; the open measurement is kept',
     change: false,
     pre: resetMeasure,
-    invoke: async h => { await h.key('m'); await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); },
+    invoke: async h => { await h.key('m'); await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM'); await h.key('Enter'); },
     drive: async h => {
       const open = () => h.ev(() => !!document.querySelector('.fwin[data-win="mline"]'));
       h._a = await open(); await h.key('g'); h._b = await open(); await h.key('m'); h._c = await open();
