@@ -384,6 +384,8 @@ export interface Piece {
   reference?: ReferenceBlock;
   connections: PointConnection[];
   locked: boolean;
+  /** display colour of the piece on the sheet (#rrggbb); undefined = the default fill */
+  color?: string;
   activeContour: 'sew' | 'cut';
   sizeTableId: Id;
   /** which sizes exist for this piece (subset of the size table). undefined → all */

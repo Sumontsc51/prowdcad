@@ -107,6 +107,13 @@ export class Document {
   }
   private touch() { this.rev++; this.cache.clear(); this.openCache.clear(); this.style.updatedAt = new Date().toISOString(); }
 
+  private prevCache: { snap: string; style: Style } | null = null;
+  /** The style as it was before the last edit (the top undo step), or null when there is none. Read-only: do not mutate. */
+  previousStyle(): Style | null {
+    const u = this.undoStack[this.undoStack.length - 1]; if (!u) return null;
+    if (this.prevCache?.snap !== u.snap) this.prevCache = { snap: u.snap, style: JSON.parse(u.snap) as Style };
+    return this.prevCache.style;
+  }
   canUndo() { return this.undoStack.length > 0; }
   canRedo() { return this.redoStack.length > 0; }
   undoLabel() { return this.undoStack[this.undoStack.length - 1]?.label; }
