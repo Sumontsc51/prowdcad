@@ -33,7 +33,7 @@ import { sizeNameOf } from '../selection';
 import { openInputBox, inputBoxOpen, inputBoxCommit, inputBoxCancel, type IBMode } from '../ui/inputbox';
 import { fmt, unitLabel } from '../units-ui';
 import { toast } from '../ui/toast';
-import { confirmDialog } from '../ui/dialog';
+import { confirmDialog, showDialog } from '../ui/dialog';
 import { reportError } from '../commands';
 import { fs, screenMarker } from './common';
 import { DoubleClick } from '../ui/dom';
@@ -1640,13 +1640,38 @@ export const curveTool: Tool = {
  *   Grain to piece position           click a piece: its grain line becomes screen-horizontal again, the piece stays
  *   Piece to grain                    click a piece: the piece turns so that its grain line lies screen-horizontal
  */
-type GrainMode = 'flipH' | 'flipV' | 'grainSet' | 'pieceToGrain';
+type GrainMode = 'flipH' | 'flipV' | 'grainSet' | 'pieceToGrain' | 'grainCenter' | 'grainFit';
 const GRAIN_MODES: { id: GrainMode; label: string; title: string }[] = [
   { id: 'flipH', label: 'Flip horizontal', title: 'Click a piece: flip it left ⇄ right (selected pieces flip together)' },
   { id: 'flipV', label: 'Flip vertical', title: 'Click a piece: flip it up ⇄ down (selected pieces flip together)' },
   { id: 'grainSet', label: 'Grain to piece position', title: 'After a piece was rotated or flipped: click it and its grain line is set to screen-horizontal. The piece stays where it is.' },
   { id: 'pieceToGrain', label: 'Piece to grain', title: 'Click a piece: it turns back so that its grain line lies screen-horizontal (its original direction)' },
+  { id: 'grainCenter', label: 'Grain to centre', title: 'Click a piece: its grain line moves to the middle of the piece. Length and direction stay.' },
+  { id: 'grainFit', label: 'Grain fit to piece', title: 'Click a piece: its grain line is centred and sized to a set portion of the piece along the grain (right-click = change the portion). It always stays inside the outline.' },
 ];
+/** Grain fit to piece: the grain line's share of the piece along the grain (0–1). */
+const grainPortion = (): number => { const v = Number(settings.toolState?.grain?.portion); return v > 0 && v <= 1 ? v : 0.8; };
+/** Grain line to the middle of the piece; with `portion` it is also sized to that share of the piece. */
+export function grainFitPieces(app: App, ids: Id[], portion?: number) {
+  if (!ids.length) { app.status('Select a piece first'); return; }
+  const locked = ids.map(id => app.doc.piece(id)).find(p => p.locked);
+  if (locked) { toast(lockedMsg(locked), 'warn'); return; }
+  try {
+    let L = 0;
+    app.doc.transact(portion === undefined ? 'Grain to centre' : 'Grain fit to piece', () => { for (const id of ids) L = ops.fitGrain(app.doc, id, { portion }); });
+    app.status(portion === undefined ? `Grain line centred on ${ids.length} piece(s) · length and direction kept` : `Grain line fitted on ${ids.length} piece(s): ${Math.round(portion * 100)} % of the piece along the grain${ids.length === 1 ? ` = ${fmt(L)} ${unitLabel()}` : ''} · right-click = change the portion`);
+  } catch (err) { reportError(err, portion === undefined ? 'Grain to centre' : 'Grain fit to piece'); }
+  app.invalidate();
+}
+async function grainPortionDialog(app: App) {
+  const r = await showDialog({ title: 'Grain fit to piece', fields: [{ kind: 'number', key: 'p', label: 'Grain line length', value: Math.round(grainPortion() * 100), min: 5, max: 100, suffix: '%', hint: 'Share of the piece measured along the grain direction. 80 % leaves 10 % free at each end.' }] });
+  if (!r) return;
+  const v = Math.max(5, Math.min(100, Number(r.p) || 80)) / 100;
+  (settings.toolState ??= {}).grain = { ...(settings.toolState.grain ?? {}), portion: v }; saveSettings();
+  const ids = app.sel.pieces.filter(id => app.doc.style.pieces.some(q => q.id === id));
+  if (ids.length) grainFitPieces(app, ids, v); else app.status(`Grain fit to piece: ${Math.round(v * 100)} % · click a piece`);
+  app.invalidate();
+}
 const grainMode = (): GrainMode => (settings.toolState?.grain?.mode as GrainMode) ?? 'flipH';
 /** screen angle (degrees) of a piece's grain line */
 function grainAngle(p: Piece): number { const d = dirToWorld(p, { x: p.grain.b.x - p.grain.a.x, y: p.grain.b.y - p.grain.a.y }); return Math.atan2(d.y, d.x) * 180 / Math.PI; }
@@ -1699,6 +1724,8 @@ export const grainTool: Tool = {
     const m = grainMode();
     return m === 'flipH' ? 'Grain · Flip horizontal: click a piece = flip left ⇄ right (selected pieces flip together) · Tab = next option · Esc = Select'
       : m === 'flipV' ? 'Grain · Flip vertical: click a piece = flip up ⇄ down · Tab = next option · Esc = Select'
+      : m === 'grainCenter' ? 'Grain · Grain to centre: click a piece, its grain line moves to the middle of the piece (length and direction stay) · Tab = next option · Esc = Select'
+      : m === 'grainFit' ? `Grain · Grain fit to piece: click a piece, its grain line is centred and made ${Math.round(grainPortion() * 100)} % of the piece along the grain · right-click = change the portion · Tab = next option · Esc = Select`
       : m === 'grainSet' ? 'Grain · Grain to piece position: click a piece, its grain line becomes screen-horizontal and the piece stays · Tab = next option · Esc = Select'
       : 'Grain · Piece to grain: click a piece, it turns so that its grain line lies screen-horizontal · Tab = next option · Esc = Select';
   },
@@ -1709,8 +1736,11 @@ export const grainTool: Tool = {
     const m = grainMode();
     if (m === 'flipH' || m === 'flipV') flipPieces(app, ids, m === 'flipH' ? 'h' : 'v');
     else if (m === 'grainSet') grainToHorizontal(app, ids);
+    else if (m === 'grainCenter') grainFitPieces(app, ids);
+    else if (m === 'grainFit') grainFitPieces(app, ids, grainPortion());
     else pieceToGrain(app, ids);
   },
+  context(app) { if (grainMode() !== 'grainFit') return false; void grainPortionDialog(app); return true; },
   move(app, p) { const pc = pcPieceAt(app, p.w); const id = pc?.id ?? null; if (id !== PCS.hover) { PCS.hover = id; app.invalidate('canvas'); } },
   key(app, e) {
     if (e.key === 'Escape') { app.setTool('select'); return true; }

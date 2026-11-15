@@ -30,7 +30,7 @@ import { h, clear } from '../ui/dom';
 import { reportError } from '../commands';
 import { resolveFor, toWorld, toLocal } from '../geometry';
 import { segmentAt, label as svgLabel } from './livekit';
-import { closeMeasureWindow, MS, addPart, removePart, removeLast, hasOpen, commitMeasure, cancelMeasure, renderMeasureWindow, groupColor, sameRef, partName, setMeasureHooks } from '../panels/measure-table';
+import { closeMeasureWindow, MS, addPart, removePart, removeLast, hasOpen, cancelMeasure, renderMeasureWindow, groupColor, sameRef, partName, setMeasureHooks, showResult, chartTag } from '../panels/measure-table';
 import { settings, saveSettings } from '../settings';
 import { toast } from '../ui/toast';
 
@@ -159,7 +159,7 @@ function pickLine(app: App, p: Ptr) {
   }
   const ngi = addPart(part, gi);
   const g = MS.groups[ngi];
-  afterChange(app, `${MS.groups.length > 1 ? g.name + '·' : ''}${g.parts[g.parts.length - 1].label} = ${partName(app, part)}${MS.groups.length > 1 && gi < 0 ? ' · group B started' : ''}`);
+  afterChange(app, `${chartTag(ngi)}/${g.parts[g.parts.length - 1].label} = ${partName(app, part)}${MS.groups.length > 1 && gi < 0 ? ' · second set started' : ''}`);
 }
 
 function afterChange(app: App, msg: string) {
@@ -181,22 +181,26 @@ function afterChange(app: App, msg: string) {
 function groupTotal(app: App, gi: number): string {
   try { const g = MS.groups[gi]; const rows = ops.measureGroup(app.doc, g.parts, MS.mode); const row = rows.find(r => r.sizeId === app.activeSize) ?? rows.find(r => r.total !== null); return row && row.total !== null ? `${fmt(row.total)} ${unitLabel()}` : '—'; } catch { return '—'; }
 }
-/** Right-click / Enter: finish group A, then finish group B (= show the comparison), then keep it in the list. */
+/**
+ * Right-click / Enter (AccuMark Grade ▸ Measure ▸ Line): the first one finishes the first set of lines and opens its
+ * table (Size · L1 · L2 · Total · Size Diff); after the second set it opens the second table, which adds the
+ * difference between the two sets. One more ends the measurement (the tables stay until the next result).
+ */
 function okMeasure(app: App) {
   if (!hasOpen()) return;
   if (MS.closed === 0) {
-    MS.closed = 1;
-    app.status(`Group A done: ${groupTotal(app, 0)} · now click the lines of group B, then right-click to compare · right-click again now = keep A on its own`);
+    MS.closed = 1; showResult(0);
+    app.status(`${chartTag(0)} done: ${groupTotal(app, 0)} · table opened · now click the second set of lines and right-click to compare · right-click again = finish`);
   } else if (MS.closed === 1 && MS.groups.length > 1) {
-    MS.closed = 2; MS.diff = 'AB';
+    MS.closed = 2; MS.diff = 'AB'; showResult(1);
     try {
       const a = ops.measureGroup(app.doc, MS.groups[0].parts, MS.mode), b = ops.measureGroup(app.doc, MS.groups[1].parts, MS.mode);
       const ra = a.find(r => r.sizeId === app.activeSize), rb = b.find(r => r.sizeId === app.activeSize);
-      app.status(ra && rb && ra.total !== null && rb.total !== null ? `A ${fmt(ra.total)} − B ${fmt(rb.total)} = ${fmt(ra.total - rb.total)} ${unitLabel()} (${ra.sizeName}) · all sizes in the Measure window · a new line starts a blank measurement` : 'Comparison A − B: see the Measure window');
-    } catch { app.status('Comparison A − B: see the Measure window'); }
+      app.status(ra && rb && ra.total !== null && rb.total !== null ? `${chartTag(0)} ${fmt(ra.total)} − ${chartTag(1)} ${fmt(rb.total)} = ${fmt(ra.total - rb.total)} ${unitLabel()} (${ra.sizeName}) · every size is in the second table · a new line starts a new measurement` : 'Difference: see the second table');
+    } catch { app.status('Difference: see the second table'); }
   } else {
-    const r = commitMeasure();
-    if (r) { toast(`Kept “${r.name}” (Measure window)`, 'ok'); app.status(`Measure OK · kept “${r.name}”`); }
+    cancelMeasure();
+    app.status('Measure finished · the tables stay open until the next measurement · click a line to start again');
   }
   renderMeasureWindow(app); app.invalidate('canvas');
 }
@@ -267,7 +271,7 @@ export const measureTool: Tool = {
   activate(app) {
     pts = []; hover = null; result = ''; hoverHit = null;
     mode = 'line';
-    if (mode === 'line') renderMeasureWindow(app);
+    renderMeasureWindow(app);
     setMeasureHooks({ onOK: () => app.invalidate('canvas'), onCancel: () => app.invalidate('canvas') });
   },
   // leaving the Measure tool closes its window (it reopens with the tool; open and kept measurements are not lost)
@@ -283,9 +287,9 @@ export const measureTool: Tool = {
   hint: () => {
     if (mode === 'distance') return result || 'Measure Distance: click one point, then another · Ctrl-click 3 points = angle · Alt-click a point = per-size position · Esc = Select';
     const g = MS.groups[MS.cur];
-    if (!hasOpen()) return 'Measure Lines: click lines on any pieces (group A) · right-click = done with A · then the lines of group B · right-click = A − B · Shift+click = extend the run · Alt = cut line';
-    if (MS.closed >= 2) return 'Measure Lines: comparison A − B is in the Measure window · click a new line = blank measurement · right-click = keep it in the list · Esc = cancel';
-    return `Measure Lines: group ${MS.closed === 0 ? 'A' : 'B'}${g ? ' = ' + g.parts.map(p => p.label).join(' + ') : ''} · click to add / click again to remove · Backspace = last off · right-click / Enter = ${MS.closed === 0 ? 'done with A' : MS.groups.length > 1 ? 'compare A − B' : 'keep A on its own'} · Esc = cancel`;
+    if (!hasOpen()) return 'Measure Lines: click the first set of lines (any pieces) · right-click = its table for every size · then the second set · right-click = second table with the difference · Shift+click = extend the run · Alt = cut line';
+    if (MS.closed >= 2) return 'Measure Lines: both tables are open (Add to spec in each) · click a new line = new measurement · right-click = finish · Esc = cancel';
+    return `Measure Lines: ${chartTag(MS.closed === 0 ? 0 : 1)}${g && MS.cur === (MS.closed === 0 ? 0 : 1) ? ' = ' + g.parts.map(p => p.label).join(' + ') : ''} · click to add / click again to remove · Backspace = last off · right-click / Enter = ${MS.closed === 0 ? 'open its table' : MS.groups.length > 1 ? 'open the second table (difference)' : 'finish'} · Esc = cancel`;
   },
   down(app, p) {
     try {
@@ -339,7 +343,7 @@ export const measureTool: Tool = {
           const m = midOf(wpts); const sp = app.view.toScreen(m.p);
           const nrm = { x: -m.dir.y, y: m.dir.x }; // world normal
           const off = { x: sp.x + nrm.x * 14, y: sp.y - nrm.y * 14 };
-          const txt = (MS.groups.length > 1 ? g.name + '·' : '') + part.label + (part.cut ? '✂' : '');
+          const txt = chartTag(gi) + '/' + part.label + (part.cut ? '✂' : '');
           s += `<rect x="${fs(off.x - 4 - txt.length * 3.4)}" y="${fs(off.y - 9)}" width="${fs(txt.length * 6.8 + 8)}" height="14" rx="3" fill="${col}" opacity="0.92"/>` +
             `<text x="${fs(off.x)}" y="${fs(off.y + 2)}" class="m-label" text-anchor="middle">${txt}</text>`;
         }
@@ -376,7 +380,7 @@ export const measureTool: Tool = {
 
 /** Measure Distance: its own tool (point to point; Ctrl = 3-point angle; Alt-click a point = per-size position). */
 export const measureDistTool: Tool = {
-  id: 'measureDist', title: 'Measure Distance', group: 'measuredist', hotkey: 'Q', icon: ICON.measureDist, cursor: 'crosshair',
+  id: 'measureDist', title: 'Measure Distance', group: 'measure', hotkey: 'Q', icon: ICON.measureDist, cursor: 'crosshair',
   activate() { pts = []; hover = null; result = ''; hoverHit = null; mode = 'distance'; },
   deactivate(app) { pts = []; hover = null; closeWindow('measure'); app.invalidate('canvas'); },
   busy: () => pts.length > 0 && pts.length < (angleMode ? 3 : 2),
