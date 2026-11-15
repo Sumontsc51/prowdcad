@@ -38,6 +38,8 @@ export interface Settings {
   nudgeMm: number;
   polygonSides: number;
   roundRadiusMm: number;
+  /** shape tools: draw the shape as an internal line of the piece under it */
+  shapeInternal?: boolean;
   panels: { pieces: boolean; sizes: boolean; inspector: boolean; grading: boolean };
   guides: Guide[];
   /** cut-line corner markers (cutLineForSize corner indices) on selected pieces */

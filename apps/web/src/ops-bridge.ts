@@ -49,7 +49,7 @@ export const KERNEL_GROUPS = {
   'ops/shapers': ['shapeArc', 'shapeWave', 'shapeScallop', 'circularSkirt', 'ruffle'],
   'ops/pieces': ['traceSegments', 'regionAt', 'buildPiece', 'joinPieces', 'foldIn', 'foldOut', 'symmetryCheck', 'setHalf', 'openHalf', 'deleteHalf',
     'snapshotReference', 'restoreReference', 'showReference', 'clearReference', 'globalCheckConnections', 'globalClearConnections', 'lockPiece',
-    'saveLayout', 'restoreLayout', 'saveActiveAsNew', 'replaceOld', 'mergeFromStyle', 'recenterGrain', 'grainParallelToSegment', 'rotatePieceToGrain', 'transformPieceLayouts'],
+    'saveLayout', 'restoreLayout', 'saveActiveAsNew', 'replaceOld', 'mergeFromStyle', 'recenterGrain', 'grainParallelToSegment', 'rotatePieceToGrain', 'transformPieceLayouts', 'fitGrain'],
   'ops/smooth': ['smoothRun'],
   'ops/notches': ['resolveNotches', 'addNotch', 'addCornerNotch', 'placementAt', 'addNotchAtPoint', 'crossNotch', 'addPointsForNotches', 'globalNotchGrading',
     'notchDistanceGrid', 'setNotchDistance', 'fillAllNotchDistances', 'extrapolateNotchIncrement', 'pasteNotchGrid'],
