@@ -10,7 +10,7 @@ export interface FloatWin { el: HTMLElement; body: HTMLElement; foot: HTMLElemen
 
 const open = new Map<string, FloatWin>();
 
-export function floatingWindow(id: string, title: string, opt: { width?: number; onClose?: () => void; x?: number; y?: number } = {}): FloatWin {
+export function floatingWindow(id: string, title: string, opt: { width?: number; onClose?: () => void; x?: number; y?: number; cls?: string; keepOnEsc?: boolean } = {}): FloatWin {
   const existing = open.get(id);
   if (existing) { existing.setTitle(title); return existing; }
   const titleEl = h('span.fw-title', {}, title);
@@ -19,6 +19,7 @@ export function floatingWindow(id: string, title: string, opt: { width?: number;
   const body = h('div.fw-body');
   const foot = h('div.fw-foot');
   const el = h('div.fwin', { 'data-win': id }, head, body, foot);
+  if (opt.cls) el.classList.add(opt.cls);
   el.style.width = (opt.width ?? 420) + 'px';
   el.style.left = (opt.x ?? Math.max(60, window.innerWidth - (opt.width ?? 420) - 330)) + 'px';
   el.style.top = (opt.y ?? 70 + open.size * 28) + 'px';
@@ -47,7 +48,7 @@ export function floatingWindow(id: string, title: string, opt: { width?: number;
   head.addEventListener('pointerup', end);
   head.addEventListener('pointercancel', end);
   el.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { e.preventDefault(); win.close(); }
+    if (e.key === 'Escape' && !opt.keepOnEsc) { e.preventDefault(); win.close(); }
     e.stopPropagation();
   });
   document.body.append(el);
