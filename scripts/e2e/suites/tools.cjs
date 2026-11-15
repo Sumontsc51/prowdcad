@@ -28,6 +28,15 @@ const view = h => h.ev(() => ({ s: window.__e2e.app.view.scale, x: window.__e2e.
 
 const cases = [
   T('select', { invoke: seq(hotkey('g', 'movePoint'), palette('select')), drive: async h => { await h.clickA('FRONT', 'SS_HEM'); }, change: false, expect: (h, c) => req(c.afterSel.anchors[0] === 'FRONT/SS_HEM', 'click did not select the point') }),
+  T('select#sizetip', { title: 'Nested view: hovering the outline of a size with Select shows its name next to the cursor', change: false,
+    invoke: seq(h => h.key('Alt+n'), palette('select')),
+    drive: async h => { const sid = await h.ev(() => window.__e2e.sizeId('XL')); const a = await h.W('FRONT', 'SS_HEM', sid), b = await h.W('FRONT', 'UA', sid); const c = await h.toClient({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }); await h.page.mouse.move(c.x - 3, c.y); await h.page.mouse.move(c.x, c.y); await h.settle(80); h._tip = await h.ev(() => document.querySelector('svg.sheet [data-size-tip]')?.getAttribute('data-size-tip') ?? null); },
+    after: h => h.key('Alt+n'),
+    expect: async h => req(h._tip === 'XL', 'size tooltip: ' + h._tip) }),
+  T('select#palette', { title: 'Palette: 12 buttons; Modify, Piece position, Lines, Piece build and Measure / Verify are flyouts; Grain / Flip answers to Shift+R', change: false,
+    invoke: hotkey('Shift+R', 'grain'),
+    expect: async h => { const g = await h.ev(() => { const E = window.__e2e; const by = {}; for (const t of E.app.tools) if (!t.hidden) (by[t.group] ??= []).push(t.id); return { n: document.querySelectorAll('#palette .tool-btn').length, by }; });
+      return [req(g.n === 12, 'palette buttons ' + g.n), req(g.by.modify.join() === 'movePoint,moveLine,curve,smooth', 'Modify: ' + g.by.modify), req(g.by.position.join() === 'rotatePiece,grain', 'Piece position: ' + g.by.position), req(g.by.pen.join() === 'internal,clip', 'Lines: ' + g.by.pen), req(g.by.cut.join() === 'slash,trace', 'Piece build: ' + g.by.cut), req(g.by.measure.join() === 'measure,measureDist,walk', 'Measure / Verify: ' + g.by.measure)]; } }),
   T('internal', { invoke: palette('internal'), drive: seq(W(60, 100), W(60, 300), h => h.key('Enter')), expect: (h, c) => req(count(c.after, 'FRONT', 'internals') === 2, 'no internal') }),
   T('internal#polygon', { title: 'internal: closed polygon by clicking the start', invoke: hotkey('i', 'internal'), drive: seq(W(30, 100), W(100, 100), W(100, 200), W(30, 100)), expect: (h, c) => req(pc(c.after, 'FRONT').internals.some(i => i.closed), 'no closed internal') }),
   T('clip', { title: 'Clip Line: 1st click the line (near its end), 2nd click the side seam → the line is cut back to the seam and is NOT locked',
