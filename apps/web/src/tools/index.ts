@@ -38,5 +38,5 @@ export const TOOLS: Tool[] = [
 export const GROUP_TITLES: Record<string, string> = {
   select: 'Select', modify: 'Modify: Move Point · Move / Copy Line · Curve · Smooth', position: 'Piece position: Rotate · Grain / Flip', pen: 'Lines: Internal line · Clip Line',
   shape: 'Shapes', seam: 'Seam', marks: 'Notch / Drill / Text', cutpoint: 'Cut Point', live: 'Dart / Pleat / Fullness', cut: 'Piece build: Cut / Merge · Trace',
-  grade: 'Grade: Edit Delta (copy, paste, flip, clear, stack, rules in its options)', measure: 'Measure / Verify: Lines · Distance · Walk', view: 'Navigate',
+  grade: 'Grade: Edit Grade (copy, paste, flip, clear, stack, rules in its options)', measure: 'Measure / Verify: Lines · Distance · Walk', view: 'Navigate',
 };

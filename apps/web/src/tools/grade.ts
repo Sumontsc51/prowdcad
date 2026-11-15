@@ -1,14 +1,14 @@
 /**
- * Edit Delta (E) — the grading tool, after AccuMark Grade ▸ Edit Delta.
+ * Edit Grade (E) — the grading tool, after AccuMark Grade ▸ Edit Delta.
  *
- *  click a grade point   it is selected and the Grading table (below the sheet) shows its dX / dY for every size;
+ *  click a grade point   it is selected and the Grading table window shows its dX / dY for every size;
  *                        type there, or use Calculate (halve, double, constant) and Smart fill.
  *  Shift+click / drag a box = several points (one column pair each in the table).
  *  The options strip covers the rest of the grading work: pick what a click does —
  *    Copy · Paste · Paste X · Paste Y · Flip X · Flip Y · Clear · Stack —
  *  then click a point (or drag a box over points). After Copy the tool switches to Paste.
  *  Buttons: Nested view · Totals / Steps · Rules… · By measure… · Proportional… · Angle…
- *  Esc = back to Edit Delta, Esc again = Select.
+ *  Esc = back to Edit Grade, Esc again = Select.
  */
 import type { Vec } from '@prowdcad/kernel';
 import type { App, SelItem } from '../app';
@@ -24,7 +24,7 @@ import { toast } from '../ui/toast';
 const T = 'grade';
 type GMode = 'edit' | 'copy' | 'paste' | 'pasteX' | 'pasteY' | 'flipX' | 'flipY' | 'zero' | 'stack';
 const MODES: { id: GMode; label: string; title: string; cmd?: string }[] = [
-  { id: 'edit', label: 'Edit Delta', title: 'Click a grade point: its dX / dY for every size open in the Grading table below. Shift+click or drag a box = several points.' },
+  { id: 'edit', label: 'Edit Grade', title: 'Click a grade point: its dX / dY for every size open in the Grading table. Shift+click or drag a box = several points.' },
   { id: 'copy', label: 'Copy', title: 'Click a point (or box several): its grading is copied. The tool then switches to Paste.', cmd: 'grade.copy' },
   { id: 'paste', label: 'Paste', title: 'Click a point (or box several): the copied grading is pasted', cmd: 'grade.paste' },
   { id: 'pasteX', label: 'Paste X', title: 'Paste only the X growth of the copied grading', cmd: 'grade.pasteX' },
@@ -53,7 +53,7 @@ const pointAt = (app: App, w: Vec) => anchorNear(app, w, { gradeOnly: true, tolP
 /** Run the grading action of the current option on the selected points. */
 async function act(app: App) {
   const m = MODES.find(x => x.id === gmode());
-  if (!m?.cmd) { app.status(`Edit Delta: ${app.sel.anchors.length} point${app.sel.anchors.length === 1 ? '' : 's'} · their dX / dY per size are in the Grading table below`); return; }
+  if (!m?.cmd) { app.status(`Edit Grade: ${app.sel.anchors.length} point${app.sel.anchors.length === 1 ? '' : 's'} · their dX / dY per size are in the Grading table`); return; }
   // a grading action works on the points of one piece: several pieces boxed at once are done piece by piece
   const pieces = [...new Set(app.sel.anchors.map(a => a.pieceId))];
   const all = app.sel.anchors.slice();
@@ -67,19 +67,13 @@ async function act(app: App) {
 }
 
 export const editDeltaTool: Tool = {
-  id: 'editDelta', title: 'Edit Delta (grading)', group: 'grade', hotkey: 'E', icon: ICON.grade, cursor: 'crosshair',
+  id: 'editDelta', title: 'Edit Grade (grading)', group: 'grade', hotkey: 'E', icon: ICON.grade, cursor: 'crosshair',
   activate(app) {
     hover = null; box = null; press = null;
-    // the table takes a fixed share of the window while the tool is on, so the sheet does not jump when a point is picked
-    const dock = document.getElementById('bottom-dock');
-    const h0 = dock?.offsetHeight ?? 0;
-    document.body.classList.add('grade-tool');
     if (!settings.panels.grading) { settings.panels.grading = true; saveSettings(); }
-    // once it is laid out, bring the whole pattern back into view above the table
-    requestAnimationFrame(() => requestAnimationFrame(() => { if (app.tool === editDeltaTool && (dock?.offsetHeight ?? 0) !== h0) void runCommand('view.fit'); }));
     app.invalidate();
   },
-  deactivate(app) { hover = null; box = null; press = null; document.body.classList.remove('grade-tool'); app.invalidate('canvas'); },
+  deactivate(app) { hover = null; box = null; press = null; app.invalidate('canvas'); },
   busy: () => !!box,
   modes: () => MODES.map(m => ({ id: m.id, label: m.label, title: m.title })),
   mode: () => gmode(),
@@ -88,8 +82,8 @@ export const editDeltaTool: Tool = {
   toggle(app, id) { const b = BUTTONS.find(x => x.id === id); if (b) void runCommand(b.cmd).then(() => app.invalidate()); },
   hint(app) {
     const m = MODES.find(x => x.id === gmode())!;
-    if (m.id === 'edit') return app.sel.anchors.length ? `Edit Delta · ${app.sel.anchors.length} point${app.sel.anchors.length > 1 ? 's' : ''}: type dX / dY per size in the Grading table below · Calculate = halve, double, constant · Shift+click adds a point · Esc = Select` : 'Edit Delta · click a grade point (square) to edit its growth per size · drag a box = several points · the strip above has Copy, Paste, Flip, Clear, Stack and the rule tools';
-    return `Grade · ${m.label}: click a grade point, or drag a box over several · Esc = back to Edit Delta`;
+    if (m.id === 'edit') return app.sel.anchors.length ? `Edit Grade · ${app.sel.anchors.length} point${app.sel.anchors.length > 1 ? 's' : ''}: type dX / dY per size in the Grading table · Calculate = halve, double, constant · Shift+click adds a point · Esc = Select` : 'Edit Grade · click a grade point (square) to edit its growth per size · drag a box = several points · the strip above has Copy, Paste, Flip, Clear, Stack and the rule tools';
+    return `Grade · ${m.label}: click a grade point, or drag a box over several · Esc = back to Edit Grade`;
   },
   down(app, p: Ptr) { press = { w: p.w, s: p.s, hit: pointAt(app, p.w), shift: (p.e as MouseEvent).shiftKey }; },
   move(app, p: Ptr) {
