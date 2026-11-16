@@ -99,6 +99,8 @@ export const ICON = {
   grain: '<path d="M4 12h16"/><path d="M4 12l4-3M4 12l4 3M20 12l-4-3M20 12l-4 3"/><path d="M7 5h10l2 14H5z" opacity=".45"/>',
   rotate: '<path d="M6 9h8l3 4-3 6H6z"/><path d="M14 5a6 6 0 016 6"/><path d="M20 11l-2.4-1M20 11l1-2.4"/><circle cx="6" cy="19" r="1.4" fill="currentColor" stroke="none"/>',
   clip: '<path d="M17 3v18"/><path d="M4 12h13"/><path d="M17 12h4.5" stroke-dasharray="1.6 1.6" opacity=".55"/><circle cx="17" cy="12" r="2.3" fill="currentColor" stroke="none"/><path d="M4 6l4 3M4 18l4-3" opacity=".55"/>',
+  fold: '<path d="M4 20V6h9l7 7v7z"/><path d="M13 6v7h7" opacity=".55"/><path d="M13 6l7 7" stroke-dasharray="2.2 2"/>',
+  match: '<path d="M4 17C8 7 15 7 20 12"/><path d="M4 20C8 12 15 12 20 16" stroke-dasharray="2.4 2" opacity=".7"/><path d="M12 13v-3M10.5 11.4L12 10l1.5 1.4"/>',
   grade: '<path d="M4 20V9l4-3 7 1.5V20z" opacity=".45"/><path d="M4 20V11l3-2 5 1v10z"/><path d="M17 4l4 7h-8z"/>',
   flip: '<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7L3 17h6z"/><path d="M15 7l6 10h-6z" opacity=".55"/>',
 };

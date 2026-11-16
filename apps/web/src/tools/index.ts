@@ -15,12 +15,14 @@ import { movePointTool, moveLineTool, rotateTool, grainTool, curveTool } from '.
 import { cutPointTool } from './cutpoint';
 import { clipTool } from './clip';
 import { editDeltaTool } from './grade';
+import { foldTool } from './fold';
+import { matchTool } from './match';
 
 /** Palette order. Tools sharing `group` form one flyout button. */
 export const TOOLS: Tool[] = [
   selectTool,
-  movePointTool, moveLineTool, curveTool, smoothTool,   // Modify
-  rotateTool, grainTool,                                 // Piece position
+  movePointTool, moveLineTool, curveTool, matchTool, smoothTool,   // Modify
+  rotateTool, grainTool, foldTool,                       // Piece position
   internalTool, clipTool,                                // Lines
   rectTool, circleTool, polygonTool, roundRectTool,
   seamTool,
@@ -36,7 +38,7 @@ export const TOOLS: Tool[] = [
 ];
 
 export const GROUP_TITLES: Record<string, string> = {
-  select: 'Select', modify: 'Modify: Move Point · Move / Copy Line · Curve · Smooth', position: 'Piece position: Rotate · Grain / Flip', pen: 'Lines: Internal line · Clip Line',
+  select: 'Select', modify: 'Modify: Move Point · Move / Copy Line · Curve · Match Line · Smooth', position: 'Piece position: Rotate · Grain / Flip · Fold', pen: 'Lines: Internal line · Clip Line',
   shape: 'Shapes', seam: 'Seam', marks: 'Notch / Drill / Text', cutpoint: 'Cut Point', live: 'Dart / Pleat / Fullness', cut: 'Piece build: Cut / Merge · Trace',
   grade: 'Grade: Edit Grade (copy, paste, flip, clear, stack, rules in its options)', measure: 'Measure / Verify: Lines · Distance · Walk', view: 'Navigate',
 };

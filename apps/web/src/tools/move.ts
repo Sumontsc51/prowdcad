@@ -28,7 +28,7 @@ import { settings, saveSettings, type Settings } from '../settings';
 import { constrain45, toWorld, toLocal, dirToLocal, dirToWorld, resolveFor, contourById, deepClone, layoutOf, pieceWorldBox } from '../geometry';
 import { snapPoint, SNAP_LABEL } from '../canvas/snap';
 import { candidatesAt, gatherInBox, itemHighlight, SEL_COLOR } from '../selpick';
-import { contourNear, runWorld } from '../hitkit';
+import { contourNear, runWorld, lineNear, lineFolded, lineWorld } from '../hitkit';
 import { sizeNameOf } from '../selection';
 import { openInputBox, inputBoxOpen, inputBoxCommit, inputBoxCancel, type IBMode } from '../ui/inputbox';
 import { fmt, unitLabel } from '../units-ui';
@@ -1440,6 +1440,9 @@ const CV: {
 
 const SEG_YELLOW = '#f2c200';
 /** The picked line as one curve (base size), from the live preview when there is one. */
+/** the picked single line is on the folded-over part of a folded piece: it is shown and dragged where the fold puts it */
+const cvFolded = (app: App) => { const g = CV.seg; const dp = g && app.doc.style.pieces.find(p => p.id === g.pieceId); return !!(g && dp && lineFolded(app, dp, g.contourId, g.from, g.to)); };
+const cvToLocal = (app: App, pc: Piece, w: Vec) => { const l = toLocal(pc, w); return cvFolded(app) && pc.fold ? ops.foldMirror(pc.fold, l) : l; };
 function cvSeg(app: App): { pc: Piece; sc: ReturnType<typeof ops.segmentCurve> } | null {
   const g = CV.seg; if (!g) return null;
   const doc = app.doc.style.pieces.find(p => p.id === g.pieceId); if (!doc) { CV.seg = null; return null; }
@@ -1546,7 +1549,7 @@ export const curveTool: Tool = {
     const g = cvSeg(app);
     if (g) {
       for (const which of ['start', 'end'] as const) {
-        const hs = app.view.toScreen(toWorld(g.pc, which === 'start' ? g.sc.h0 : g.sc.h3));
+        const hs = app.view.toScreen(lineWorld(g.pc, cvFolded(app), which === 'start' ? g.sc.h0 : g.sc.h3));
         if (Math.hypot(hs.x - p.s.x, hs.y - p.s.y) > 10) continue;
         if (g.pc.locked) { toast(lockedMsg(g.pc), 'warn'); return; }
         if (app.sizeOf(g.pc) !== app.doc.baseSize(g.pc)) { toast('Handles are not graded: switch to the base size (Ctrl+B) to edit them', 'warn'); return; }
@@ -1566,7 +1569,7 @@ export const curveTool: Tool = {
     if (!hit) {
       // a line: pick it, it gets one handle at each end
       CV.picked = null;
-      const ch = contourNear(app, p.w, { tolPx: 8 });
+      const ch = lineNear(app, p.w, { tolPx: 8 });
       if (!ch) { if (!e.shiftKey) { CV.seg = null; CV.run = null; } app.status('Nothing to pick here: click a line or a point'); app.invalidate(); return; }
       const pts = ch.contour.points;
       const from = ch.from ?? pts[0].id, to = ch.to ?? pts[pts.length - 1].id;
@@ -1622,7 +1625,7 @@ export const curveTool: Tool = {
       const pc = app.doc.piece(sg.pieceId);
       const base = ops.segmentCurve(pc, app.doc.sizeLine(pc), sg.contourId, sg.from, sg.to);
       const ap = so.which === 'start' ? base.p0 : base.p3;
-      let hl = toLocal(pc, p.w); if ((p.e as MouseEvent).shiftKey) hl = constrain45(ap, hl);
+      let hl = cvToLocal(app, pc, p.w); if ((p.e as MouseEvent).shiftKey) hl = constrain45(ap, hl);
       so.rel = { x: hl.x - ap.x, y: hl.y - ap.y };
       const err = previewWith(app, [sg.pieceId], d => { cvSegApply(d, sg, so); });
       if (err) app.status('⚠ ' + err); else app.invalidate('status');
@@ -1699,7 +1702,7 @@ export const curveTool: Tool = {
         let o = '';
         for (const sg of CV.run ?? []) {
           const pc = app.piece(sg.pieceId); if (!pc) continue;
-          try { const sc = ops.segmentCurve(pc, app.doc.sizeLine(pc), sg.contourId, sg.from, sg.to); const [a, b, c, d] = [sc.p0, sc.h0, sc.h3, sc.p3].map(q => S(toWorld(pc, q)));
+          try { const sc = ops.segmentCurve(pc, app.doc.sizeLine(pc), sg.contourId, sg.from, sg.to); const fl = lineFolded(app, pc, sg.contourId, sg.from, sg.to); const [a, b, c, d] = [sc.p0, sc.h0, sc.h3, sc.p3].map(q => S(lineWorld(pc, fl, q)));
             o += `<path d="M${fs(a.x)} ${fs(a.y)}C${fs(b.x)} ${fs(b.y)} ${fs(c.x)} ${fs(c.y)} ${fs(d.x)} ${fs(d.y)}" fill="none" stroke="#e03131" stroke-width="2.4" stroke-dasharray="6 4" stroke-linecap="round"/>`; } catch { /* stale */ }
         }
         return o;
@@ -1717,7 +1720,7 @@ export const curveTool: Tool = {
       let ovs = '';
       for (const ov of rc.overlays) {
         const dp = app.piece(ov.pieceId); const pc = dp && (app.preview.get(ov.pieceId) ?? dp); if (!dp || !pc) continue;
-        try { const sc = ops.segmentCurve(pc, app.doc.sizeLine(dp), ov.contourId, ov.from, ov.to); const [oa, ob, oc, od] = [sc.p0, sc.h0, sc.h3, sc.p3].map(q => S(toWorld(pc, q)));
+        try { const sc = ops.segmentCurve(pc, app.doc.sizeLine(dp), ov.contourId, ov.from, ov.to); const [oa, ob, oc, od] = [sc.p0, sc.h0, sc.h3, sc.p3].map(q => S(lineWorld(pc, ov.folded, q)));
           ovs += `<path d="M${fs(oa.x)} ${fs(oa.y)}C${fs(ob.x)} ${fs(ob.y)} ${fs(oc.x)} ${fs(oc.y)} ${fs(od.x)} ${fs(od.y)}" fill="none" stroke="${SEG_YELLOW}" stroke-width="1.6" stroke-dasharray="7 4" stroke-linecap="round" data-run-overlay="1"/>`; } catch { /* stale */ }
       }
       return ovs + `<path d="M${fs(a.x)} ${fs(a.y)}C${fs(b.x)} ${fs(b.y)} ${fs(c.x)} ${fs(c.y)} ${fs(d.x)} ${fs(d.y)}" fill="none" stroke="${SEG_YELLOW}" stroke-width="2.6" stroke-linecap="round" data-run="${rc.parts.length + rc.overlays.length}"/>`
@@ -1727,7 +1730,8 @@ export const curveTool: Tool = {
     }
     const g = cvSeg(app);
     if (g) {
-      const S = (q: Vec) => app.view.toScreen(toWorld(g.pc, q));
+      const fl = cvFolded(app);
+      const S = (q: Vec) => app.view.toScreen(lineWorld(g.pc, fl, q));
       const a = S(g.sc.p0), b = S(g.sc.h0), c = S(g.sc.h3), d = S(g.sc.p3);
       // label at the middle of the curve (t = 0.5)
       const m = { x: (a.x + 3 * b.x + 3 * c.x + d.x) / 8, y: (a.y + 3 * b.y + 3 * c.y + d.y) / 8 };
