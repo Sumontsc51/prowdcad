@@ -36,7 +36,7 @@ const cases = [
   T('select#palette', { title: 'Palette: 13 buttons; Modify, Piece position, Lines, Piece build and Measure / Verify are flyouts; Grade has its own button; Grain / Flip answers to Shift+R', change: false,
     invoke: hotkey('Shift+R', 'grain'),
     expect: async h => { const g = await h.ev(() => { const E = window.__e2e; const by = {}; for (const t of E.app.tools) if (!t.hidden) (by[t.group] ??= []).push(t.id); return { n: document.querySelectorAll('#palette .tool-btn').length, by }; });
-      return [req(g.n === 13, 'palette buttons ' + g.n), req((g.by.grade || []).join() === 'editDelta', 'Grade: ' + g.by.grade), req(g.by.modify.join() === 'movePoint,moveLine,curve,smooth', 'Modify: ' + g.by.modify), req(g.by.position.join() === 'rotatePiece,grain', 'Piece position: ' + g.by.position), req(g.by.pen.join() === 'internal,clip', 'Lines: ' + g.by.pen), req(g.by.cut.join() === 'slash,trace', 'Piece build: ' + g.by.cut), req(g.by.measure.join() === 'measure,measureDist,walk', 'Measure / Verify: ' + g.by.measure)]; } }),
+      return [req(g.n === 13, 'palette buttons ' + g.n), req((g.by.grade || []).join() === 'editDelta', 'Grade: ' + g.by.grade), req(g.by.modify.join() === 'movePoint,moveLine,curve,match,smooth', 'Modify: ' + g.by.modify), req(g.by.position.join() === 'rotatePiece,grain,fold', 'Piece position: ' + g.by.position), req(g.by.pen.join() === 'internal,clip', 'Lines: ' + g.by.pen), req(g.by.cut.join() === 'slash,trace', 'Piece build: ' + g.by.cut), req(g.by.measure.join() === 'measure,measureDist,walk', 'Measure / Verify: ' + g.by.measure)]; } }),
   T('editDelta', { title: 'Edit Grade (palette): click a grade point → it is selected and the Grading table opens with its dX / dY per size', change: false,
     invoke: seq(palette('editDelta'), async h => { await h.settle(250); await h.ev(() => window.__e2e.C.runCommand('view.fit')); await h.settle(100); }), drive: h => h.clickA('FRONT', 'SS_HEM'),
     expect: async (h, c) => { const st = await h.ev(() => ({ open: window.__e2e.settings.panels.grading, cells: document.querySelectorAll('.sg-wrap.gr input[data-axis="dx"]').length, calc: !!document.querySelector('.gr-calc [data-calc="double"]') })); return [req(c.afterSel.anchors.join() === 'FRONT/SS_HEM', 'point not selected: ' + c.afterSel.anchors), req(st.open && st.cells >= 3 && st.calc, 'grading table not shown with Calculate: ' + JSON.stringify(st))]; } }),
@@ -189,6 +189,32 @@ const cases = [
       req(Math.hypot(w.fj[0] - w.bj[0], w.fj[1] - w.bj[1]) < 1e-3, 'the two corners differ at the joint: ' + JSON.stringify(w)),
       req(Math.hypot(w.tl[0] - h._tl0[0], w.tl[1] - h._tl0[1]) > 1, 'the corner UA of the overlay line did not move: ' + w.tl), req(w.off < 0.3, 'UA is not on the curve: ' + w.off + ' (run dev ' + w.dev + ')'),
       req(Math.hypot(w.fj[0] - 260, w.fj[1]) > 2, 'the joint did not move: ' + w.fj), req(!!w.hin, 'the overlay line was not shaped')]; } }),
+  T('fold', { tool: 'fold', change: false, title: 'Fold: click two points of FRONT (hem at x = 85, then HPS) → the smaller part is shown folded over (a view: the outline does not change); Piece ▸ Unfold all puts it back',
+    invoke: palette('fold'),
+    drive: async h => { h._pts0 = await h.ev(() => JSON.stringify(window.__e2e.P('FRONT').sew.points.map(a => [a.x, a.y]))); await h.clickLocal('FRONT', { x: 85, y: 0 }); await h.clickA('FRONT', 'HPS'); await h.settle(150);
+      h._f = await h.ev(() => { const E = window.__e2e, p = E.P('FRONT'); return { fold: p.fold || null, over: document.querySelectorAll('[data-fold="over"]').length, same: JSON.stringify(p.sew.points.map(a => [a.x, a.y])), folded: p.fold ? [E.ops.onFoldedPart(p, { x: 40, y: 300 }), E.ops.onFoldedPart(p, { x: 200, y: 300 })] : [] }; });
+      await h.ev(() => window.__e2e.C.runCommand('piece.unfoldAll')); await h.settle(100);
+      h._u = await h.ev(() => !window.__e2e.P('FRONT').fold); },
+    expect: h => [req(!!h._f.fold, 'FRONT is not folded'), req(h._f.over === 1, 'the folded part is not drawn: ' + h._f.over), req(h._f.same === h._pts0, 'the outline changed'),
+      req(h._f.folded.join() === 'true,false', 'the smaller (left) part should be the folded one: ' + h._f.folded), req(h._u === true, 'Unfold all did not unfold')] }),
+  T('match', { tool: 'match', title: 'Match Line: BACK is laid against FRONT and its side is bent; 1st click the BACK side, 2nd click the FRONT side seam, Enter → the side seam takes that shape, keeps its length, and UA moves onto it; BACK does not change',
+    pre: h => h.ev(() => { const E = window.__e2e, b = E.P('BACK'), f = E.P('FRONT'); const g = n => b.sew.points.find(a => a.name === n); E.app.doc.transact('lay BACK', () => { b.layout = { x: (f.layout?.x ?? 0) + 260 - g('BL').x, y: (f.layout?.y ?? 0) - g('BL').y, angleDeg: 0 }; });
+      E.ops.shapeSegment(E.app.doc, b.id, b.sew.id, g('TL').id, g('BL').id, { start: { x: 60, y: -200 }, end: { x: 60, y: 200 } }); E.C.runCommand('view.fit'); }),
+    invoke: palette('match'),
+    drive: async h => {
+      await h.settle(150);
+      const info = () => h.ev(() => { const E = window.__e2e, f = E.P('FRONT'), b = E.P('BACK'); const id = (p, n) => p.sew.points.find(a => a.name === n).id; const len = (p, x, y) => E.ops.segmentCurve(p, E.app.doc.sizeLine(p), p.sew.id, id(p, x), id(p, y)).length; const ua = f.sew.points.find(a => a.name === 'UA'), ss = f.sew.points.find(a => a.name === 'SS_HEM');
+        return { fl: len(f, 'SS_HEM', 'UA'), back: JSON.stringify(b.sew.points.map(a => [a.x, a.y, a.hIn, a.hOut])), ua: [ua.x, ua.y], hout: ss.hOut || null }; });
+      h._a = await info();
+      const bm = await h.ev(() => { const E = window.__e2e, b = E.P('BACK'); const g = n => b.sew.points.find(a => a.name === n); const sc = E.ops.segmentCurve(b, E.app.doc.sizeLine(b), b.sew.id, g('TL').id, g('BL').id); const t = 0.12, u = 1 - t; const L = b.layout; return { x: u * u * u * sc.p0.x + 3 * u * u * t * sc.h0.x + 3 * u * t * t * sc.h3.x + t * t * t * sc.p3.x + L.x, y: u * u * u * sc.p0.y + 3 * u * u * t * sc.h0.y + 3 * u * t * t * sc.h3.y + t * t * t * sc.p3.y + L.y }; });
+      await h.clickW(bm); await h.settle(100);
+      await h.clickSeg('FRONT', 'SS_HEM', 'UA', 0.5); await h.settle(200);
+      h._n = await h.ev(() => [document.querySelectorAll('[data-match="1st"]').length, document.querySelectorAll('[data-match="2nd"]').length]);
+      await h.key('Enter'); await h.settle(200);
+      h._b = await info(); },
+    expect: h => [req(h._n.join() === '1,1', '1st / 2nd line marks: ' + h._n), req(h._b.back === h._a.back, 'BACK (the 1st line) changed'),
+      req(Math.abs(h._b.fl - h._a.fl) < 0.1, `the side seam length changed: ${h._a.fl} → ${h._b.fl}`), req(!!h._b.hout, 'the side seam was not shaped'),
+      req(Math.hypot(h._b.ua[0] - h._a.ua[0], h._b.ua[1] - h._a.ua[1]) > 2, 'UA did not move onto the 1st line: ' + h._b.ua)] }),
   T('curve', { tool: 'curve', invoke: palette('curve'), drive: async h => { await h.clickA('FRONT', 'AH1'); const w = await h.ev(() => window.__e2e.handleW('FRONT', 'AH1', 'out')); await h.dragW(w, { x: w.x + 10, y: w.y + 10 }, { steps: 8 }); }, expect: (h, c) => req(!!an(c.after, 'FRONT', 'AH1').hOut, 'handle not set') }),
   T('select#box', { tool: 'movePoint', title: 'Select: window box (left→right) vs crossing box (right→left)', invoke: palette('select'), change: false,
     drive: async h => { await h.dragW({ x: -20, y: -20 }, { x: 270, y: 30 }); h._win = await h.sel(); await h.clickW({ x: 1000, y: 700 }); /* a box starts on the empty sheet: a drag that starts inside a piece moves the piece */ await h.dragW({ x: 290, y: -20 }, { x: 100, y: 30 }); h._cross = await h.sel(); },
