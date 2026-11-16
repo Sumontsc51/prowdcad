@@ -167,3 +167,46 @@ export function nestSizeAt(app: App, w: Vec, tolPx = 6): { piece: Piece; sizeId:
   }
   return best;
 }
+
+/** True when the picked line (its middle) is on the folded-over part of a folded piece. */
+export function lineFolded(app: App, piece: Piece, contourId: Id, from: Id | undefined, to: Id | undefined): boolean {
+  if (!piece.fold) return false;
+  const c = piece.sew.id === contourId ? piece.sew : piece.internals.find(x => x.id === contourId); if (!c) return false;
+  const r = resolveFor(app.doc, piece, app.doc.baseSize(piece)); const rc = c === piece.sew ? r.sew : r.internals[piece.internals.indexOf(c)]; if (!rc) return false;
+  const i = from ? c.points.findIndex(q => q.id === from) : 0, j = to ? c.points.findIndex(q => q.id === to) : c.points.length - 1;
+  if (i < 0 || j < 0) return false;
+  let a = rc.anchorIndex[i], b = rc.anchorIndex[j]; if (b <= a) b += rc.pts.length;
+  return ops.onFoldedPart(piece, rc.pts[((a + b) >> 1) % rc.pts.length]);
+}
+/**
+ * The line under the cursor, also where a fold shows it: a line of the folded-over part of a folded piece is
+ * picked on its mirrored (dashed) drawing first, then the lines where they really are.
+ */
+export function lineNear(app: App, w: Vec, o: HitOpts = {}): ContourHit | null {
+  let best: ContourHit | null = null;
+  for (const p of app.pieces()) {
+    if (!p.fold || app.hiddenPieces.has(p.id) || (o.pieceId && o.pieceId !== p.id)) continue;
+    const wm = toWorld(p, ops.foldMirror(p.fold, toLocal(p, w)));
+    const h = contourNear(app, wm, { ...o, pieceId: p.id });
+    if (h && lineFolded(app, p, h.contour.id, h.from, h.to) && (!best || h.dpx < best.dpx)) best = h;
+  }
+  return best ?? contourNear(app, w, o);
+}
+/** A piece-local point of a line → the sheet, where a fold shows it. */
+export function lineWorld(piece: Piece, folded: boolean, q: Vec): Vec { return toWorld(piece, folded && piece.fold ? ops.foldMirror(piece.fold, q) : q); }
+
+/** The picked line as a polyline on the sheet (base size), where a fold shows it; from the live preview when there is one. */
+export function linePolyWorld(app: App, g: { pieceId: Id; contourId: Id; from: Id; to: Id }): Vec[] {
+  const dp = app.doc.style.pieces.find(p => p.id === g.pieceId); if (!dp) return [];
+  const pc = app.preview.get(g.pieceId) ?? dp;
+  const c = pc.sew.id === g.contourId ? pc.sew : pc.internals.find(x => x.id === g.contourId); if (!c) return [];
+  let r; try { r = resolveFor(app.doc, pc, app.doc.baseSize(dp)); } catch { return []; }
+  const rc = c === pc.sew ? r.sew : r.internals[pc.internals.indexOf(c)]; if (!rc) return [];
+  const i = c.points.findIndex(q => q.id === g.from), j = c.points.findIndex(q => q.id === g.to); if (i < 0 || j < 0) return [];
+  const a = rc.anchorIndex[i]; let b = rc.anchorIndex[j]; const n = rc.pts.length;
+  if (b <= a) { if (!rc.closed) return []; b += n; }
+  const folded = lineFolded(app, dp, g.contourId, g.from, g.to);
+  const out: Vec[] = [];
+  for (let k = a; k <= b; k++) out.push(lineWorld(pc, folded, rc.pts[k % n]));
+  return out;
+}
