@@ -2,6 +2,7 @@
  * All built-in commands. Menus, hotkeys and context menus come from here. Commands backed by
  * kernel ops that have not landed yet call ops-bridge placeholders (→ "not wired yet" toast).
  */
+import { unfoldPieces, foldedIds } from '../tools/fold';
 import { openCommandFinder } from '../ui/cmdk';
 import { registerCommand, type CommandCtx, hotkeyMap, allCommands, normalizeChord, getCommand } from '../commands';
 import type { App } from '../app';
@@ -87,6 +88,8 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
     app.sel = { pieces: ids, anchors: [] };
   } });
   // Piece ▸ Copy piece / Paste piece: an in-app clipboard (it survives File ▸ New / Open within the session)
+  registerCommand({ id: 'piece.unfold', title: 'Unfold piece', menu: 'Piece', group: 0, enabled: c => c.app.sel.pieces.some(id => !!c.app.piece(id)?.fold), run: () => { unfoldPieces(app, app.sel.pieces); } });
+  registerCommand({ id: 'piece.unfoldAll', title: 'Unfold all pieces', menu: 'Piece', group: 0, enabled: c => c.app.doc.style.pieces.some(p => !!p.fold), run: () => { unfoldPieces(app, foldedIds(app)); } });
   registerCommand({ id: 'piece.copy', title: 'Copy piece', menu: 'Piece', group: 0, hotkey: 'Ctrl+C', enabled: hasPiece, run: () => {
     const ps = selPieces(); if (!ps.length) { app.status('Copy piece: select a piece first'); return; }
     pieceClip.items = ps.map(p => { const b = pieceWorldBox(app.doc, p, app.sizeOf(p)); return { piece: deepClone(p), w: b.maxX - b.minX }; });
