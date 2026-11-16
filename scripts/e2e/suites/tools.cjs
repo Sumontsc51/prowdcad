@@ -58,6 +58,28 @@ const cases = [
     expect: async h => { const z = await h.ev(() => { const E = window.__e2e; const p = E.P('FRONT'); return ['SS_HEM', 'CF_HEM'].map(n => { const a = p.sew.points.find(x => x.name === n); return E.ops.gradedPosition(E.app.doc, p.id, a.id, E.sizeId('XL')).x - a.x; }); });
       return [req(h._m === 'paste', 'after Copy the option should be Paste, got ' + h._m), req(near(h._g[0], 20, 0.01) && near(h._g[1], 20, 0.01), 'CF_HEM did not get the grading of SS_HEM: ' + h._g), req(near(z[0], 0, 1e-6) && near(z[1], 0, 1e-6), 'Clear with a box did not remove the grading: ' + z)]; } }),
   T('internal', { invoke: palette('internal'), drive: seq(W(60, 100), W(60, 300), h => h.key('Enter')), expect: (h, c) => req(count(c.after, 'FRONT', 'internals') === 2, 'no internal') }),
+  T('internal#place', { title: 'Internal line: exact start on a line (right-click on the hem → From start 50), then right-click ▸ 90° → the next point runs square to the hem',
+    invoke: palette('internal'),
+    drive: async h => { const w = await h.along('FRONT', 'CF_HEM', 'SS_HEM', 0.5); const cl = await h.toClient(w); await h.blur(); await h.page.mouse.move(cl.x - 2, cl.y); await h.page.mouse.move(cl.x, cl.y); await h.settle(60);
+      h._lab = await h.ev(() => [...document.querySelectorAll('.live-note')].map(t => t.textContent).join(' '));
+      await h.clickW(w, { button: 'right' }); await IB({ d: '50' }, 'From start')(h);
+      await h.clickW({ x: 90, y: 150 }, { button: 'right' }); await h.fill('helper', 'square'); await h.ok();
+      h._sq = await h.ev(() => document.querySelectorAll('[data-helper="square"]').length);
+      const c2 = await h.toClient({ x: 90, y: 200 }); await h.page.mouse.move(c2.x, c2.y); await h.clickW({ x: 90, y: 200 }); await h.key('Enter'); },
+    expect: (h, c) => { const p = pc(c.after, 'FRONT'), l = p.internals[p.internals.length - 1].points.map(a => [Math.round(a.x * 100) / 100, Math.round(a.y * 100) / 100]);
+      return [req(count(c.after, 'FRONT', 'internals') === 2, 'no internal line'), req(/130/.test(h._lab), 'the distances to both ends are not shown: ' + h._lab), req(h._sq === 1, '90° guide not shown'),
+        req(JSON.stringify(l) === '[[50,0],[50,200]]', 'line should run (50,0) → (50,200): ' + JSON.stringify(l))]; } }),
+  T('internal#helpers', { title: 'Internal line helpers: right-click ▸ Compass 100 → the next point is 100 from the last; right-click ▸ 2-point curve → click the end, bend, click',
+    invoke: palette('internal'),
+    drive: async h => { await h.clickW({ x: 60, y: 100 });
+      await h.clickW({ x: 150, y: 110 }, { button: 'right' }); await h.fill('helper', 'compass'); await h.fill('len', '100'); await h.ok();
+      h._cp = await h.ev(() => document.querySelectorAll('[data-helper="compass"]').length);
+      const c1 = await h.toClient({ x: 200, y: 100 }); await h.page.mouse.move(c1.x, c1.y); await h.clickW({ x: 200, y: 100 });
+      await h.clickW({ x: 170, y: 200 }, { button: 'right' }); await h.fill('helper', 'curve'); await h.ok();
+      await h.clickW({ x: 160, y: 300 }); await h.page.waitForTimeout(500);
+      const c3 = await h.toClient({ x: 120, y: 200 }); await h.page.mouse.move(c3.x, c3.y); await h.clickW({ x: 120, y: 200 }); await h.page.waitForTimeout(500); await h.key('Enter'); },
+    expect: (h, c) => { const p = pc(c.after, 'FRONT'), l = p.internals[p.internals.length - 1].points.map(a => [Math.round(a.x), Math.round(a.y), a.kind]);
+      return [req(h._cp === 1, 'compass circle not shown'), req(JSON.stringify(l) === '[[60,100,"grade"],[160,100,"grade"],[120,200,"curve"],[160,300,"grade"]]', 'points: ' + JSON.stringify(l))]; } }),
   T('internal#polygon', { title: 'internal: closed polygon by clicking the start', invoke: hotkey('i', 'internal'), drive: seq(W(30, 100), W(100, 100), W(100, 200), W(30, 100)), expect: (h, c) => req(pc(c.after, 'FRONT').internals.some(i => i.closed), 'no closed internal') }),
   T('clip', { title: 'Clip Line: 1st click the line (near its end), 2nd click the side seam → the line is cut back to the seam and is NOT locked',
     pre: addInternal([[160, 200, 'CX_A'], [300, 200, 'CX_B']]),
@@ -118,6 +140,21 @@ const cases = [
     drive: async h => { const w = await h.along('FRONT', 'CF_HEM', 'SS_HEM', 0.5); const cl = await h.toClient(w); await h.blur(); await h.page.mouse.move(cl.x - 2, cl.y); await h.page.mouse.move(cl.x, cl.y); await h.page.keyboard.press('1'); await IB({ d: '1 1/8' })(h); },
     expect: (h, c) => { const p = pc(c.after, 'FRONT'), p0 = pc(c.before, 'FRONT'); const nw = p.sew.points.filter(a => !p0.sew.points.some(b => b.id === a.id)); const cf = p.sew.points.find(a => a.name === 'CF_HEM'); return req(nw.length === 1 && near(Math.hypot(nw[0].x - cf.x, nw[0].y - cf.y), 28.575, 1e-6), 'new point ' + JSON.stringify(nw.map(a => [a.x, a.y]))); } }),
   T('dart', { title: 'Dart: click leg A, leg B, then the apex (CLO)', invoke: palette('dart'), drive: seq(seg('FRONT', 'CF_HEM', 'SS_HEM', 0.45), seg('FRONT', 'CF_HEM', 'SS_HEM', 0.55), W(130, 150)), expect: (h, c) => req(count(c.after, 'FRONT', 'darts') === 1, 'no dart') }),
+  T('notch#place', { title: 'Notch: exact place like Cut Point (right-click on the hem → Divide 4 → three notches, no dialog); the distances to both ends show on hover',
+    invoke: hotkey('n', 'notch'),
+    drive: async h => { h._n0 = await h.ev(() => window.__e2e.P('FRONT').notches.length);
+      const w = await h.along('FRONT', 'CF_HEM', 'SS_HEM', 0.5); const cl = await h.toClient(w); await h.blur(); await h.page.mouse.move(cl.x - 2, cl.y); await h.page.mouse.move(cl.x, cl.y); await h.settle(60);
+      h._lab = await h.ev(() => [...document.querySelectorAll('.live-note')].map(t => t.textContent).join(' '));
+      await h.clickW(w, { button: 'right' }); await IB({ n: '4' }, 'Divide')(h); },
+    expect: async h => { const g = await h.ev(() => { const E = window.__e2e, p = E.P('FRONT'); return { n: p.notches.length, xs: E.ops.resolveNotches(E.app.doc, p, E.app.sizeOf(p)).filter(n => Math.abs(n.pos.y) < 0.01).map(n => Math.round(n.pos.x)).sort((a, b) => a - b) }; });
+      return [req(/130/.test(h._lab), 'the distances to both ends are not shown: ' + h._lab), req(g.n === h._n0 + 3, 'three notches expected: ' + h._n0 + ' → ' + g.n), req([65, 130, 195].every(x => g.xs.includes(x)), 'notches at 65 / 130 / 195 on the hem: ' + g.xs)]; } }),
+  T('dart#legA', { title: 'Dart: leg A at an exact place (type on the hem → From start 60), leg B by click, apex by click → the opening starts 60 from the corner',
+    invoke: hotkey('Shift+D', 'dart'),
+    drive: async h => { const w = await h.along('FRONT', 'CF_HEM', 'SS_HEM', 0.3); const cl = await h.toClient(w); await h.blur(); await h.page.mouse.move(cl.x - 2, cl.y); await h.page.mouse.move(cl.x, cl.y); await h.page.keyboard.press('6'); await IB({ d: '60' })(h);
+      h._a = await h.ev(() => { const el = [...document.querySelectorAll('.live-note')].map(t => t.textContent); return el.join(' '); });
+      await seg('FRONT', 'CF_HEM', 'SS_HEM', 0.5)(h); await h.clickW({ x: 95, y: 110 }); },
+    expect: async h => { const g = await h.ev(() => { const E = window.__e2e; const p = E.P('FRONT'); const d = p.darts[p.darts.length - 1]; return d ? E.ops.dartInfo(E.app.doc, p.id, d.id) : null; });
+      return req(!!g && near(g.width, 70, 0.5), 'dart width should be 130 − 60 = 70: ' + JSON.stringify(g && { w: g.width, d: g.depth })); } }),
   T('dart#typed', { title: 'Dart: legs by clicks, right-click → width 20 · depth 100', invoke: hotkey('Shift+D', 'dart'),
     drive: async h => { await seg('FRONT', 'CF_HEM', 'SS_HEM', 0.45)(h); await seg('FRONT', 'CF_HEM', 'SS_HEM', 0.55)(h); await h.clickW({ x: 130, y: 120 }, { button: 'right' }); await IB({ w: '20', d: '100' }, 'Width · Depth')(h); },
     expect: async h => { const g = await h.ev(() => { const E = window.__e2e; const p = E.P('FRONT'); return p.darts[0] ? E.ops.dartInfo(E.app.doc, p.id, p.darts[0].id) : null; }); return req(!!g && near(g.width, 20, 1e-6) && near(g.depth, 100, 1e-6), 'dart ' + JSON.stringify(g && { w: g.width, d: g.depth })); } }),
