@@ -80,7 +80,7 @@ app.setTool = (id: string) => { origSetTool(id); renderPalette(); };
 // ───────────── context menu (when the tool doesn't use right-click) ─────────────
 // every canvas right-click menu starts with the way back to the Select tool
 const ctxMenu = (x: number, y: number, ids: (string | '-')[], extra: { label: string; run: () => void }[] = []) =>
-  openContextMenu(x, y, ids, [{ label: app.tool?.id === 'select' ? 'Select tool  ✓' : 'Select tool', run: () => app.setTool('select') }, ...extra]);
+  openContextMenu(x, y, ids, [...(app.tool?.menu?.(app) ?? []), { label: app.tool?.id === 'select' ? 'Select tool  ✓' : 'Select tool', run: () => app.setTool('select') }, ...extra]);
 canvas.onContext = p => {
   const h = p.hit;
   let sub: ReturnType<typeof candidatesAt>[number] | undefined;
