@@ -167,6 +167,28 @@ const cases = [
       req(Math.hypot(w.fj[0] - w.bj[0], w.fj[1] - w.bj[1]) < 1e-3, 'the joint differs on the two pieces: ' + JSON.stringify(w)),
       req(Math.hypot(w.fj[0] - 260, w.fj[1]) > 2, 'the joint did not move onto the curve: ' + w.fj),
       req(Math.hypot(w.f0[0], w.f0[1]) < 1e-3, 'the run end CF_HEM moved: ' + w.f0)]; } }),
+  T('curve#overlay', { tool: 'curve', title: 'Curve / Handle on lines laid on top of each other: BACK is laid against FRONT with its corner on SS_HEM, so the FRONT side seam lies on the BACK side; the longest chain (FRONT hem + BACK side) is the run, the FRONT side seam lies over it and follows it',
+    pre: h => h.ev(() => { const E = window.__e2e, b = E.P('BACK'), f = E.P('FRONT'); const bl = b.sew.points.find(a => a.name === 'BL'); E.app.doc.transact('lay BACK', () => { b.layout = { x: (f.layout?.x ?? 0) + 260 - bl.x, y: (f.layout?.y ?? 0) - bl.y, angleDeg: 0 }; }); E.C.runCommand('view.fit'); }),
+    invoke: palette('curve'),
+    drive: async h => {
+      await h.settle(150);
+      h._tl0 = await h.ev(() => { const E = window.__e2e; const p = E.P('FRONT'), a = p.sew.points.find(q => q.name === 'UA'); return [a.x, a.y]; });
+      await h.ev(() => { const E = window.__e2e, f = E.P('FRONT'), b = E.P('BACK'); const id = (p, n) => p.sew.points.find(a => a.name === n).id;
+        E.app.setTool('select'); E.app.sel = { pieces: [], anchors: [], segments: [
+          { pieceId: f.id, contourId: f.sew.id, from: id(f, 'CF_HEM'), to: id(f, 'SS_HEM') }, { pieceId: f.id, contourId: f.sew.id, from: id(f, 'SS_HEM'), to: id(f, 'UA') },
+          { pieceId: b.id, contourId: b.sew.id, from: id(b, 'TL'), to: id(b, 'BL') }] }; E.app.setTool('curve'); E.app.invalidate(); });
+      await h.settle(200);
+      h._run = await h.ev(() => { const el = document.querySelector('[data-run]'); return el ? +el.getAttribute('data-run') : 0; });
+      h._ov = await h.ev(() => document.querySelectorAll('[data-run-overlay]').length);
+      const hs = await h.ev(() => [...document.querySelectorAll('[data-run-handle]')].map(c => { const r = c.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }));
+      if (hs.length) { const c = hs[0]; await h.page.mouse.move(c.x, c.y); await h.page.mouse.down(); for (let i = 1; i <= 8; i++) await h.page.mouse.move(c.x + 4 * i, c.y + 6 * i); await h.page.mouse.up(); await h.settle(200); }
+      h._w = await h.ev(() => { const E = window.__e2e; const w = (pn, an) => { const p = E.P(pn), a = p.sew.points.find(q => q.name === an); return E.localToWorld ? (() => { const v = E.localToWorld(pn, { x: a.x, y: a.y }); return [v.x, v.y]; })() : [a.x, a.y]; };
+        const p = E.P('FRONT'), tl = p.sew.points.find(q => q.name === 'UA'), bl = p.sew.points.find(q => q.name === 'SS_HEM'); return { fj: w('FRONT', 'SS_HEM'), bj: w('BACK', 'BL'), tl: [tl.x, tl.y], hin: bl.hOut || null }; });
+    },
+    expect: h => { const w = h._w; return [req(h._run === 3, 'three lines in the run: ' + h._run), req(h._ov === 1, 'one line laid over the run: ' + h._ov),
+      req(Math.hypot(w.fj[0] - w.bj[0], w.fj[1] - w.bj[1]) < 1e-3, 'the two corners differ at the joint: ' + JSON.stringify(w)),
+      req(Math.hypot(w.tl[0] - h._tl0[0], w.tl[1] - h._tl0[1]) < 1e-6, 'the free end of the overlay line moved: ' + w.tl),
+      req(Math.hypot(w.fj[0] - 260, w.fj[1]) > 2, 'the joint did not move: ' + w.fj), req(!!w.hin, 'the overlay line was not shaped')]; } }),
   T('curve', { tool: 'curve', invoke: palette('curve'), drive: async h => { await h.clickA('FRONT', 'AH1'); const w = await h.ev(() => window.__e2e.handleW('FRONT', 'AH1', 'out')); await h.dragW(w, { x: w.x + 10, y: w.y + 10 }, { steps: 8 }); }, expect: (h, c) => req(!!an(c.after, 'FRONT', 'AH1').hOut, 'handle not set') }),
   T('select#box', { tool: 'movePoint', title: 'Select: window box (left→right) vs crossing box (right→left)', invoke: palette('select'), change: false,
     drive: async h => { await h.dragW({ x: -20, y: -20 }, { x: 270, y: 30 }); h._win = await h.sel(); await h.clickW({ x: 1000, y: 700 }); /* a box starts on the empty sheet: a drag that starts inside a piece moves the piece */ await h.dragW({ x: 290, y: -20 }, { x: 100, y: 30 }); h._cross = await h.sel(); },
