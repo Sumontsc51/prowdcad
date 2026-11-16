@@ -355,6 +355,9 @@ export interface PieceOrderDefaults {
  */
 export interface PieceLayout { x: number; y: number; angleDeg: number; flipX?: boolean; flipY?: boolean }
 
+/** A fold line a → b; side = +1 when the part on the left of a → b is the one folded over, −1 for the right. */
+export interface PieceFold { a: Vec; b: Vec; side: 1 | -1 }
+
 export interface Piece {
   id: Id;
   name: string;
@@ -381,6 +384,8 @@ export interface Piece {
   artwork: Artwork[];
   grain: GrainLine;
   half?: HalfSpec;
+  /** Fold view: the part of the piece on `side` of the line a → b is shown folded over onto the rest (the piece itself is unchanged). Piece-local, base size. */
+  fold?: PieceFold;
   reference?: ReferenceBlock;
   connections: PointConnection[];
   locked: boolean;
