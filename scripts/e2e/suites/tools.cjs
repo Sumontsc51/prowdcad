@@ -149,6 +149,24 @@ const cases = [
     invoke: palette('slash'), drive: seq(h => h.clickLocal('FRONT', { x: 60, y: 400 }), OK()), expect: (h, c) => req(c.after.pieces.length === 3, 'not cut along the line: ' + c.after.pieces.map(p => p.name)) }),
   T('slash#merge', { title: 'Cut / Merge · Merge: click a seam line on FRONT, then on BACK', invoke: seq(palette('slash'), h => h.ev(() => { const E = window.__e2e; E.app.tool.setMode(E.app, 'merge'); })),
     drive: seq(seg('FRONT', 'SS_HEM', 'UA', 0.4), seg('BACK', 'TL', 'BL', 0.7), OK()), expect: (h, c) => req(c.after.pieces.length === 1, 'pieces not merged: ' + c.after.pieces.map(p => p.name)) }),
+  T('curve#run', { tool: 'curve', title: 'Curve / Handle on several lines: BACK is laid against FRONT, FRONT hem + BACK side are picked (Shift+click) and shaped as ONE curve; the corner where they meet moves on both pieces alike',
+    pre: h => h.ev(() => { const E = window.__e2e, b = E.P('BACK'), f = E.P('FRONT'); const bl = b.sew.points.find(a => a.name === 'BL'); E.app.doc.transact('lay BACK', () => { b.layout = { x: (f.layout?.x ?? 0) + 260 - bl.x, y: (f.layout?.y ?? 0) - bl.y, angleDeg: 0 }; }); E.C.runCommand('view.fit'); }),
+    invoke: palette('curve'),
+    drive: async h => {
+      await h.settle(150);
+      await h.clickSeg('FRONT', 'CF_HEM', 'SS_HEM', 0.4);
+      const m = await h.ev(() => { const E = window.__e2e, b = E.P('BACK'); const g = n => b.sew.points.find(a => a.name === n); const L = b.layout; return { x: (g('BL').x + g('TL').x) / 2 + L.x, y: (g('BL').y + g('TL').y) / 2 + L.y }; });
+      await h.clickW(m, { mods: ['Shift'] }); await h.settle(150);
+      h._run = await h.ev(() => { const el = document.querySelector('[data-run]'); return el ? +el.getAttribute('data-run') : 0; });
+      const hs = await h.ev(() => [...document.querySelectorAll('[data-run-handle]')].map(c => { const r = c.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }));
+      h._handles = hs.length;
+      if (hs.length) { const c = hs[0]; await h.page.mouse.move(c.x, c.y); await h.page.mouse.down(); for (let i = 1; i <= 8; i++) await h.page.mouse.move(c.x + 5 * i, c.y + 7 * i); await h.page.mouse.up(); await h.settle(200); }
+      h._w = await h.ev(() => { const E = window.__e2e; const w = (pn, an) => { const p = E.P(pn), a = p.sew.points.find(q => q.name === an), L = p.layout ?? { x: 0, y: 0 }; return [a.x + L.x, a.y + L.y]; }; return { fj: w('FRONT', 'SS_HEM'), bj: w('BACK', 'BL'), f0: w('FRONT', 'CF_HEM'), b1: w('BACK', 'TL'), undo: E.app.doc.undoStack ? E.app.doc.undoStack.length : -1 }; });
+    },
+    expect: h => { const w = h._w; return [req(h._run === 2, 'the two lines are not one run: ' + h._run), req(h._handles === 2, 'run handles: ' + h._handles),
+      req(Math.hypot(w.fj[0] - w.bj[0], w.fj[1] - w.bj[1]) < 1e-3, 'the joint differs on the two pieces: ' + JSON.stringify(w)),
+      req(Math.hypot(w.fj[0] - 260, w.fj[1]) > 2, 'the joint did not move onto the curve: ' + w.fj),
+      req(Math.hypot(w.f0[0], w.f0[1]) < 1e-3, 'the run end CF_HEM moved: ' + w.f0)]; } }),
   T('curve', { tool: 'curve', invoke: palette('curve'), drive: async h => { await h.clickA('FRONT', 'AH1'); const w = await h.ev(() => window.__e2e.handleW('FRONT', 'AH1', 'out')); await h.dragW(w, { x: w.x + 10, y: w.y + 10 }, { steps: 8 }); }, expect: (h, c) => req(!!an(c.after, 'FRONT', 'AH1').hOut, 'handle not set') }),
   T('select#box', { tool: 'movePoint', title: 'Select: window box (left→right) vs crossing box (right→left)', invoke: palette('select'), change: false,
     drive: async h => { await h.dragW({ x: -20, y: -20 }, { x: 270, y: 30 }); h._win = await h.sel(); await h.clickW({ x: 1000, y: 700 }); /* a box starts on the empty sheet: a drag that starts inside a piece moves the piece */ await h.dragW({ x: 290, y: -20 }, { x: 100, y: 30 }); h._cross = await h.sel(); },
