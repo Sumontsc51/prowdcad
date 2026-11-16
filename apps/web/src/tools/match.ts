@@ -1,12 +1,14 @@
 /**
  * Match Line (J) — one set of lines takes the shape of another; every line keeps its own length.
  *
- *  Lay one piece on the other (or fold a piece) so the lines lie on each other, then:
- *  click the 1st line (Shift+click = more lines that follow it end to end)     → the shape to copy (green)
- *  click the 2nd line (Shift+click = more)                                     → the lines to change (blue), previewed live
- *  Enter or right-click                                                        → apply (one undo step)
+ *  Lay one piece on the other (or fold a piece) so the lines lie on each other, then two steps:
+ *  STEP 1 · click the 1st line(s): the shape to copy (green). Click a line again to take it out.
+ *           Right-click ▸ OK (top of the menu), or Enter, or the OK button in the options strip.
+ *  STEP 2 · click the 2nd line(s): the lines to change (blue), previewed live.
+ *           Right-click ▸ OK, or Enter, or the OK button = apply (one undo step).
  *  The 2nd lines start at their end that lies on the 1st, follow its shape for their own length, and their corner
- *  points move onto it. The 1st lines never change. Esc = step back.
+ *  points move onto it. The 1st lines never change. After applying, the 1st lines stay: pick the next 2nd line,
+ *  or right-click ▸ Start again. Esc = one step back.
  */
 import type { App, SegSel } from '../app';
 import { ICON, type Tool, type Ptr } from './tool';
@@ -18,7 +20,7 @@ import { fmt, unitLabel } from '../units-ui';
 import { toast } from '../ui/toast';
 
 type Res = ReturnType<typeof ops.matchLines>;
-const MT: { master: SegSel[]; target: SegSel[]; err: string; res: Res | null } = { master: [], target: [], err: '', res: null };
+const MT: { step: 1 | 2; master: SegSel[]; target: SegSel[]; err: string; res: Res | null } = { step: 1, master: [], target: [], err: '', res: null };
 const same = (a: SegSel, b: SegSel) => a.pieceId === b.pieceId && a.contourId === b.contourId && a.from === b.from && a.to === b.to;
 const tolOf = (app: App) => Math.max(3, app.view.px(10));
 const ids = (l: SegSel[]) => [...new Set(l.map(g => g.pieceId))];
@@ -34,6 +36,19 @@ function refresh(app: App) {
   if (err) { MT.err = err; MT.res = null; }
   app.invalidate();
 }
+/** OK of the current step: step 1 → on to the 2nd lines; step 2 → apply. */
+function ok(app: App) {
+  prune(app);
+  if (MT.step === 1) {
+    if (!MT.master.length) { toast('Match Line: click the 1st line first', 'warn'); return; }
+    MT.step = 2; MT.target = [];
+    app.status(`1st: ${MT.master.length} line${MT.master.length > 1 ? 's' : ''} ✓ · step 2: click the line(s) that should take that shape, then right-click ▸ OK`);
+    refresh(app); return;
+  }
+  if (!MT.target.length) { toast('Match Line: click the 2nd line first', 'warn'); return; }
+  apply(app);
+}
+function restart(app: App) { MT.step = 1; MT.master = []; MT.target = []; refresh(app); app.status('Match Line · step 1: click the 1st line(s)'); }
 function apply(app: App) {
   if (!MT.master.length || !MT.target.length) { app.status('Match Line: pick the 1st line, then the 2nd'); return; }
   for (const id of ids(MT.target)) {
@@ -46,25 +61,43 @@ function apply(app: App) {
   if (!commitWith(app, ids(target), 'Match line', d => { res = ops.matchLines(d, master, target, { tol }); })) { refresh(app); return; }
   const r = res as Res | null;
   MT.target = []; MT.res = null; MT.err = '';
-  app.status(r ? `Matched · ${target.length} line${target.length > 1 ? 's' : ''} now ${fmt(r.newLength)} ${unitLabel()} (was ${fmt(r.targetLength)}) on the shape of the 1st (${fmt(r.masterLength)})${r.dev > 0.3 ? ` · shape within ${fmt(r.dev)}` : ''} · click another 2nd line, or Esc` : 'Matched');
+  app.status(r ? `Matched · ${target.length} line${target.length > 1 ? 's' : ''} now ${fmt(r.newLength)} ${unitLabel()} (was ${fmt(r.targetLength)}) on the shape of the 1st (${fmt(r.masterLength)})${r.dev > 0.3 ? ` · shape within ${fmt(r.dev)}` : ''} · the 1st line stays: click the next 2nd line, or right-click ▸ Start again` : 'Matched');
   app.invalidate();
 }
 
 export const matchTool: Tool = {
   id: 'match', title: 'Match Line', group: 'modify', hotkey: 'J', icon: ICON.match, cursor: 'crosshair',
-  activate(app) { MT.master = []; MT.target = []; MT.err = ''; MT.res = null; app.invalidate(); },
-  deactivate(app) { MT.master = []; MT.target = []; MT.err = ''; MT.res = null; app.cancelPreview(); app.invalidate('canvas'); },
+  activate(app) { MT.step = 1; MT.master = []; MT.target = []; MT.err = ''; MT.res = null; app.invalidate(); },
+  deactivate(app) { MT.step = 1; MT.master = []; MT.target = []; MT.err = ''; MT.res = null; app.cancelPreview(); app.invalidate('canvas'); },
   busy: () => MT.target.length > 0,
+  // the two steps, shown in the options strip (click a step to go to it)
+  modes: () => [
+    { id: '1', label: `1 · First line${MT.master.length ? ` (${MT.master.length})` : ''}`, title: 'Step 1: click the line(s) whose shape is copied, then OK' },
+    { id: '2', label: `2 · Second line${MT.target.length ? ` (${MT.target.length})` : ''}`, title: 'Step 2: click the line(s) that take that shape and keep their length, then OK' },
+  ],
+  mode: () => String(MT.step),
+  setMode(app, id) { if (id === '2') { if (MT.step === 1) ok(app); } else { MT.step = 1; MT.target = []; refresh(app); } },
+  toggles: () => [
+    { id: 'ok', label: MT.step === 1 ? 'OK ✓ 1st line done' : 'OK ✓ match', title: 'The same as right-click ▸ OK, or Enter', on: false },
+    { id: 'restart', label: 'Start again', title: 'Forget both selections and pick a new 1st line', on: false },
+  ],
+  toggle(app, id) { if (id === 'ok') ok(app); else restart(app); },
+  // right-click: OK on top of the menu, above “Select tool”
+  menu: app => [
+    { label: MT.step === 1 ? `OK  ·  1st line done${MT.master.length ? ` (${MT.master.length})` : ''} → pick the 2nd` : `OK  ·  match the 2nd line${MT.target.length > 1 ? 's' : ''} to the 1st`, run: () => ok(app) },
+    ...(MT.step === 2 || MT.master.length ? [{ label: 'Start again (new 1st line)', run: () => restart(app) }] : []),
+  ],
   hint(app) {
     prune(app);
-    if (!MT.master.length) return 'Match Line · click the 1st line: the shape to copy (lay the pieces on each other first, or fold the piece) · Esc = Select';
-    if (!MT.target.length) return `Match Line · 1st: ${MT.master.length} line${MT.master.length > 1 ? 's' : ''} (Shift+click = more) · now click the 2nd line: it takes that shape and keeps its own length · Esc = start again`;
-    if (MT.err) return `Match Line · ⚠ ${MT.err} · Esc = pick the 2nd line again`;
+    if (MT.step === 1) return MT.master.length
+      ? `Match Line · STEP 1 · ${MT.master.length} line${MT.master.length > 1 ? 's' : ''} picked (green) · click more lines, or a picked line to take it out · right-click ▸ OK (or Enter) when the 1st selection is complete · Esc = clear`
+      : 'Match Line · STEP 1 · click the 1st line: the shape to copy (lay the pieces on each other first, or fold the piece) · then right-click ▸ OK · Esc = Select';
+    if (!MT.target.length) return `Match Line · STEP 2 · 1st: ${MT.master.length} line${MT.master.length > 1 ? 's' : ''} ✓ · now click the 2nd line(s): they take that shape and keep their own length · then right-click ▸ OK · Esc = back to step 1`;
+    if (MT.err) return `Match Line · STEP 2 · ⚠ ${MT.err} · click the line again to take it out · Esc = back to step 1`;
     const r = MT.res;
-    return `Match Line · 2nd: ${MT.target.length} line${MT.target.length > 1 ? 's' : ''}${r ? ` · length stays ${fmt(r.targetLength)} ${unitLabel()} (1st is ${fmt(r.masterLength)})${r.dev > 0.3 ? ` · shape within ${fmt(r.dev)}` : ''}` : ''} · Enter or right-click = apply · Shift+click = more lines · Esc = back`;
+    return `Match Line · STEP 2 · ${MT.target.length} line${MT.target.length > 1 ? 's' : ''} picked (blue, previewed)${r ? ` · length stays ${fmt(r.targetLength)} ${unitLabel()} (1st is ${fmt(r.masterLength)})${r.dev > 0.3 ? ` · shape within ${fmt(r.dev)}` : ''}` : ''} · right-click ▸ OK (or Enter) = apply · Esc = back to step 1`;
   },
   down(app, p: Ptr) {
-    const e = p.e as MouseEvent;
     const ch = lineNear(app, p.w, { tolPx: 8 });
     if (!ch) { app.status('Click a line'); return; }
     const pts = ch.contour.points;
@@ -72,19 +105,19 @@ export const matchTool: Tool = {
     if (from === to) { app.status('This line has one grade point only: add a point (Cut Point) to split it into lines'); return; }
     const g: SegSel = { pieceId: ch.piece.id, contourId: ch.contour.id, from, to };
     app.sel = { pieces: [], anchors: [] }; app.liveSel = null;
+    // every click adds the line to the selection of the current step; a picked line clicked again is taken out
     const toggle = (l: SegSel[]) => { const k = l.findIndex(x => same(x, g)); if (k >= 0) l.splice(k, 1); else l.push(g); };
-    if (!MT.master.length) MT.master = [g];
-    else if (e.shiftKey && !MT.target.length) toggle(MT.master);
-    else if (MT.master.some(x => same(x, g))) { app.status('That line is the 1st line: click the line that should take its shape'); return; }
-    else if (e.shiftKey) toggle(MT.target);
-    else MT.target = [g];
+    if (MT.step === 1) toggle(MT.master);
+    else if (MT.master.some(x => same(x, g))) { app.status('That line is a 1st line: click the line that should take its shape'); return; }
+    else toggle(MT.target);
     refresh(app);
   },
-  context(app) { if (MT.target.length) { apply(app); return true; } return MT.master.length > 0; },
+  // right-click opens the menu, with OK on top
+  context() { return false; },
   key(app, e) {
-    if (e.key === 'Enter') { apply(app); return true; }
+    if (e.key === 'Enter') { ok(app); return true; }
     if (e.key !== 'Escape') return false;
-    if (MT.target.length) { MT.target = []; refresh(app); return true; }
+    if (MT.step === 2) { MT.step = 1; MT.target = []; refresh(app); app.status('Match Line · back to step 1'); return true; }
     if (MT.master.length) { MT.master = []; refresh(app); return true; }
     app.setTool('select'); return true;
   },

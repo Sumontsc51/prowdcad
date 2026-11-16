@@ -42,6 +42,8 @@ export interface Tool {
   up?(app: App, p: Ptr): void;
   /** right click; return true when handled (suppresses context menu) */
   context?(app: App, p: Ptr): boolean;
+  /** items put at the top of the right-click menu (above “Select tool”) when the tool lets the menu open */
+  menu?(app: App): { label: string; run: () => void }[];
   /** key handling while active; return true when consumed */
   key?(app: App, e: KeyboardEvent): boolean;
   /** overlay SVG markup in SCREEN coordinates */
