@@ -11,6 +11,8 @@ import { settings, saveSettings } from '../settings';
 import { toWorld } from '../geometry';
 import { fs } from './common';
 import type { ContourHit } from '../hitkit';
+import { openInputBox, type IBMode } from '../ui/inputbox';
+import { fmt, unitLabel } from '../units-ui';
 
 export const LIVE_COL = { dart: '#d6309b', pleat: '#2e86c1', fullness: '#d35400', cut: '#7b61ff', part1: '#2e86c1', part2: '#e67e22' };
 
@@ -103,3 +105,42 @@ export function dot(s: Vec, col: string, r = 4.5): string { return `<circle cx="
 
 /** Base-size arc position of a hit, as the kernel contour position from the hit's segment start. */
 export function hitSeg(app: App, h: ContourHit): SegAt | null { return segmentAt(h.contour, h.rc, h.s); }
+
+/**
+ * The placement box every line tool shares (Cut Point, Internal line, Notch, Dart): a place on a line of length L,
+ * given From start · From end · Ratio % (and, with `multi`, Divide into N · Every X). Returns the distances from
+ * the start of the line, or null when cancelled.
+ */
+export async function placeOnSegment(o: { tool: string; title: string; L: number; d: number; multi?: boolean; typed?: string; onPreview?: (ds: number[] | null) => void }): Promise<{ mode: string; ds: number[] } | null> {
+  const L = o.L;
+  const modes: IBMode[] = [
+    { id: 'start', label: 'From start', title: 'Length from the start of this line (blue end)', fields: [{ key: 'd', label: 'Length from start', kind: 'length', value: o.d }] },
+    { id: 'end', label: 'From end', title: 'Length from the end of this line (orange end)', fields: [{ key: 'd', label: 'Length from end', kind: 'length', value: L - o.d }] },
+    { id: 'pct', label: 'Ratio %', title: 'Ratio of this line, from its start', fields: [{ key: 'p', label: 'Ratio from start', kind: 'number', value: Math.round(o.d / L * 1e4) / 100, suffix: '%' }] },
+  ];
+  if (o.multi) modes.push(
+    { id: 'divide', label: 'Divide', title: 'Divide the line into N equal parts (N − 1 places)', fields: [{ key: 'n', label: 'Number of parts', kind: 'number', value: toolOpt(o.tool, 'placeN', 2) }] },
+    { id: 'every', label: 'Every', title: 'A place every X from the start', fields: [{ key: 's', label: 'Every', kind: 'length', value: toolOpt(o.tool, 'placeStep', 50) }] });
+  const calc = (m: string, v: Record<string, number>): number[] => {
+    let ds: number[];
+    if (m === 'pct') ds = [L * v.p / 100];
+    else if (m === 'end') ds = [L - v.d];
+    else if (m === 'divide') { const n = Math.round(v.n); if (!(n >= 2 && n <= 200)) throw new Error('Number of parts: 2 – 200'); ds = Array.from({ length: n - 1 }, (_, k) => L * (k + 1) / n); }
+    else if (m === 'every') { if (!(v.s > 0)) throw new Error('Step must be > 0'); ds = []; for (let x = v.s; x < L - 1e-6 && ds.length < 500; x += v.s) ds.push(x); if (!ds.length) throw new Error('The step is longer than the line'); }
+    else ds = [v.d];
+    for (const d of ds) if (!(d >= -1e-6 && d <= L + 1e-6)) throw new Error(`Outside the line (0 – ${fmt(L)} ${unitLabel()})`);
+    return ds.map(d => Math.max(0, Math.min(L, d)));
+  };
+  const last = toolOpt(o.tool, 'placeMode', 'start');
+  const res = await openInputBox({
+    title: `${o.title} · line ${fmt(L)} ${unitLabel()}`, modes, mode: o.typed ? 'start' : (modes.some(m => m.id === last) ? last : 'start'), at: lastClient, typed: o.typed,
+    hint: 'Enter / right-click = OK · Esc = cancel · Tab = next field',
+    onPreview: (m, v) => { if (!o.onPreview) return; if (!v) { o.onPreview(null); return; } try { o.onPreview(calc(m, v)); } catch { o.onPreview(null); } },
+  });
+  o.onPreview?.(null);
+  if (!res) return null;
+  setToolOpt(o.tool, 'placeMode', res.mode);
+  if (res.mode === 'divide') setToolOpt(o.tool, 'placeN', res.v.n);
+  if (res.mode === 'every') setToolOpt(o.tool, 'placeStep', res.v.s);
+  return { mode: res.mode, ds: calc(res.mode, res.v) };
+}

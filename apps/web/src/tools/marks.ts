@@ -3,6 +3,9 @@
  * Notch (N): click on a sew line or internal line → notch dialog: placement (anchor / from previous
  *            grade point / from next / proportional %), type, depth, width, angle, draw/cut.
  *            Clicking an existing notch opens the notch grid editor for it.
+ *            On a line a dot slides along it with the distance to both ends; right-click or type a number for
+ *            the exact place (the same box as Cut Point: From start · From end · Ratio % · Divide · Every):
+ *            the notches are added with the current type and its default size, without the dialog.
  * Drill (D): click inside a piece → dialog (drill / button / buttonhole, Ø, draw/cut).
  *            Clicking an existing drill → edit / duplicate with offset / delete.
  * Text (T):  click inside a piece → text dialog; clicking an existing text → edit / delete.
@@ -19,6 +22,10 @@ import { rememberedDialog, showDialog } from '../ui/dialog';
 import { fmt, unitLabel } from '../units-ui';
 import { screenMarker } from './common';
 import { openNotchGrid } from '../panels/notchgrid';
+import { resolveFor } from '../geometry';
+import { inputBoxOpen, inputBoxCommit, inputBoxCancel } from '../ui/inputbox';
+import { segmentAt, atArc, label, dot, trackClient, isNumKey, totalLen, placeOnSegment, type SegAt } from './livekit';
+import type { ContourHit } from '../hitkit';
 
 export let notchType: NotchType = 'slit';
 export function setNotchType(t: NotchType) { notchType = t; }
@@ -27,6 +34,46 @@ export function setDrillDiameter(d: number) { drillDiameter = d; }
 
 const NOTCH_TYPES: NotchType[] = ['slit', 'T', 'V', 'U', 'castle'];
 let hover: Vec | null = null;
+/** the line under the cursor: where on it, and the distance to both ends of that line */
+let NH: { hit: ContourHit; seg: SegAt; d: number } | null = null;
+let notchPreview: Vec[] = [];
+function notchHover(app: App, w: Vec) {
+  const h = contourNear(app, w, { tolPx: 12 });
+  NH = null; hover = h?.world ?? null;
+  if (!h) return;
+  const seg = segmentAt(h.contour, h.rc, h.s); if (!seg || seg.L <= 1e-9) return;
+  const T = totalLen(h.rc);
+  let d = h.rc.closed ? ((h.s - seg.sA) % T + T) % T : h.s - seg.sA; d = Math.max(0, Math.min(seg.L, d));
+  NH = { hit: h, seg, d };
+}
+/** Exact place(s) on the line under the cursor → notches of the current type (no dialog). */
+async function notchPlace(app: App, typed?: string) {
+  const v = NH; if (!v || inputBoxOpen()) return;
+  const p = v.hit.piece, doc = app.doc;
+  if (p.locked) { toast('Piece is locked', 'warn'); return; }
+  const L = v.seg.L;
+  const res = await placeOnSegment({ tool: 'notch', title: `Notch (${notchType})`, L, d: v.d, multi: true, typed,
+    onPreview: ds => { notchPreview = (ds ?? []).map(d => toWorld(p, atArc(v.hit.rc, v.seg.sA + d))); app.invalidate('canvas'); } });
+  notchPreview = [];
+  if (!res) { app.invalidate('canvas'); return; }
+  // the same ratio of the line on the base size
+  const ci = v.hit.contour === p.sew ? -1 : p.internals.indexOf(v.hit.contour);
+  const rb = resolveFor(doc, p, doc.baseSize(p)); const rcB = ci < 0 ? rb.sew : rb.internals[ci];
+  const sb = segmentAt(v.hit.contour, rcB, (rcB.cum[rcB.anchorIndex[v.seg.iFrom]] ?? 0) + 1e-6);
+  if (!sb) { toast('Notch: this line cannot be measured', 'warn'); return; }
+  const kind = res.mode === 'end' ? 'fromNext' : res.mode === 'pct' || res.mode === 'divide' ? 'proportional' : 'fromPrev';
+  const setup = app.style.settings.notchSetup[notchType];
+  try {
+    doc.transact(res.ds.length > 1 ? 'Notches' : 'Notch', () => {
+      for (const d of res.ds) {
+        const placement = ops.placementAt(doc, p, v.hit.contour.id, sb.sA + d * (sb.L / L), kind);
+        ops.addNotch(doc, p, { contourId: v.hit.contour.id, placement, type: notchType, depth: setup.depth, width: setup.width, angleDeg: 0, mode: setup.mode, source: 'manual' });
+      }
+    });
+    app.status(`${res.ds.length} notch${res.ds.length > 1 ? 'es' : ''} (${notchType}) added to ${p.name} · click a notch = grid editor · Ctrl+Z undoes`);
+  } catch (err) { reportError(err, 'Notch'); }
+  app.invalidate();
+}
 
 function notchNear(app: App, w: Vec, tolPx = 8): { piece: Piece; notchId: string } | null {
   for (const p of app.doc.style.pieces) {
@@ -99,15 +146,38 @@ async function notchAt(app: App, w: Vec) {
 
 export const notchTool: Tool = {
   id: 'notch', title: 'Notch', group: 'marks', hotkey: 'N', icon: ICON.notch, cursor: 'crosshair',
-  hint: () => `Notch (${notchType}): click a sew / internal line · click an existing notch = grid editor`,
-  deactivate(app) { hover = null; app.invalidate('canvas'); },
+  hint: () => NH ? `Notch (${notchType}) · ${fmt(NH.d)} from the start of the line, ${fmt(NH.seg.L - NH.d)} from its end · click = notch dialog · type a number or right-click = exact place (From start / From end / Ratio % / Divide / Every)`
+    : `Notch (${notchType}): click a sew / internal line · on a line: type a number or right-click = exact place · click an existing notch = grid editor`,
+  deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); hover = null; NH = null; notchPreview = []; app.invalidate('canvas'); },
+  context(app, p) {
+    trackClient(p);
+    if (inputBoxOpen()) { inputBoxCommit(); return true; }
+    if (NH) { void notchPlace(app); return true; }
+    return false;
+  },
+  key(app, e) {
+    if (inputBoxOpen()) return false;
+    if (isNumKey(e) && NH) { void notchPlace(app, e.key); return true; }
+    return false;
+  },
   down(app, p) {
+    trackClient(p);
+    if (inputBoxOpen()) return;
     const ex = notchNear(app, p.w);
     if (ex) { app.selectPiece(ex.piece.id); openNotchGrid(app, ex.piece.id, ex.notchId); return; }
     void notchAt(app, p.w);
   },
-  move(app, p) { const h = contourNear(app, p.w, { tolPx: 12 }); hover = h?.world ?? null; app.invalidate('canvas'); },
-  overlay(app) { return hover ? screenMarker(app.view.toScreen(hover), 'ring', '#c0392b', 6) : ''; },
+  move(app, p) { trackClient(p); if (inputBoxOpen()) return; notchHover(app, p.w); app.invalidate('canvas', 'status'); },
+  overlay(app) {
+    let s = '';
+    for (const q of notchPreview) s += dot(app.view.toScreen(q), '#c0392b', 4);
+    if (NH && !notchPreview.length) {
+      const h = NH.hit, c = app.view.toScreen(h.world);
+      const a = app.view.toScreen(toWorld(h.piece, atArc(h.rc, NH.seg.sA))), b = app.view.toScreen(toWorld(h.piece, atArc(h.rc, NH.seg.sA + NH.seg.L)));
+      s += dot(c, '#c0392b') + dot(a, '#3b7cff', 3) + dot(b, '#e8590c', 3) + label({ x: c.x + 10, y: c.y - 10 }, `${fmt(NH.d)} | ${fmt(NH.seg.L - NH.d)}`, { col: '#c0392b' });
+    } else if (hover && !notchPreview.length) s += screenMarker(app.view.toScreen(hover), 'ring', '#c0392b', 6);
+    return s;
+  },
 };
 
 // ───────────── drills / buttons ─────────────

@@ -36,7 +36,7 @@ import { previewWith } from './move';
 import { openInputBox, inputBoxOpen, inputBoxCommit, inputBoxCancel, type IBMode } from '../ui/inputbox';
 import { fmt, unitLabel } from '../units-ui';
 import { sizeNameOf } from '../selection';
-import { atArc, arcPoly, fwdS, totalLen, roundTo, label, dot, arrow, screenPoly, LIVE_COL, toolOpt, setToolOpt, trackClient, lastClient, isNumKey } from './livekit';
+import { atArc, arcPoly, fwdS, totalLen, roundTo, label, dot, arrow, screenPoly, LIVE_COL, toolOpt, setToolOpt, trackClient, lastClient, isNumKey, segmentAt, placeOnSegment } from './livekit';
 import { apexDown, apexMove, apexUp, apexCancel, apexBusy, apexHint, apexOverlay } from './apexdrag';
 
 function liveClick(app: App, p: Ptr, kind: LiveKind): boolean {
@@ -129,6 +129,26 @@ function dtCommit(app: App, args: DartArgs) {
   } catch (err) { reportError(err, 'Create dart'); }
   DT.a = null; DT.b = null; DT.info = null; DT.err = null; app.invalidate();
 }
+/** the line (between two grade points) a sew pick is on: its start, length and the pick's distance from the start */
+function dtSegOf(app: App, h: SewPick): { sA: number; L: number; d: number } | null {
+  const piece = app.doc.piece(h.pieceId), rc = sewRc(app, piece);
+  const seg = segmentAt(piece.sew, rc, h.s); if (!seg || seg.L <= 1e-9) return null;
+  const T = totalLen(rc); let d = ((h.s - seg.sA) % T + T) % T; d = Math.max(0, Math.min(seg.L, d));
+  return { sA: seg.sA, L: seg.L, d };
+}
+/** Leg A at an exact place of the line under the cursor: From start · From end · Ratio % (as Cut Point). */
+async function dtInputLegA(app: App, typed?: string) {
+  const h = DT.hov; if (!h || DT.a || inputBoxOpen()) return;
+  if (!lockedOk(app, h.pieceId)) return;
+  const sg = dtSegOf(app, h); if (!sg) return;
+  const piece = app.doc.piece(h.pieceId), rc = sewRc(app, piece);
+  const mk = (d: number): SewPick => ({ pieceId: h.pieceId, pos: { fromAnchorId: h.pos.fromAnchorId, distance: h.pos.distance + (d - sg.d) }, w: toWorld(piece, atArc(rc, sg.sA + d)), s: sg.sA + d });
+  const res = await placeOnSegment({ tool: TD, title: 'Dart · leg A', L: sg.L, d: sg.d, typed, onPreview: ds => { if (ds?.length) DT.hov = mk(ds[0]); app.invalidate('canvas'); } });
+  if (!res) { app.invalidate('canvas'); return; }
+  DT.a = mk(res.ds[0]); DT.hov = DT.a;
+  app.status(`Dart · leg A ${fmt(res.ds[0])} ${u()} from the start of the line · now click leg B or type the width`);
+  app.invalidate();
+}
 async function dtInputWidth(app: App, typed?: string) {
   const a = DT.a!; const piece = app.doc.piece(a.pieceId);
   const hov = DT.hov && DT.hov.pieceId === a.pieceId ? DT.hov : null;
@@ -175,7 +195,7 @@ export const dartTool: Tool = {
   badge(app) { const p = DT.a ? app.doc.piece(DT.a.pieceId) : app.primaryPiece(); return p && !isBase(app, p) ? { text: `Size ${sizeNameOf(app, app.sizeOf(p))} shown · darts are graded with their legs`, amber: true } : null; },
   hint(app) {
     const ah = apexHint(); if (ah) return ah;
-    if (!DT.a) return 'Dart · click leg A on a sew line · press on a dart apex and drag = re-shape · click a dart = select · right-click a dart = dart menu · Esc = Select';
+    if (!DT.a) return 'Dart · click leg A on a sew line · type a number or right-click on the line = exact place (From start / From end / Ratio %) · press on a dart apex and drag = re-shape · click a dart = select · right-click a dart = dart menu · Esc = Select';
     if (!DT.b) {
       const w = DT.hov && DT.hov.pieceId === DT.a.pieceId ? (() => { const rc = sewRc(app, app.doc.piece(DT.a!.pieceId)); return Math.min(fwdS(rc, DT.a!.s, DT.hov!.s), fwdS(rc, DT.hov!.s, DT.a!.s)); })() : null;
       return `Dart · click leg B${w !== null ? ` (width ${fmt(w)} ${u()})` : ''} · or type the width · Shift = round width · Backspace = back · Esc cancel`;
@@ -223,6 +243,7 @@ export const dartTool: Tool = {
     if (inputBoxOpen()) { inputBoxCommit(); return true; }
     if (DT.a && !DT.b) { void dtInputWidth(app); return true; }
     if (DT.a && DT.b) { void dtInputApex(app); return true; }
+    if (!DT.a && DT.hov && !liveNear(app, p.w)) { void dtInputLegA(app); return true; }
     return false;
   },
   key(app, e) {
@@ -230,11 +251,19 @@ export const dartTool: Tool = {
     if (e.key === 'Escape') { if (apexCancel(app)) return true; if (DT.a) { dtReset(app); app.status('Dart cancelled'); return true; } app.setTool('select'); return true; }
     if (e.key === 'Backspace' && DT.a) { if (DT.b) { DT.b = null; app.cancelPreview(); } else DT.a = null; app.invalidate(); return true; }
     if (isNumKey(e) && DT.a) { if (!DT.b) void dtInputWidth(app, e.key); else void dtInputApex(app, e.key); return true; }
+    if (isNumKey(e) && !DT.a && DT.hov) { void dtInputLegA(app, e.key); return true; }
     return false;
   },
   overlay(app) {
     const out: string[] = [apexOverlay(app)];
-    if (!DT.a) { if (DT.hov) out.push(screenMarker(app.view.toScreen(DT.hov.w), 'ring', LIVE_COL.dart, 6)); return out.join(''); }
+    if (!DT.a) {
+      if (DT.hov) {
+        const c = app.view.toScreen(DT.hov.w); out.push(screenMarker(c, 'ring', LIVE_COL.dart, 6));
+        const sg = dtSegOf(app, DT.hov);
+        if (sg) { const pc = app.doc.piece(DT.hov.pieceId), rc0 = sewRc(app, pc); out.push(dot(app.view.toScreen(toWorld(pc, atArc(rc0, sg.sA))), '#3b7cff', 3), dot(app.view.toScreen(toWorld(pc, atArc(rc0, sg.sA + sg.L))), '#e8590c', 3), label({ x: c.x + 10, y: c.y - 10 }, `${fmt(sg.d)} | ${fmt(sg.L - sg.d)}`, { col: LIVE_COL.dart })); }
+      }
+      return out.join('');
+    }
     const piece = app.doc.piece(DT.a.pieceId);
     const rc = sewRc(app, piece);
     const sA = app.view.toScreen(DT.a.w);
