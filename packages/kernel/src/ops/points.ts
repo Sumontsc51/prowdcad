@@ -16,6 +16,7 @@ import { anchorPositions, absoluteOffset, absoluteToIncremental, incrementalToAb
 import { Vec, add, sub, mul, dist, norm, len, dot, cross, rotate, angleOf, perp, lerp } from '../geom/vec';
 import { signedArea, pointInPolygon } from '../geom/poly';
 import { newId } from '../model/factory';
+import { layoutToWorld, layoutToLocal, pieceLayout } from './pieces';
 import {
   findAnchorIn, contourOf, idx, nextGrade, prevGrade, between, resolveBase, arcS, spanLen, fwd, wrapArc, lengthOf,
   splitAt, promoteToGrade, freeze, positionsBySize, gradeFromOffsets, sizeIds, maxDev, spanPoly, closestArc,
@@ -793,6 +794,155 @@ export function shapeSegment(doc: Document, pieceId: Id, contourId: Id, fromId: 
     A.hOut = h.start ? { ...h.start } : sub(cur.h0, cur.p0);
     B.hIn = h.end ? { ...h.end } : sub(cur.h3, cur.p3);
     return mid.length;
+  });
+}
+
+// ───────────────────────── a run of lines as ONE curve (also across pieces) ─────────────────────────
+
+/** One line of a run: from → to in its contour's own direction. */
+export interface RunPart { pieceId: Id; contourId: Id; from: Id; to: Id }
+/**
+ * Several lines that meet end to end on the sheet (lines of one piece or of pieces laid against each other),
+ * seen as ONE cubic curve. Everything is in sheet (world) coordinates, base size.
+ */
+export interface RunCurve {
+  /** the lines in run order; rev = the line runs against its contour direction; share = where it ends, as a share of the run length (0–1) */
+  parts: (RunPart & { rev: boolean; share: number })[];
+  p0: Vec; h0: Vec; h3: Vec; p3: Vec;
+  /** where the lines meet now (one per joint) */
+  joints: Vec[];
+  /** largest distance between two ends that are taken as meeting */
+  gap: number;
+  /** largest distance between the present shape and the single curve */
+  dev: number;
+  length: number;
+}
+interface RunItem { part: RunPart; piece: Piece; poly: Vec[]; hs: Vec; he: Vec; len: number; rev: boolean }
+function runChain(doc: Document, parts: RunPart[], tol: number): { items: RunItem[]; gap: number } {
+  const seen = new Set<string>();
+  const uniq = parts.filter(p => { const k = `${p.pieceId}/${p.contourId}/${p.from}/${p.to}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  if (uniq.length < 2) throw new Error('Pick two or more lines');
+  const all: RunItem[] = uniq.map(part => {
+    const piece = piecesHas(doc, part.pieceId), L = pieceLayout(piece), line = doc.sizeLine(piece);
+    const contour = contourOf(piece, part.contourId);
+    const { i, j } = segIdx(contour, part.from, part.to);
+    const r = resolveBase(contour, line);
+    const poly = spanPoly(r, i, j).map(q => layoutToWorld(L, q));
+    return { part, piece, poly, hs: layoutToWorld(L, r.handles[i].hOut), he: layoutToWorld(L, r.handles[j].hIn), len: polyLen(poly), rev: false };
+  });
+  const A = (it: RunItem) => it.poly[0], B = (it: RunItem) => it.poly[it.poly.length - 1];
+  const free = (k: number, e: Vec) => !all.some((o, m) => m !== k && (dist(e, A(o)) <= tol || dist(e, B(o)) <= tol));
+  let start = -1, rev = false;
+  for (let k = 0; k < all.length && start < 0; k++) { if (free(k, A(all[k]))) { start = k; rev = false; } else if (free(k, B(all[k]))) { start = k; rev = true; } }
+  if (start < 0) throw new Error('The lines close a loop: leave one line out, so the run has two ends');
+  const used = new Set<number>([start]); all[start].rev = rev;
+  const items = [all[start]];
+  let tail = rev ? A(all[start]) : B(all[start]), gap = 0;
+  while (items.length < all.length) {
+    let best = -1, bd = Infinity, brev = false;
+    all.forEach((o, m) => { if (used.has(m)) return; const da = dist(tail, A(o)), db = dist(tail, B(o)); if (da < bd) { bd = da; best = m; brev = false; } if (db < bd) { bd = db; best = m; brev = true; } });
+    if (best < 0 || bd > tol) throw new Error(`The lines do not meet end to end (nearest end is ${Math.round(bd * 10) / 10} away): lay the pieces so the line ends touch`);
+    used.add(best); all[best].rev = brev; items.push(all[best]); gap = Math.max(gap, bd);
+    tail = brev ? A(all[best]) : B(all[best]);
+  }
+  return { items, gap };
+}
+/** The run of lines as one curve: the two handles (at the two ends of the run) that control all of it. */
+export function runCurve(doc: Document, parts: RunPart[], o: { tol?: number } = {}): RunCurve {
+  const { items, gap } = runChain(doc, parts, o.tol ?? 5);
+  const q: Vec[] = [], joints: Vec[] = [];
+  let total = 0; for (const it of items) total += it.len;
+  let acc = 0;
+  const out = items.map((it, k) => {
+    const poly = it.rev ? [...it.poly].reverse() : it.poly;
+    if (k > 0) joints.push(lerp(q[q.length - 1], poly[0], 0.5));
+    for (const v of poly) if (!q.length || dist(q[q.length - 1], v) > 1e-9) q.push(v);
+    acc += it.len;
+    return { ...it.part, rev: it.rev, share: total > 0 ? acc / total : (k + 1) / items.length };
+  });
+  const p0 = q[0], p3 = q[q.length - 1];
+  const first = items[0], last = items[items.length - 1];
+  const dirOr = (h: Vec, p: Vec, fb: Vec) => { const v = sub(h, p); return len(v) > 1e-6 ? norm(v) : norm(fb); };
+  const t0 = dirOr(first.rev ? first.he : first.hs, p0, sub(q[Math.min(1, q.length - 1)], p0));
+  const t3 = dirOr(last.rev ? last.hs : last.he, p3, sub(q[Math.max(0, q.length - 2)], p3));
+  const devOf = (f: { h0: Vec; h3: Vec }) => { const cv = bezPoly(p0, f.h0, f.h3, p3, 96); return Math.max(maxDev(cv, q), maxDev(q, cv)); };
+  let pick = fitCubic(q, t0, t3, false); let dk = devOf(pick);
+  if (dk > 0.2) {
+    // a run that was shaped as one curve before: each line is a piece of that curve, and at every joint the two
+    // handle lengths are in the ratio of the two parameter spans. That gives every span, and the curve back.
+    const S = (it: RunItem) => (it.rev ? { p: it.poly[it.poly.length - 1], h: it.he } : { p: it.poly[0], h: it.hs });
+    const E = (it: RunItem) => (it.rev ? { p: it.poly[0], h: it.hs } : { p: it.poly[it.poly.length - 1], h: it.he });
+    const span = [1]; let ok = true;
+    for (let k = 0; k + 1 < items.length && ok; k++) {
+      const e = E(items[k]), n = S(items[k + 1]); const li = dist(e.h, e.p), lo = dist(n.h, n.p);
+      if (li < 1e-6 || lo < 1e-6) ok = false; else span.push(span[k] * lo / li);
+    }
+    const sum = span.reduce((a, b) => a + b, 0);
+    const hs = S(first).h, he = E(last).h;
+    if (ok && dist(hs, p0) > 1e-6 && dist(he, p3) > 1e-6) {
+      const cand = { h0: add(p0, mul(sub(hs, p0), sum / span[0])), h3: add(p3, mul(sub(he, p3), sum / span[span.length - 1])) };
+      const dc = devOf(cand); if (dc < dk * 0.7) { pick = cand; dk = dc; }
+    }
+  }
+  if (dk > 0.2) { const fr = fitCubic(q, t0, t3, true); if (devOf(fr) < dk * 0.7) pick = fr; }
+  let { h0, h3 } = pick;
+  if (dist(h0, p0) < 1e-6) h0 = lerp(p0, p3, 1 / 3);
+  if (dist(h3, p3) < 1e-6) h3 = lerp(p3, p0, 1 / 3);
+  const cv = bezPoly(p0, h0, h3, p3, 96);
+  return { parts: out, p0: { ...p0 }, p3: { ...p3 }, h0, h3, joints, gap, dev: Math.max(maxDev(cv, q), maxDev(q, cv)), length: polyLen(cv) };
+}
+/** Where the joints of a run land on the curve p0 h0 h3 p3: each line keeps its share of the run length. */
+export function runJointParams(p0: Vec, h0: Vec, h3: Vec, p3: Vec, shares: number[]): number[] {
+  const N = 600, cum = [0]; let prev = p0;
+  for (let k = 1; k <= N; k++) { const v = bez(p0, h0, h3, p3, k / N); cum.push(cum[k - 1] + dist(prev, v)); prev = v; }
+  const L = cum[N];
+  return shares.map(f => {
+    if (f <= 0 || L <= 0) return 0; if (f >= 1) return 1;
+    const want = f * L; let k = 1; while (k < N && cum[k] < want) k++;
+    const d = cum[k] - cum[k - 1];
+    return (k - 1 + (d > 0 ? (want - cum[k - 1]) / d : 0)) / N;
+  });
+}
+/**
+ * Shape a run of lines as ONE curve with a handle at each end of the run (handles are sheet vectors, relative to
+ * the end points). The two ends of the run stay; the points where the lines meet move onto the curve (each line
+ * keeps its share of the run length), on both pieces alike, so the pieces still match there. Curve points inside
+ * a line are replaced by the curve.
+ */
+export function shapeRun(doc: Document, parts: RunPart[], h: { start?: Vec; end?: Vec } = {}, o: { tol?: number } = {}): void {
+  doc.transact('Shape lines', () => {
+    const tol = o.tol ?? 5;
+    const rc = runCurve(doc, parts, { tol });
+    for (const pt of rc.parts) if (piecesHas(doc, pt.pieceId).locked) throw new Error('Piece is locked');
+    const P0 = rc.p0, P3 = rc.p3, H0 = h.start ? add(P0, h.start) : rc.h0, H3 = h.end ? add(P3, h.end) : rc.h3;
+    const ts = [0, ...runJointParams(P0, H0, H3, P3, rc.parts.map(x => x.share))]; ts[ts.length - 1] = 1;
+    // blossom of the cubic: the control points of the piece between two parameters
+    const bl = (u: number, v: number, w: number): Vec => {
+      const a = lerp(P0, H0, u), b = lerp(H0, H3, u), c = lerp(H3, P3, u);
+      return lerp(lerp(a, b, v), lerp(b, c, v), w);
+    };
+    const local = (pid: Id, w: Vec) => layoutToLocal(pieceLayout(piecesHas(doc, pid)), w);
+    // 1 · the joints move onto the curve (the same sheet point for both lines that meet there)
+    const moved = new Set<string>();
+    const moveTo = (pt: RunPart, anchorId: Id, w: Vec) => {
+      const k = pt.pieceId + '/' + anchorId; if (moved.has(k)) return; moved.add(k);
+      const l = local(pt.pieceId, w);
+      movePoint(doc, pt.pieceId, anchorId, { x: l.x, y: l.y });
+    };
+    for (let k = 0; k + 1 < rc.parts.length; k++) {
+      const w = bez(P0, H0, H3, P3, ts[k + 1]);
+      const a = rc.parts[k], b = rc.parts[k + 1];
+      moveTo(a, a.rev ? a.from : a.to, w);
+      moveTo(b, b.rev ? b.to : b.from, w);
+    }
+    // 2 · every line takes its piece of the curve
+    rc.parts.forEach((pt, k) => {
+      const ta = ts[k], tb = ts[k + 1];
+      const a = bl(ta, ta, ta), c1 = bl(ta, ta, tb), c2 = bl(ta, tb, tb), b = bl(tb, tb, tb);
+      const [f, hf, ht, t] = pt.rev ? [b, c2, c1, a] : [a, c1, c2, b];
+      const lf = local(pt.pieceId, f), lt = local(pt.pieceId, t);
+      shapeSegment(doc, pt.pieceId, pt.contourId, pt.from, pt.to, { start: sub(local(pt.pieceId, hf), lf), end: sub(local(pt.pieceId, ht), lt) });
+    });
   });
 }
 
