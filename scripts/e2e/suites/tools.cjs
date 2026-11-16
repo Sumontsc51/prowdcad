@@ -234,7 +234,7 @@ const cases = [
       h._u = await h.ev(() => !window.__e2e.P('FRONT').fold); },
     expect: h => [req(!!h._f.fold, 'FRONT is not folded'), req(h._f.over === 1, 'the folded part is not drawn: ' + h._f.over), req(h._f.same === h._pts0, 'the outline changed'),
       req(h._f.folded.join() === 'true,false', 'the smaller (left) part should be the folded one: ' + h._f.folded), req(h._u === true, 'Unfold all did not unfold')] }),
-  T('match', { tool: 'match', title: 'Match Line: BACK is laid against FRONT and its side is bent; 1st click the BACK side, 2nd click the FRONT side seam, Enter → the side seam takes that shape, keeps its length, and UA moves onto it; BACK does not change',
+  T('match', { tool: 'match', title: 'Match Line: BACK is laid against FRONT and its side is bent; STEP 1 click the BACK side, right-click ▸ OK (top of the menu); STEP 2 click the FRONT side seam, right-click ▸ OK → the side seam takes that shape, keeps its length, and UA moves onto it; BACK does not change',
     pre: h => h.ev(() => { const E = window.__e2e, b = E.P('BACK'), f = E.P('FRONT'); const g = n => b.sew.points.find(a => a.name === n); E.app.doc.transact('lay BACK', () => { b.layout = { x: (f.layout?.x ?? 0) + 260 - g('BL').x, y: (f.layout?.y ?? 0) - g('BL').y, angleDeg: 0 }; });
       E.ops.shapeSegment(E.app.doc, b.id, b.sew.id, g('TL').id, g('BL').id, { start: { x: 60, y: -200 }, end: { x: 60, y: 200 } }); E.C.runCommand('view.fit'); }),
     invoke: palette('match'),
@@ -244,12 +244,16 @@ const cases = [
         return { fl: len(f, 'SS_HEM', 'UA'), back: JSON.stringify(b.sew.points.map(a => [a.x, a.y, a.hIn, a.hOut])), ua: [ua.x, ua.y], hout: ss.hOut || null }; });
       h._a = await info();
       const bm = await h.ev(() => { const E = window.__e2e, b = E.P('BACK'); const g = n => b.sew.points.find(a => a.name === n); const sc = E.ops.segmentCurve(b, E.app.doc.sizeLine(b), b.sew.id, g('TL').id, g('BL').id); const t = 0.12, u = 1 - t; const L = b.layout; return { x: u * u * u * sc.p0.x + 3 * u * u * t * sc.h0.x + 3 * u * t * t * sc.h3.x + t * t * t * sc.p3.x + L.x, y: u * u * u * sc.p0.y + 3 * u * u * t * sc.h0.y + 3 * u * t * t * sc.h3.y + t * t * t * sc.p3.y + L.y }; });
+      const okMenu = async () => { await h.clickW({ x: 520, y: 350 }, { button: 'right' }); await h.page.waitForSelector('.ctx-menu .menu-item'); const items = await h.ev(() => [...document.querySelectorAll('.ctx-menu .menu-item')].map(b => b.textContent.trim())); await h.page.locator('.ctx-menu .menu-item').first().click(); await h.settle(150); return items; };
       await h.clickW(bm); await h.settle(100);
+      h._m1 = await okMenu();
+      h._step = await h.ev(() => window.__e2e.app.tool.mode(window.__e2e.app));
       await h.clickSeg('FRONT', 'SS_HEM', 'UA', 0.5); await h.settle(200);
       h._n = await h.ev(() => [document.querySelectorAll('[data-match="1st"]').length, document.querySelectorAll('[data-match="2nd"]').length]);
-      await h.key('Enter'); await h.settle(200);
+      h._m2 = await okMenu();
       h._b = await info(); },
-    expect: h => [req(h._n.join() === '1,1', '1st / 2nd line marks: ' + h._n), req(h._b.back === h._a.back, 'BACK (the 1st line) changed'),
+    expect: h => [req(/^OK/.test(h._m1[0]) && /Select tool/.test(h._m1.join('|')) && h._m1.findIndex(t => /^OK/.test(t)) < h._m1.findIndex(t => /Select tool/.test(t)), 'OK should be on top of the right-click menu, above Select tool: ' + h._m1.slice(0, 4)), req(h._step === '2', 'OK should go to step 2: ' + h._step), req(/^OK/.test(h._m2[0]), 'step 2 menu: ' + h._m2.slice(0, 3)),
+      req(h._n.join() === '1,1', '1st / 2nd line marks: ' + h._n), req(h._b.back === h._a.back, 'BACK (the 1st line) changed'),
       req(Math.abs(h._b.fl - h._a.fl) < 0.1, `the side seam length changed: ${h._a.fl} → ${h._b.fl}`), req(!!h._b.hout, 'the side seam was not shaped'),
       req(Math.hypot(h._b.ua[0] - h._a.ua[0], h._b.ua[1] - h._a.ua[1]) > 2, 'UA did not move onto the 1st line: ' + h._b.ua)] }),
   T('curve', { tool: 'curve', invoke: palette('curve'), drive: async h => { await h.clickA('FRONT', 'AH1'); const w = await h.ev(() => window.__e2e.handleW('FRONT', 'AH1', 'out')); await h.dragW(w, { x: w.x + 10, y: w.y + 10 }, { steps: 8 }); }, expect: (h, c) => req(!!an(c.after, 'FRONT', 'AH1').hOut, 'handle not set') }),
