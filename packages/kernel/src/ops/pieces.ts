@@ -5,7 +5,7 @@
 import type { PieceLayout, Anchor, Contour, Id, Piece, SizeId, SizeLine, Style, GradeInc } from '../model/types';
 import type { Document } from '../model/doc';
 import { newId, makePiece, makeContour, now } from '../model/factory';
-import { absoluteOffset, absoluteToIncremental, halfOpenedPiece, findHalfFoldEdge, MIRROR_SUFFIX } from '../model/contour';
+import { absoluteOffset, absoluteToIncremental, halfOpenedPiece, findHalfFoldEdge, MIRROR_SUFFIX, resolveContour } from '../model/contour';
 import { Vec, add, sub, mul, dist, norm, dot, cross, lerp, angleOf, len } from '../geom/vec';
 import { area, signedArea, pointInPolygon, segIntersect } from '../geom/poly';
 import {
@@ -761,3 +761,50 @@ export function rotatePieceToGrain(doc: Document, pieceId: Id, target: 'vertical
   });
 }
 
+
+// ───────────────────────── fold view (the piece is shown folded; it is not cut) ─────────────────────────
+
+/** Mirror a point across the fold line. */
+export function foldMirror(f: { a: Vec; b: Vec }, v: Vec): Vec {
+  const dx = f.b.x - f.a.x, dy = f.b.y - f.a.y, l2 = dx * dx + dy * dy;
+  if (l2 < 1e-18) return { ...v };
+  const t = ((v.x - f.a.x) * dx + (v.y - f.a.y) * dy) / l2;
+  return { x: 2 * (f.a.x + t * dx) - v.x, y: 2 * (f.a.y + t * dy) - v.y };
+}
+/** Signed side of a point: > 0 left of a → b, < 0 right. */
+export function foldSideOf(f: { a: Vec; b: Vec }, v: Vec): number { return (f.b.x - f.a.x) * (v.y - f.a.y) - (f.b.y - f.a.y) * (v.x - f.a.x); }
+/** True when the point lies on the part of the piece that is folded over. */
+export function onFoldedPart(piece: Piece, v: Vec): boolean { const f = piece.fold; return !!f && foldSideOf(f, v) * f.side > 1e-9; }
+/** The part of a closed polygon on one side of the line a → b (sign +1 = left, −1 = right). */
+export function clipPolyBySide(poly: Vec[], f: { a: Vec; b: Vec }, sign: 1 | -1): Vec[] {
+  const out: Vec[] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length];
+    const sp = foldSideOf(f, p) * sign, sq = foldSideOf(f, q) * sign;
+    if (sp >= 0) out.push(p);
+    if ((sp > 0 && sq < 0) || (sp < 0 && sq > 0)) { const t = sp / (sp - sq); out.push({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t }); }
+  }
+  return out;
+}
+const polyArea = (poly: Vec[]) => { let a = 0; for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length]; a += p.x * q.y - q.x * p.y; } return Math.abs(a) / 2; };
+/**
+ * Fold the piece along the line a → b (piece-local): a view only, the outline is not changed. The smaller part
+ * folds over, or the part that does not contain `keep`. Folding again replaces the fold.
+ */
+export function setFold(doc: Document, pieceId: Id, a: Vec, b: Vec, o: { keep?: Vec } = {}): void {
+  doc.transact('Fold piece', () => {
+    const piece = doc.piece(pieceId);
+    if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-6) throw new Error('The two fold points are the same point');
+    const f = { a: { ...a }, b: { ...b } };
+    const poly = resolveContour(piece.sew, doc.sizeLine(piece), doc.baseSize(piece)).pts;
+    const left = polyArea(clipPolyBySide(poly, f, 1)), right = polyArea(clipPolyBySide(poly, f, -1));
+    if (left < 1e-6 || right < 1e-6) throw new Error('The fold line does not cross the piece');
+    let side: 1 | -1 = left <= right ? 1 : -1;
+    if (o.keep) { const k = foldSideOf(f, o.keep); if (Math.abs(k) > 1e-9) side = k > 0 ? -1 : 1; }
+    piece.fold = { ...f, side };
+  });
+}
+/** Unfold: remove the fold view. */
+export function clearFold(doc: Document, pieceId: Id): void {
+  doc.transact('Unfold piece', () => { delete doc.piece(pieceId).fold; });
+}

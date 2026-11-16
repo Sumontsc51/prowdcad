@@ -16,7 +16,7 @@ import { anchorPositions, absoluteOffset, absoluteToIncremental, incrementalToAb
 import { Vec, add, sub, mul, dist, norm, len, dot, cross, rotate, angleOf, perp, lerp } from '../geom/vec';
 import { signedArea, pointInPolygon } from '../geom/poly';
 import { newId } from '../model/factory';
-import { layoutToWorld, layoutToLocal, pieceLayout } from './pieces';
+import { layoutToWorld, layoutToLocal, pieceLayout, foldMirror, onFoldedPart } from './pieces';
 import {
   findAnchorIn, contourOf, idx, nextGrade, prevGrade, between, resolveBase, arcS, spanLen, fwd, wrapArc, lengthOf,
   splitAt, promoteToGrade, freeze, positionsBySize, gradeFromOffsets, sizeIds, maxDev, spanPoly, closestArc,
@@ -807,7 +807,7 @@ export interface RunPart { pieceId: Id; contourId: Id; from: Id; to: Id }
  */
 export interface RunCurve {
   /** the lines in run order; rev = the line runs against its contour direction; share = where it ends, as a share of the run length (0–1) */
-  parts: (RunPart & { rev: boolean; share: number })[];
+  parts: (RunPart & { rev: boolean; share: number; folded: boolean })[];
   p0: Vec; h0: Vec; h3: Vec; p3: Vec;
   /** where the lines meet now (one per joint) */
   joints: Vec[];
@@ -822,9 +822,26 @@ export interface RunCurve {
    * na / nb = the joint of the run that the line's from / to end sits on (0 = start of the run … parts.length = its end; −1 = an end of its own);
    * sa / sb = where the from / to end lies along the run, as a share of the run length (0–1).
    */
-  overlays: (RunPart & { na: number; nb: number; sa: number; sb: number })[];
+  overlays: (RunPart & { na: number; nb: number; sa: number; sb: number; folded: boolean })[];
 }
-interface RunItem { part: RunPart; piece: Piece; poly: Vec[]; hs: Vec; he: Vec; len: number; rev: boolean }
+interface RunItem { part: RunPart; piece: Piece; poly: Vec[]; hs: Vec; he: Vec; len: number; rev: boolean; folded: boolean }
+/** One picked line on the sheet. A line on the folded-over part of a folded piece lies where the fold shows it. */
+function runItem(doc: Document, part: RunPart): RunItem {
+  const piece = piecesHas(doc, part.pieceId), L = pieceLayout(piece), line = doc.sizeLine(piece);
+  const contour = contourOf(piece, part.contourId);
+  const { i, j } = segIdx(contour, part.from, part.to);
+  const r = resolveBase(contour, line);
+  const lp = spanPoly(r, i, j);
+  const folded = !!piece.fold && onFoldedPart(piece, lp[lp.length >> 1]);
+  const W = (q: Vec) => layoutToWorld(L, folded ? foldMirror(piece.fold!, q) : q);
+  const poly = lp.map(W);
+  return { part, piece, poly, hs: W(r.handles[i].hOut), he: W(r.handles[j].hIn), len: polyLen(poly), rev: false, folded };
+}
+/** Sheet point → the piece's own coordinates, for a line that may be on the folded-over part. */
+function runLocal(doc: Document, pt: RunPart & { folded?: boolean }, w: Vec): Vec {
+  const piece = piecesHas(doc, pt.pieceId), l = layoutToLocal(pieceLayout(piece), w);
+  return pt.folded && piece.fold ? foldMirror(piece.fold, l) : l;
+}
 /** nearest place on a polyline: distance to it and the length along the polyline up to it */
 function polyNearest(p: Vec, poly: Vec[]): { d: number; s: number } {
   let d = Infinity, at = 0, run = 0;
@@ -847,14 +864,7 @@ function runChain(doc: Document, parts: RunPart[], tol: number): { items: RunIte
   const uniq = parts.filter(p => { const k = `${p.pieceId}/${p.contourId}/${p.from}/${p.to}`; if (seen.has(k)) return false; seen.add(k); return true; });
   if (uniq.length < 2) throw new Error('Pick two or more lines');
   if (uniq.length > 14) throw new Error('Too many lines for one curve: pick 14 at most');
-  const all: RunItem[] = uniq.map(part => {
-    const piece = piecesHas(doc, part.pieceId), L = pieceLayout(piece), line = doc.sizeLine(piece);
-    const contour = contourOf(piece, part.contourId);
-    const { i, j } = segIdx(contour, part.from, part.to);
-    const r = resolveBase(contour, line);
-    const poly = spanPoly(r, i, j).map(q => layoutToWorld(L, q));
-    return { part, piece, poly, hs: layoutToWorld(L, r.handles[i].hOut), he: layoutToWorld(L, r.handles[j].hIn), len: polyLen(poly), rev: false };
-  });
+  const all: RunItem[] = uniq.map(part => runItem(doc, part));
   const n = all.length;
   // joints: ends 2k (from) and 2k+1 (to), merged when they are within tol
   const ends: Vec[] = all.flatMap(it => [it.poly[0], it.poly[it.poly.length - 1]]);
@@ -916,7 +926,7 @@ export function runCurve(doc: Document, parts: RunPart[], o: { tol?: number } = 
     if (k > 0) joints.push(lerp(q[q.length - 1], poly[0], 0.5));
     for (const v of poly) if (!q.length || dist(q[q.length - 1], v) > 1e-9) q.push(v);
     acc += it.len;
-    return { ...it.part, rev: it.rev, share: total > 0 ? acc / total : (k + 1) / items.length };
+    return { ...it.part, rev: it.rev, folded: it.folded, share: total > 0 ? acc / total : (k + 1) / items.length };
   });
   const p0 = q[0], p3 = q[q.length - 1];
   const qLen = polyLen(q), limit = Math.max(o.tol ?? 5, qLen * 0.12);
@@ -959,7 +969,7 @@ export function runCurve(doc: Document, parts: RunPart[], o: { tol?: number } = 
         return total > 0 ? pr.s / qLen : 0;
       });
       if (Math.abs(sa - sb) < 1e-4) throw new Error('A picked line does not lie along the other lines: leave it out');
-      return { ...ov.item.part, na: ov.na, nb: ov.nb, sa, sb };
+      return { ...ov.item.part, na: ov.na, nb: ov.nb, sa, sb, folded: ov.item.folded };
     }) };
 }
 /** Where the joints of a run land on the curve p0 h0 h3 p3: each line keeps its share of the run length. */
@@ -992,12 +1002,11 @@ export function shapeRun(doc: Document, parts: RunPart[], h: { start?: Vec; end?
       const a = lerp(P0, H0, u), b = lerp(H0, H3, u), c = lerp(H3, P3, u);
       return lerp(lerp(a, b, v), lerp(b, c, v), w);
     };
-    const local = (pid: Id, w: Vec) => layoutToLocal(pieceLayout(piecesHas(doc, pid)), w);
     // 1 · the joints move onto the curve (the same sheet point for both lines that meet there)
     const moved = new Set<string>();
-    const moveTo = (pt: RunPart, anchorId: Id, w: Vec) => {
+    const moveTo = (pt: RunPart & { folded: boolean }, anchorId: Id, w: Vec) => {
       const k = pt.pieceId + '/' + anchorId; if (moved.has(k)) return; moved.add(k);
-      const l = local(pt.pieceId, w);
+      const l = runLocal(doc, pt, w);
       movePoint(doc, pt.pieceId, anchorId, { x: l.x, y: l.y });
     };
     for (let k = 0; k + 1 < rc.parts.length; k++) {
@@ -1015,9 +1024,9 @@ export function shapeRun(doc: Document, parts: RunPart[], h: { start?: Vec; end?
     });
     // 2 · every line takes its piece of the curve
     const piece4 = (ta: number, tb: number) => [bl(ta, ta, ta), bl(ta, ta, tb), bl(ta, tb, tb), bl(tb, tb, tb)] as const;
-    const put = (pt: RunPart, f: Vec, hf: Vec, ht: Vec, t: Vec) => {
-      const lf = local(pt.pieceId, f), lt = local(pt.pieceId, t);
-      shapeSegment(doc, pt.pieceId, pt.contourId, pt.from, pt.to, { start: sub(local(pt.pieceId, hf), lf), end: sub(local(pt.pieceId, ht), lt) });
+    const put = (pt: RunPart & { folded: boolean }, f: Vec, hf: Vec, ht: Vec, t: Vec) => {
+      const lf = runLocal(doc, pt, f), lt = runLocal(doc, pt, t);
+      shapeSegment(doc, pt.pieceId, pt.contourId, pt.from, pt.to, { start: sub(runLocal(doc, pt, hf), lf), end: sub(runLocal(doc, pt, ht), lt) });
     };
     rc.parts.forEach((pt, k) => {
       const [a, c1, c2, b] = piece4(ts[k], ts[k + 1]);
@@ -1028,6 +1037,108 @@ export function shapeRun(doc: Document, parts: RunPart[], h: { start?: Vec; end?
       const [a, c1, c2, b] = piece4(ov.na >= 0 ? ts[ov.na] : ovT[k][0], ov.nb >= 0 ? ts[ov.nb] : ovT[k][1]);
       put(ov, a, c1, c2, b);
     });
+  });
+}
+
+// ───────────────────────── Match Line: one set of lines takes the shape of another ─────────────────────────
+
+/** A set of picked lines in order (a single line, or lines that meet end to end), as one polyline on the sheet. */
+function orderedLines(doc: Document, parts: RunPart[], tol: number, what: string): RunItem[] {
+  const seen = new Set<string>();
+  const uniq = parts.filter(p => { const k = `${p.pieceId}/${p.contourId}/${p.from}/${p.to}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  if (!uniq.length) throw new Error(`Pick the ${what} line`);
+  if (uniq.length === 1) return [runItem(doc, uniq[0])];
+  const ch = runChain(doc, uniq, tol);
+  if (ch.overlays.length) throw new Error(`The ${what} lines must follow each other end to end`);
+  return ch.items;
+}
+export interface MatchResult { masterLength: number; targetLength: number; newLength: number; dev: number; moved: number }
+/**
+ * Match Line. The `target` lines take the SHAPE of the `master` lines they are laid on; every target line keeps
+ * its own length. The target starts at its end that lies closest to the master (that end goes onto the master),
+ * then runs along the master for its own length; where the master ends it goes on straight. The master is not changed.
+ */
+export function matchLines(doc: Document, master: RunPart[], target: RunPart[], o: { tol?: number } = {}): MatchResult {
+  return doc.transact('Match line', () => {
+    const tol = o.tol ?? 5;
+    const M = orderedLines(doc, master, tol, 'first'), T = orderedLines(doc, target, tol, 'second');
+    for (const t of T) {
+      if (t.piece.locked) throw new Error('Piece is locked');
+      if (M.some(m => m.part.pieceId === t.part.pieceId && m.part.contourId === t.part.contourId && m.part.from === t.part.from && m.part.to === t.part.to)) throw new Error('A line cannot be matched to itself');
+    }
+    // the master as one polyline, with a long straight lead at both ends
+    const mq: Vec[] = [];
+    for (const it of M) for (const v of it.rev ? [...it.poly].reverse() : it.poly) if (!mq.length || dist(mq[mq.length - 1], v) > 1e-9) mq.push(v);
+    if (mq.length < 2) throw new Error('The first line is too short');
+    const mLen = polyLen(mq);
+    const tLens = T.map(t => t.len), tLen = tLens.reduce((a, b) => a + b, 0);
+    const ext = tLen + mLen + 10;
+    const d0 = norm(sub(mq[0], mq[1])), d1 = norm(sub(mq[mq.length - 1], mq[mq.length - 2]));
+    const q = [add(mq[0], mul(d0, ext)), ...mq, add(mq[mq.length - 1], mul(d1, ext))];
+    const cum = [0]; for (let k = 1; k < q.length; k++) cum.push(cum[k - 1] + dist(q[k - 1], q[k]));
+    const at = (sArc: number): Vec => {
+      const sC = Math.max(0, Math.min(cum[cum.length - 1], sArc));
+      let k = 1; while (k < q.length - 1 && cum[k] < sC) k++;
+      const d = cum[k] - cum[k - 1]; return lerp(q[k - 1], q[k], d > 0 ? (sC - cum[k - 1]) / d : 0);
+    };
+    const span = (a: number, b: number): Vec[] => {
+      const lo = Math.min(a, b), hi = Math.max(a, b), out = [at(lo)];
+      for (let k = 1; k < q.length - 1; k++) if (cum[k] > lo + 1e-9 && cum[k] < hi - 1e-9) out.push(q[k]);
+      out.push(at(hi));
+      return a <= b ? out : out.reverse();
+    };
+    // the target as it lies now: which end is on the master, and which way it runs
+    const tEnds = [T[0].rev ? T[0].poly[T[0].poly.length - 1] : T[0].poly[0], (() => { const l = T[T.length - 1]; return l.rev ? l.poly[0] : l.poly[l.poly.length - 1]; })()];
+    const pr = tEnds.map(e => polyNearest(e, q));
+    const limit = Math.max(tol, (mLen + tLen) * 0.15);
+    if (Math.min(pr[0].d, pr[1].d) > limit) throw new Error(`The second line is ${Math.round(Math.min(pr[0].d, pr[1].d) * 10) / 10} away from the first: lay the piece so the lines lie on each other`);
+    const fromStart = pr[0].d <= pr[1].d;
+    const order = fromStart ? T.map((t, k) => ({ t, len: tLens[k], fwd: !t.rev })) : T.map((t, k) => ({ t, len: tLens[k], fwd: t.rev })).reverse();
+    // an end that lies just past an end of the master starts at that end
+    const s0 = Math.max(ext, Math.min(ext + mLen, fromStart ? pr[0].s : pr[1].s)), sFar = fromStart ? pr[1].s : pr[0].s;
+    const dir = sFar >= s0 ? 1 : -1;
+    const moved = new Set<string>();
+    let nMoved = 0;
+    const moveTo = (it: RunItem, anchorId: Id, w: Vec) => {
+      const k = it.part.pieceId + '/' + anchorId; if (moved.has(k)) return; moved.add(k);
+      const l = runLocal(doc, { ...it.part, folded: it.folded }, w);
+      const pc = piecesHas(doc, it.part.pieceId), ct = contourOf(pc, it.part.contourId), cur = resolveBase(ct, doc.sizeLine(pc)).anchorPos[idx(ct, anchorId)];
+      if (dist(cur, l) > 1e-7) { movePoint(doc, it.part.pieceId, anchorId, { x: l.x, y: l.y }); nMoved++; }
+    };
+    let s = s0, dev = 0, newLen = 0;
+    for (const { t, len: L, fwd } of order) {
+      // the piece of the master this line takes: its own length, corrected so the curve that is written has that length
+      let want = L, fit = { h0: at(s), h3: at(s) }, pts: Vec[] = [], e = s + dir * L;
+      for (let it = 0; it < 4; it++) {
+        e = s + dir * want; pts = span(s, e);
+        const a = pts[0], b = pts[pts.length - 1];
+        if (pts.length <= 2) { fit = { h0: lerp(a, b, 1 / 3), h3: lerp(b, a, 1 / 3) }; break; }
+        // enough samples for a good fit
+        const dense: Vec[] = []; const pc = [0]; for (let k = 1; k < pts.length; k++) pc.push(pc[k - 1] + dist(pts[k - 1], pts[k]));
+        const N = 48; for (let k = 0; k <= N; k++) { const w = pc[pc.length - 1] * k / N; let m = 1; while (m < pts.length - 1 && pc[m] < w) m++; const dd = pc[m] - pc[m - 1]; dense.push(lerp(pts[m - 1], pts[m], dd > 0 ? (w - pc[m - 1]) / dd : 0)); }
+        const t0 = norm(sub(dense[1], dense[0])), t3 = norm(sub(dense[N - 1], dense[N]));
+        let f = fitCubic(dense, t0, t3, false);
+        const dv = (g: { h0: Vec; h3: Vec }) => { const cv = bezPoly(a, g.h0, g.h3, b, 96); return Math.max(maxDev(cv, dense), maxDev(dense, cv)); };
+        if (dv(f) > 0.2) { const fr = fitCubic(dense, t0, t3, true); if (dv(fr) < dv(f) * 0.7) f = fr; }
+        fit = f;
+        const got = polyLen(bezPoly(a, f.h0, f.h3, b, 200));
+        if (Math.abs(got - L) < 1e-4) break;
+        want += L - got;
+      }
+      const a = pts[0], b = pts[pts.length - 1];
+      const cvF = bezPoly(a, fit.h0, fit.h3, b, 200);
+      dev = Math.max(dev, maxDev(cvF, pts.length > 2 ? pts : [a, b]));
+      newLen += polyLen(cvF);
+      // write it: a = the end nearer the start of the walk
+      const part = { ...t.part, folded: t.folded };
+      const first = fwd ? t.part.from : t.part.to, last = fwd ? t.part.to : t.part.from;
+      moveTo(t, first, a); moveTo(t, last, b);
+      const la = runLocal(doc, part, a), lb = runLocal(doc, part, b), l0 = runLocal(doc, part, fit.h0), l3 = runLocal(doc, part, fit.h3);
+      if (fwd) shapeSegment(doc, t.part.pieceId, t.part.contourId, t.part.from, t.part.to, { start: sub(l0, la), end: sub(l3, lb) });
+      else shapeSegment(doc, t.part.pieceId, t.part.contourId, t.part.from, t.part.to, { start: sub(l3, lb), end: sub(l0, la) });
+      s = e;
+    }
+    return { masterLength: mLen, targetLength: tLen, newLength: newLen, dev, moved: nMoved };
   });
 }
 
