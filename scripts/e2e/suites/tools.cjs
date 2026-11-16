@@ -167,7 +167,7 @@ const cases = [
       req(Math.hypot(w.fj[0] - w.bj[0], w.fj[1] - w.bj[1]) < 1e-3, 'the joint differs on the two pieces: ' + JSON.stringify(w)),
       req(Math.hypot(w.fj[0] - 260, w.fj[1]) > 2, 'the joint did not move onto the curve: ' + w.fj),
       req(Math.hypot(w.f0[0], w.f0[1]) < 1e-3, 'the run end CF_HEM moved: ' + w.f0)]; } }),
-  T('curve#overlay', { tool: 'curve', title: 'Curve / Handle on lines laid on top of each other: BACK is laid against FRONT with its corner on SS_HEM, so the FRONT side seam lies on the BACK side; the longest chain (FRONT hem + BACK side) is the run, the FRONT side seam lies over it and follows it',
+  T('curve#overlay', { tool: 'curve', title: 'Curve / Handle on lines laid on top of each other: BACK is laid against FRONT with its corner on SS_HEM, so the FRONT side seam lies on the BACK side; the longest chain (FRONT hem + BACK side) is the run, the FRONT side seam lies over it: it gets the same shape and its corner UA moves onto the curve',
     pre: h => h.ev(() => { const E = window.__e2e, b = E.P('BACK'), f = E.P('FRONT'); const bl = b.sew.points.find(a => a.name === 'BL'); E.app.doc.transact('lay BACK', () => { b.layout = { x: (f.layout?.x ?? 0) + 260 - bl.x, y: (f.layout?.y ?? 0) - bl.y, angleDeg: 0 }; }); E.C.runCommand('view.fit'); }),
     invoke: palette('curve'),
     drive: async h => {
@@ -183,11 +183,11 @@ const cases = [
       const hs = await h.ev(() => [...document.querySelectorAll('[data-run-handle]')].map(c => { const r = c.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }));
       if (hs.length) { const c = hs[0]; await h.page.mouse.move(c.x, c.y); await h.page.mouse.down(); for (let i = 1; i <= 8; i++) await h.page.mouse.move(c.x + 4 * i, c.y + 6 * i); await h.page.mouse.up(); await h.settle(200); }
       h._w = await h.ev(() => { const E = window.__e2e; const w = (pn, an) => { const p = E.P(pn), a = p.sew.points.find(q => q.name === an); return E.localToWorld ? (() => { const v = E.localToWorld(pn, { x: a.x, y: a.y }); return [v.x, v.y]; })() : [a.x, a.y]; };
-        const p = E.P('FRONT'), tl = p.sew.points.find(q => q.name === 'UA'), bl = p.sew.points.find(q => q.name === 'SS_HEM'); return { fj: w('FRONT', 'SS_HEM'), bj: w('BACK', 'BL'), tl: [tl.x, tl.y], hin: bl.hOut || null }; });
+        const p = E.P('FRONT'), tl = p.sew.points.find(q => q.name === 'UA'), bl = p.sew.points.find(q => q.name === 'SS_HEM'); const rc = E.ops.runCurve(E.app.doc, [{ pieceId: E.P('FRONT').id, contourId: E.P('FRONT').sew.id, from: p.sew.points.find(q => q.name === 'CF_HEM').id, to: bl.id }, (() => { const b = E.P('BACK'); const g = n => b.sew.points.find(q => q.name === n).id; return { pieceId: b.id, contourId: b.sew.id, from: g('TL'), to: g('BL') }; })()], { tol: 3 }); const ua = w('FRONT', 'UA'); let off = Infinity; for (let k = 0; k <= 4000; k++) { const t = k / 4000, u = 1 - t; const x = u * u * u * rc.p0.x + 3 * u * u * t * rc.h0.x + 3 * u * t * t * rc.h3.x + t * t * t * rc.p3.x, y = u * u * u * rc.p0.y + 3 * u * u * t * rc.h0.y + 3 * u * t * t * rc.h3.y + t * t * t * rc.p3.y; off = Math.min(off, Math.hypot(x - ua[0], y - ua[1])); } return { fj: w('FRONT', 'SS_HEM'), bj: w('BACK', 'BL'), tl: [tl.x, tl.y], hin: bl.hOut || null, off, dev: rc.dev }; });
     },
     expect: h => { const w = h._w; return [req(h._run === 3, 'three lines in the run: ' + h._run), req(h._ov === 1, 'one line laid over the run: ' + h._ov),
       req(Math.hypot(w.fj[0] - w.bj[0], w.fj[1] - w.bj[1]) < 1e-3, 'the two corners differ at the joint: ' + JSON.stringify(w)),
-      req(Math.hypot(w.tl[0] - h._tl0[0], w.tl[1] - h._tl0[1]) < 1e-6, 'the free end of the overlay line moved: ' + w.tl),
+      req(Math.hypot(w.tl[0] - h._tl0[0], w.tl[1] - h._tl0[1]) > 1, 'the corner UA of the overlay line did not move: ' + w.tl), req(w.off < 0.3, 'UA is not on the curve: ' + w.off + ' (run dev ' + w.dev + ')'),
       req(Math.hypot(w.fj[0] - 260, w.fj[1]) > 2, 'the joint did not move: ' + w.fj), req(!!w.hin, 'the overlay line was not shaped')]; } }),
   T('curve', { tool: 'curve', invoke: palette('curve'), drive: async h => { await h.clickA('FRONT', 'AH1'); const w = await h.ev(() => window.__e2e.handleW('FRONT', 'AH1', 'out')); await h.dragW(w, { x: w.x + 10, y: w.y + 10 }, { steps: 8 }); }, expect: (h, c) => req(!!an(c.after, 'FRONT', 'AH1').hOut, 'handle not set') }),
   T('select#box', { tool: 'movePoint', title: 'Select: window box (left→right) vs crossing box (right→left)', invoke: palette('select'), change: false,
