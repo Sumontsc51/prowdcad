@@ -816,12 +816,33 @@ export interface RunCurve {
   /** largest distance between the present shape and the single curve */
   dev: number;
   length: number;
+  /**
+   * Lines that lie over the run instead of continuing it (pieces laid on top of each other): they follow the curve.
+   * na / nb = the joint of the run that the line's from / to end sits on (0 = start of the run … parts.length = its end; −1 = a free end);
+   * on = the line of the run it lies over (when only one end sits on the run).
+   */
+  overlays: (RunPart & { na: number; nb: number; on: number })[];
 }
 interface RunItem { part: RunPart; piece: Piece; poly: Vec[]; hs: Vec; he: Vec; len: number; rev: boolean }
-function runChain(doc: Document, parts: RunPart[], tol: number): { items: RunItem[]; gap: number } {
+function polyDist(p: Vec, poly: Vec[]): number {
+  let d = Infinity;
+  for (let e = 0; e + 1 < poly.length; e++) {
+    const a = poly[e], st = sub(poly[e + 1], a), l2 = dot(st, st);
+    const u = l2 < 1e-24 ? 0 : Math.max(0, Math.min(1, dot(sub(p, a), st) / l2));
+    d = Math.min(d, dist(p, add(a, mul(st, u))));
+  }
+  return d;
+}
+interface RunOverlay { item: RunItem; na: number; nb: number; on: number }
+/**
+ * Order the picked lines. Ends closer than `tol` are one joint. The run is the longest chain of lines through
+ * the joints; every other picked line must touch the run and is an overlay (a line of a piece laid on top).
+ */
+function runChain(doc: Document, parts: RunPart[], tol: number): { items: RunItem[]; overlays: RunOverlay[]; gap: number } {
   const seen = new Set<string>();
   const uniq = parts.filter(p => { const k = `${p.pieceId}/${p.contourId}/${p.from}/${p.to}`; if (seen.has(k)) return false; seen.add(k); return true; });
   if (uniq.length < 2) throw new Error('Pick two or more lines');
+  if (uniq.length > 14) throw new Error('Too many lines for one curve: pick 14 at most');
   const all: RunItem[] = uniq.map(part => {
     const piece = piecesHas(doc, part.pieceId), L = pieceLayout(piece), line = doc.sizeLine(piece);
     const contour = contourOf(piece, part.contourId);
@@ -830,26 +851,65 @@ function runChain(doc: Document, parts: RunPart[], tol: number): { items: RunIte
     const poly = spanPoly(r, i, j).map(q => layoutToWorld(L, q));
     return { part, piece, poly, hs: layoutToWorld(L, r.handles[i].hOut), he: layoutToWorld(L, r.handles[j].hIn), len: polyLen(poly), rev: false };
   });
-  const A = (it: RunItem) => it.poly[0], B = (it: RunItem) => it.poly[it.poly.length - 1];
-  const free = (k: number, e: Vec) => !all.some((o, m) => m !== k && (dist(e, A(o)) <= tol || dist(e, B(o)) <= tol));
-  let start = -1, rev = false;
-  for (let k = 0; k < all.length && start < 0; k++) { if (free(k, A(all[k]))) { start = k; rev = false; } else if (free(k, B(all[k]))) { start = k; rev = true; } }
-  if (start < 0) throw new Error('The lines close a loop: leave one line out, so the run has two ends');
-  const used = new Set<number>([start]); all[start].rev = rev;
-  const items = [all[start]];
-  let tail = rev ? A(all[start]) : B(all[start]), gap = 0;
-  while (items.length < all.length) {
-    let best = -1, bd = Infinity, brev = false;
-    all.forEach((o, m) => { if (used.has(m)) return; const da = dist(tail, A(o)), db = dist(tail, B(o)); if (da < bd) { bd = da; best = m; brev = false; } if (db < bd) { bd = db; best = m; brev = true; } });
-    if (best < 0 || bd > tol) throw new Error(`The lines do not meet end to end (nearest end is ${Math.round(bd * 10) / 10} away): lay the pieces so the line ends touch`);
-    used.add(best); all[best].rev = brev; items.push(all[best]); gap = Math.max(gap, bd);
-    tail = brev ? A(all[best]) : B(all[best]);
+  const n = all.length;
+  // joints: ends 2k (from) and 2k+1 (to), merged when they are within tol
+  const ends: Vec[] = all.flatMap(it => [it.poly[0], it.poly[it.poly.length - 1]]);
+  const par = ends.map((_, k) => k);
+  const find = (k: number): number => (par[k] === k ? k : (par[k] = find(par[k])));
+  let gap = 0;
+  for (let a = 0; a < ends.length; a++) for (let b = a + 1; b < ends.length; b++) {
+    if ((a >> 1) === (b >> 1)) continue;
+    const d = dist(ends[a], ends[b]); if (d <= tol) { par[find(a)] = find(b); gap = Math.max(gap, d); }
   }
-  return { items, gap };
+  const node = (k: number, end: 0 | 1) => find(2 * k + end);
+  for (let k = 0; k < n; k++) if (node(k, 0) === node(k, 1)) throw new Error('A picked line is shorter than the joining distance: zoom in and pick again');
+  // the longest chain (by length) through the joints
+  let best: { k: number; rev: boolean }[] = [], bestLen = -1;
+  const used = new Array<boolean>(n).fill(false);
+  const walk = (at: number, path: { k: number; rev: boolean }[], visited: Set<number>, L: number) => {
+    if (L > bestLen + 1e-9) { bestLen = L; best = [...path]; }
+    for (let k = 0; k < n; k++) {
+      if (used[k]) continue;
+      for (const rev of [false, true]) {
+        const a = node(k, rev ? 1 : 0), b = node(k, rev ? 0 : 1);
+        if (a !== at || visited.has(b)) continue;
+        used[k] = true; visited.add(b); path.push({ k, rev });
+        walk(b, path, visited, L + all[k].len);
+        path.pop(); visited.delete(b); used[k] = false;
+      }
+    }
+  };
+  for (const start of new Set(ends.map((_, k) => find(k)))) walk(start, [], new Set([start]), 0);
+  // a fixed direction for the same pick: the run starts at the end of the line that was picked first
+  const firstPicked = Math.min(...best.map(x => x.k));
+  if (best.findIndex(x => x.k === firstPicked) > (best.length - 1) / 2) best = best.reverse().map(x => ({ k: x.k, rev: !x.rev }));
+  const items = best.map(x => { all[x.k].rev = x.rev; return all[x.k]; });
+  const chainNodes = [node(best[0].k, best[0].rev ? 1 : 0), ...best.map(x => node(x.k, x.rev ? 0 : 1))];
+  const inChain = new Set(best.map(x => x.k));
+  const overlays: RunOverlay[] = [];
+  for (let k = 0; k < n; k++) {
+    if (inChain.has(k)) continue;
+    const it = all[k];
+    const na = chainNodes.indexOf(node(k, 0)), nb = chainNodes.indexOf(node(k, 1));
+    if (na < 0 && nb < 0) {
+      let d = Infinity; for (const e of [it.poly[0], it.poly[it.poly.length - 1]]) for (const o of items) d = Math.min(d, dist(e, o.poly[0]), dist(e, o.poly[o.poly.length - 1]));
+      throw new Error(`The lines do not meet end to end (nearest end is ${Math.round(d * 10) / 10} away): lay the pieces so the line ends touch`);
+    }
+    if (na >= 0 && nb >= 0 && items.length >= 2 && Math.min(na, nb) === 0 && Math.max(na, nb) === items.length) throw new Error('The lines close a loop: leave one line out, so the run has two ends');
+    // one end on the run: it lies over the neighbouring line of the run that its middle is closest to
+    let on = -1;
+    if (na < 0 || nb < 0) {
+      const at = na >= 0 ? na : nb, mid = it.poly[it.poly.length >> 1];
+      const cands = [at - 1, at].filter(m => m >= 0 && m < items.length);
+      on = cands.reduce((b, m) => (polyDist(mid, items[m].poly) < polyDist(mid, items[b].poly) ? m : b), cands[0]);
+    }
+    overlays.push({ item: it, na, nb, on });
+  }
+  return { items, overlays, gap };
 }
 /** The run of lines as one curve: the two handles (at the two ends of the run) that control all of it. */
 export function runCurve(doc: Document, parts: RunPart[], o: { tol?: number } = {}): RunCurve {
-  const { items, gap } = runChain(doc, parts, o.tol ?? 5);
+  const { items, overlays, gap } = runChain(doc, parts, o.tol ?? 5);
   const q: Vec[] = [], joints: Vec[] = [];
   let total = 0; for (const it of items) total += it.len;
   let acc = 0;
@@ -889,7 +949,8 @@ export function runCurve(doc: Document, parts: RunPart[], o: { tol?: number } = 
   if (dist(h0, p0) < 1e-6) h0 = lerp(p0, p3, 1 / 3);
   if (dist(h3, p3) < 1e-6) h3 = lerp(p3, p0, 1 / 3);
   const cv = bezPoly(p0, h0, h3, p3, 96);
-  return { parts: out, p0: { ...p0 }, p3: { ...p3 }, h0, h3, joints, gap, dev: Math.max(maxDev(cv, q), maxDev(q, cv)), length: polyLen(cv) };
+  return { parts: out, p0: { ...p0 }, p3: { ...p3 }, h0, h3, joints, gap, dev: Math.max(maxDev(cv, q), maxDev(q, cv)), length: polyLen(cv),
+    overlays: overlays.map(ov => ({ ...ov.item.part, na: ov.na, nb: ov.nb, on: ov.on })) };
 }
 /** Where the joints of a run land on the curve p0 h0 h3 p3: each line keeps its share of the run length. */
 export function runJointParams(p0: Vec, h0: Vec, h3: Vec, p3: Vec, shares: number[]): number[] {
@@ -935,14 +996,44 @@ export function shapeRun(doc: Document, parts: RunPart[], h: { start?: Vec; end?
       moveTo(a, a.rev ? a.from : a.to, w);
       moveTo(b, b.rev ? b.to : b.from, w);
     }
+    // lines laid over the run: the end that sits on a joint goes with that joint
+    const nodeW = (k: number) => bez(P0, H0, H3, P3, ts[k]);
+    for (const ov of rc.overlays) {
+      if (piecesHas(doc, ov.pieceId).locked) throw new Error('Piece is locked');
+      if (ov.na >= 0) moveTo(ov, ov.from, nodeW(ov.na));
+      if (ov.nb >= 0) moveTo(ov, ov.to, nodeW(ov.nb));
+    }
     // 2 · every line takes its piece of the curve
-    rc.parts.forEach((pt, k) => {
-      const ta = ts[k], tb = ts[k + 1];
-      const a = bl(ta, ta, ta), c1 = bl(ta, ta, tb), c2 = bl(ta, tb, tb), b = bl(tb, tb, tb);
-      const [f, hf, ht, t] = pt.rev ? [b, c2, c1, a] : [a, c1, c2, b];
+    const piece4 = (ta: number, tb: number) => [bl(ta, ta, ta), bl(ta, ta, tb), bl(ta, tb, tb), bl(tb, tb, tb)] as const;
+    const put = (pt: RunPart, f: Vec, hf: Vec, ht: Vec, t: Vec) => {
       const lf = local(pt.pieceId, f), lt = local(pt.pieceId, t);
       shapeSegment(doc, pt.pieceId, pt.contourId, pt.from, pt.to, { start: sub(local(pt.pieceId, hf), lf), end: sub(local(pt.pieceId, ht), lt) });
+    };
+    rc.parts.forEach((pt, k) => {
+      const [a, c1, c2, b] = piece4(ts[k], ts[k + 1]);
+      if (pt.rev) put(pt, b, c2, c1, a); else put(pt, a, c1, c2, b);
     });
+    // 3 · the lines laid over the run follow it
+    for (const ov of rc.overlays) {
+      if (ov.na >= 0 && ov.nb >= 0) {
+        // both ends on the run: the same piece of the curve
+        const [a, c1, c2, b] = piece4(ts[ov.na], ts[ov.nb]);
+        put(ov, a, c1, c2, b);
+        continue;
+      }
+      // one end on the run: at that joint it runs in the direction of the line it lies over (so it joins the rest of
+      // the run as smoothly as that line does); towards its own free end it keeps the shape of that line, turned and
+      // sized to reach the free end, which stays where it is
+      const [a, c1, c2, b] = piece4(ts[ov.on], ts[ov.on + 1]);
+      const at = ov.na >= 0 ? ov.na : ov.nb;
+      const [J, hJ, hO, O] = at === ov.on + 1 ? [b, c2, c1, a] : [a, c1, c2, b];
+      const pc = piecesHas(doc, ov.pieceId), ct = contourOf(pc, ov.contourId), r = resolveBase(ct, doc.sizeLine(pc));
+      const F = layoutToWorld(pieceLayout(pc), r.anchorPos[idx(ct, ov.na >= 0 ? ov.to : ov.from)]);
+      const dM = sub(O, J), dF = sub(F, J), lm = len(dM);
+      const sc = lm > 1e-9 ? len(dF) / lm : 1, ang = lm > 1e-9 && len(dF) > 1e-9 ? angleOf(dF) - angleOf(dM) : 0;
+      const hJo = add(J, mul(sub(hJ, J), sc)), hF = add(F, mul(rotate(sub(hO, O), ang), sc));
+      if (ov.na >= 0) put(ov, J, hJo, hF, F); else put(ov, F, hF, hJo, J);
+    }
   });
 }
 
