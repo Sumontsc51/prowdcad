@@ -1432,7 +1432,11 @@ const CV: {
   /** a picked line: it is shaped as ONE curve with a handle at each end */
   seg: SegSel | null;
   segOp: { which: 'start' | 'end'; s: Vec; moved: boolean; rel: Vec | null } | null;
-} = { op: null, picked: null, frozen: false, seg: null, segOp: null };
+  /** two or more picked lines that meet end to end (also on pieces laid against each other): ONE curve, a handle at each end of the run */
+  run: SegSel[] | null;
+  runOp: { which: 'start' | 'end'; s: Vec; moved: boolean; rel: Vec | null } | null;
+  runErr: string;
+} = { op: null, picked: null, frozen: false, seg: null, segOp: null, run: null, runOp: null, runErr: '' };
 
 const SEG_YELLOW = '#f2c200';
 /** The picked line as one curve (base size), from the live preview when there is one. */
@@ -1444,6 +1448,23 @@ function cvSeg(app: App): { pc: Piece; sc: ReturnType<typeof ops.segmentCurve> }
 }
 function cvSegApply(d: Document, g: SegSel, op: NonNullable<typeof CV.segOp>): number {
   return ops.shapeSegment(d, g.pieceId, g.contourId, g.from, g.to, op.rel ? { [op.which]: op.rel } : {});
+}
+/** line ends closer than this count as meeting (sheet units): 10 px on screen, at least 3 */
+const runTol = (app: App) => Math.max(3, app.view.px(10));
+/** The picked run as one curve (sheet coordinates, base size); null with CV.runErr set when the lines do not chain. */
+function cvRun(app: App): ReturnType<typeof ops.runCurve> | null {
+  if (!CV.run) return null;
+  CV.run = CV.run.filter(g => app.doc.style.pieces.some(p => p.id === g.pieceId && contourById(p, g.contourId)));
+  if (CV.run.length < 2) { CV.seg = CV.run[0] ?? null; CV.run = null; CV.runErr = ''; return null; }
+  try { const rc = ops.runCurve(app.doc, CV.run, { tol: runTol(app) }); CV.runErr = ''; return rc; } catch (err) { CV.runErr = (err as Error).message; return null; }
+}
+const runPieces = (run: SegSel[]) => [...new Set(run.map(g => g.pieceId))];
+const sameSeg = (a: SegSel, b: SegSel) => a.pieceId === b.pieceId && a.contourId === b.contourId && a.from === b.from && a.to === b.to;
+/** Lines selected with the Select tool come along: one = that line, several = a run. */
+function cvAdopt(app: App) {
+  const segs: SegSel[] = [...app.sel.segments];
+  for (const c of app.sel.internals) { const pc = app.piece(c.pieceId); const ct = pc && contourById(pc, c.contourId); if (ct && ct.points.length > 1) segs.push({ pieceId: c.pieceId, contourId: c.contourId, from: ct.points[0].id, to: ct.points[ct.points.length - 1].id }); }
+  if (segs.length >= 2) { CV.run = segs; CV.seg = null; } else if (segs.length === 1) { CV.seg = segs[0]; CV.run = null; }
 }
 const cvDbl = new DoubleClick();
 
@@ -1482,23 +1503,44 @@ async function cvInput(app: App, typed?: string) {
 }
 export const curveTool: Tool = {
   id: 'curve', title: 'Curve / Handle', group: 'modify', hotkey: 'Shift+C', icon: ICON.curve, cursor: 'default',
-  activate() { CV.op = null; CV.frozen = false; CV.seg = null; CV.segOp = null; },
-  deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); CV.op = null; CV.seg = null; CV.segOp = null; app.cancelPreview(); },
-  busy: () => !!CV.op || !!CV.segOp,
+  activate(app) { CV.op = null; CV.frozen = false; CV.seg = null; CV.segOp = null; CV.run = null; CV.runOp = null; CV.runErr = ''; cvAdopt(app); },
+  deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); CV.op = null; CV.seg = null; CV.segOp = null; CV.run = null; CV.runOp = null; app.cancelPreview(); },
+  busy: () => !!CV.op || !!CV.segOp || !!CV.runOp,
   badge(app) { return app.activeSize !== app.baseSize() ? { text: 'Handles are not graded: switch to the base size to edit them', amber: true } : null; },
   hint(app) {
+    if (CV.runOp?.moved) return `Curve · shaping ${CV.run?.length ?? 0} lines as one curve · the two ends of the run stay, the points where the lines meet move onto the curve · Shift = H/V/45° · Esc cancel`;
+    if (CV.run) {
+      const rc = cvRun(app);
+      if (rc) return `Curve · ${rc.parts.length} lines as one curve · ${fmt(rc.length)} ${unitLabel()} · drag the handle at either end of the run${rc.dev > 0.05 ? ` (the lines become one curve, shape within ${fmt(rc.dev)} ${unitLabel()})` : ''} · Shift+click a line = add / remove · Esc = deselect`;
+      if (CV.run) return `Curve · ${CV.run.length} lines · ⚠ ${CV.runErr} · Shift+click a line = add / remove · Esc = deselect`;
+    }
     if (CV.segOp?.moved) { const g = cvSeg(app); return `Curve · shaping the line · length ${g ? fmt(g.sc.length) : ''} ${unitLabel()} · only this line changes · Shift = H/V/45° · Esc cancel`; }
-    if (CV.seg) { const g = cvSeg(app); if (g) return `Curve · line ${fmt(g.sc.length)} ${unitLabel()} · drag one of its two handles to shape it${g.sc.between ? ` · its ${g.sc.between} curve point(s) become one curve (shape within ${fmt(g.sc.dev)} ${unitLabel()})` : ''} · click another line or a point · Esc = deselect`; }
+    if (CV.seg) { const g = cvSeg(app); if (g) return `Curve · line ${fmt(g.sc.length)} ${unitLabel()} · drag one of its two handles to shape it${g.sc.between ? ` · its ${g.sc.between} curve point(s) become one curve (shape within ${fmt(g.sc.dev)} ${unitLabel()})` : ''} · Shift+click more lines (also of a piece laid against it) = shape them as one curve · Esc = deselect`; }
     if (CV.op?.moved) return 'Curve · drag the handle · Alt = break the pair · Shift = H/V/45° · Esc cancel';
     if (CV.picked) return 'Curve · handle picked · type a length or right-click = input box (length ∠) · drag a handle to reshape · Shift+click a point = corner ⇄ smooth · Esc = Select';
     const pa = app.primaryAnchor();
     return pa ? 'Curve · drag a handle (Alt = break the pair) · click a handle to type its length / angle · Shift+click a point = corner ⇄ smooth · Esc = Select'
-      : 'Curve · Click a line to shape it with its two handles · click a point to show its handles · Shift+click = corner ⇄ smooth · Esc = Select';
+      : 'Curve · Click a line to shape it with its two handles · Shift+click more lines that meet end to end (also across pieces laid together) = one curve · click a point to show its handles · Esc = Select';
   },
   down(app, p) {
     trackClient(p);
     if (inputBoxOpen() || CV.frozen) return;
     const h = p.hit; const e = p.e as MouseEvent;
+    // a picked run of lines: the handle at each end of the run comes first
+    const rc = cvRun(app);
+    if (rc && CV.run) {
+      for (const which of ['start', 'end'] as const) {
+        const hs = app.view.toScreen(which === 'start' ? rc.h0 : rc.h3);
+        if (Math.hypot(hs.x - p.s.x, hs.y - p.s.y) > 10) continue;
+        for (const id of runPieces(CV.run)) {
+          const pc = app.doc.piece(id);
+          if (pc.locked) { toast(lockedMsg(pc), 'warn'); return; }
+          if (app.sizeOf(pc) !== app.doc.baseSize(pc)) { toast('Handles are not graded: switch to the base size (Ctrl+B) to edit them', 'warn'); return; }
+        }
+        CV.runOp = { which, s: p.s, moved: false, rel: null };
+        return;
+      }
+    }
     // a picked line: its two handles come first
     const g = cvSeg(app);
     if (g) {
@@ -1524,15 +1566,26 @@ export const curveTool: Tool = {
       // a line: pick it, it gets one handle at each end
       CV.picked = null;
       const ch = contourNear(app, p.w, { tolPx: 8 });
-      if (!ch) { CV.seg = null; app.status('Nothing to pick here: click a line or a point'); app.invalidate(); return; }
+      if (!ch) { if (!e.shiftKey) { CV.seg = null; CV.run = null; } app.status('Nothing to pick here: click a line or a point'); app.invalidate(); return; }
       const pts = ch.contour.points;
       const from = ch.from ?? pts[0].id, to = ch.to ?? pts[pts.length - 1].id;
       if (from === to) { CV.seg = null; app.status('This line has one grade point only: add a point (Cut Point) to split it into lines'); app.invalidate(); return; }
-      CV.seg = { pieceId: ch.piece.id, contourId: ch.contour.id, from, to };
+      const ns: SegSel = { pieceId: ch.piece.id, contourId: ch.contour.id, from, to };
       app.sel = { pieces: [], anchors: [] }; app.liveSel = null;
+      if (e.shiftKey && (CV.seg || CV.run)) {
+        // Shift+click = add the line to the run (again = take it out)
+        const set = CV.run ? [...CV.run] : [CV.seg!];
+        const at = set.findIndex(x => sameSeg(x, ns));
+        if (at >= 0) set.splice(at, 1); else set.push(ns);
+        if (set.length >= 2) { CV.run = set; CV.seg = null; } else { CV.run = null; CV.seg = set[0] ?? null; }
+        const rc2 = cvRun(app);
+        app.status(CV.run ? (rc2 ? `${CV.run.length} lines are one curve: drag the handle at either end` : '⚠ ' + CV.runErr) : 'One line picked');
+        app.invalidate(); return;
+      }
+      CV.run = null; CV.seg = ns;
       app.invalidate(); return;
     }
-    CV.seg = null;
+    CV.seg = null; CV.run = null;
     const pc = app.doc.piece(hit.ref.pieceId);
     if (e.shiftKey || cvDbl.hit(p.s.x, p.s.y, 'a:' + hit.ref.anchorId)) {
       if (pc.locked) { toast(lockedMsg(pc), 'warn'); return; }
@@ -1548,6 +1601,19 @@ export const curveTool: Tool = {
   },
   move(app, p) {
     trackClient(p);
+    if (CV.runOp && CV.run && !CV.frozen) {
+      const ro = CV.runOp, run = CV.run;
+      if (!ro.moved && Math.hypot(p.s.x - ro.s.x, p.s.y - ro.s.y) < THRESH_PX) return;
+      ro.moved = true;
+      const base = cvRun(app); if (!base) return;
+      const ap = ro.which === 'start' ? base.p0 : base.p3;
+      let hw = p.w; if ((p.e as MouseEvent).shiftKey) hw = constrain45(ap, hw);
+      ro.rel = { x: hw.x - ap.x, y: hw.y - ap.y };
+      const tol = runTol(app);
+      const err = previewWith(app, runPieces(run), d => { ops.shapeRun(d, run, { [ro.which]: ro.rel! }, { tol }); });
+      if (err) app.status('⚠ ' + err); else app.invalidate('status');
+      return;
+    }
     if (CV.segOp && CV.seg && !CV.frozen) {
       const so = CV.segOp, sg = CV.seg;
       if (!so.moved && Math.hypot(p.s.x - so.s.x, p.s.y - so.s.y) < THRESH_PX) return;
@@ -1577,6 +1643,16 @@ export const curveTool: Tool = {
     });
   },
   up(app) {
+    if (CV.runOp) {
+      const ro = CV.runOp, run = CV.run; CV.runOp = null;
+      if (!run || !ro.moved || !ro.rel) { app.cancelPreview(); app.invalidate(); return; }
+      const tol = runTol(app);
+      if (commitWith(app, runPieces(run), 'Shape lines', d => { ops.shapeRun(d, run, { [ro.which]: ro.rel! }, { tol }); })) {
+        const rc = cvRun(app);
+        app.status(`${run.length} lines shaped as one curve${rc ? ` · ${fmt(rc.length)} ${unitLabel()}` : ''} · the points where they meet moved onto it`);
+      }
+      app.invalidate(); return;
+    }
     if (CV.segOp) {
       const so = CV.segOp, sg = CV.seg; CV.segOp = null;
       if (!sg || !so.moved || !so.rel) { app.cancelPreview(); app.invalidate(); return; }
@@ -1604,6 +1680,8 @@ export const curveTool: Tool = {
   },
   key(app, e) {
     if (inputBoxOpen()) return false;
+    if (e.key === 'Escape' && CV.runOp) { CV.runOp = null; app.cancelPreview(); app.invalidate(); return true; }
+    if (e.key === 'Escape' && CV.run && !CV.op) { CV.run = null; CV.runErr = ''; app.invalidate(); return true; }
     if (e.key === 'Escape' && CV.segOp) { CV.segOp = null; app.cancelPreview(); app.invalidate(); return true; }
     if (e.key === 'Escape' && CV.seg && !CV.op) { CV.seg = null; app.invalidate(); return true; }
     if (e.key === 'Escape') { if (CV.op) { CV.op = null; app.cancelPreview(); return true; } if (CV.picked) { CV.picked = null; app.invalidate(); return true; } app.setTool('select'); return true; }
@@ -1612,6 +1690,33 @@ export const curveTool: Tool = {
     return false;
   },
   overlay(app) {
+    if (CV.run) {
+      const rc = cvRun(app);
+      const S = (q: Vec) => app.view.toScreen(q);
+      if (!rc) {
+        // the lines do not chain: show which lines are picked, in red
+        let o = '';
+        for (const sg of CV.run ?? []) {
+          const pc = app.piece(sg.pieceId); if (!pc) continue;
+          try { const sc = ops.segmentCurve(pc, app.doc.sizeLine(pc), sg.contourId, sg.from, sg.to); const [a, b, c, d] = [sc.p0, sc.h0, sc.h3, sc.p3].map(q => S(toWorld(pc, q)));
+            o += `<path d="M${fs(a.x)} ${fs(a.y)}C${fs(b.x)} ${fs(b.y)} ${fs(c.x)} ${fs(c.y)} ${fs(d.x)} ${fs(d.y)}" fill="none" stroke="#e03131" stroke-width="2.4" stroke-dasharray="6 4" stroke-linecap="round"/>`; } catch { /* stale */ }
+        }
+        return o;
+      }
+      const ro = CV.runOp;
+      const h0w = ro?.rel && ro.which === 'start' ? { x: rc.p0.x + ro.rel.x, y: rc.p0.y + ro.rel.y } : rc.h0;
+      const h3w = ro?.rel && ro.which === 'end' ? { x: rc.p3.x + ro.rel.x, y: rc.p3.y + ro.rel.y } : rc.h3;
+      const a = S(rc.p0), b = S(h0w), c = S(h3w), d = S(rc.p3);
+      const at = (t: number) => { const u = 1 - t; return { x: u * u * u * a.x + 3 * u * u * t * b.x + 3 * u * t * t * c.x + t * t * t * d.x, y: u * u * u * a.y + 3 * u * u * t * b.y + 3 * u * t * t * c.y + t * t * t * d.y }; };
+      const m = at(0.5);
+      const dot = (q: Vec) => `<circle cx="${fs(q.x)}" cy="${fs(q.y)}" r="4" fill="#fff" stroke="#3b7cff" stroke-width="1.6" data-run-handle="1"/>`;
+      // where the lines will meet on the curve
+      const js = ops.runJointParams(rc.p0, h0w, h3w, rc.p3, rc.parts.slice(0, -1).map(x => x.share)).map(t => { const q = at(t); return `<circle cx="${fs(q.x)}" cy="${fs(q.y)}" r="3.4" fill="${SEG_YELLOW}" stroke="#1d2330" stroke-width="1.2" data-run-joint="1"/>`; }).join('');
+      return `<path d="M${fs(a.x)} ${fs(a.y)}C${fs(b.x)} ${fs(b.y)} ${fs(c.x)} ${fs(c.y)} ${fs(d.x)} ${fs(d.y)}" fill="none" stroke="${SEG_YELLOW}" stroke-width="2.6" stroke-linecap="round" data-run="${rc.parts.length}"/>`
+        + `<path d="M${fs(a.x)} ${fs(a.y)}L${fs(b.x)} ${fs(b.y)}M${fs(d.x)} ${fs(d.y)}L${fs(c.x)} ${fs(c.y)}" stroke="#3b7cff" stroke-width="1.1"/>` + js + dot(b) + dot(c)
+        + `<circle cx="${fs(a.x)}" cy="${fs(a.y)}" r="3.2" fill="#1d2330"/><circle cx="${fs(d.x)}" cy="${fs(d.y)}" r="3.2" fill="#1d2330"/>`
+        + `<text x="${fs(m.x + 8)}" y="${fs(m.y - 8)}" class="tool-note">${rc.parts.length} lines · ${fmt(rc.length)}</text>`;
+    }
     const g = cvSeg(app);
     if (g) {
       const S = (q: Vec) => app.view.toScreen(toWorld(g.pc, q));
