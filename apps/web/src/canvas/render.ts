@@ -187,6 +187,17 @@ export function renderWorld(app: App): string {
         if (ref) g.push(`<path d="${pathD(ref.sew, true)}${ref.internals.map(q => pathD(q, false)).join('')}" class="ns" stroke="#e67e22" stroke-width="0.9" stroke-dasharray="5 3" fill="none" opacity="0.8"/>`);
       } catch { /* ignore */ }
     }
+    // fold view: the folded-over part is faded where it was and drawn mirrored (dashed) where it lies now
+    if (p.fold) {
+      const fd = p.fold, mir = (q: Vec) => ops.foldMirror(fd, q);
+      const part = ops.clipPolyBySide(r.sew.pts, fd, fd.side);
+      if (part.length > 2) {
+        g.push(`<path d="${pathD(part, true)}" fill="#fff" fill-opacity="0.78" stroke="none" data-fold="mask"/>`);
+        g.push(`<path d="${pathD(part.map(mir), true)}" class="ns" fill="#3b7cff" fill-opacity="0.07" stroke="#3b7cff" stroke-width="1.5" stroke-dasharray="7 4" data-fold="over"/>`);
+        p.internals.forEach((c, i) => { const ic = r.internals[i]; if (!ic || ic.pts.length < 2 || !ops.onFoldedPart(p, ic.pts[ic.pts.length >> 1])) return; g.push(`<path d="${pathD(ic.pts.map(mir), ic.closed)}" class="ns" stroke="#3b7cff" stroke-width="1" stroke-dasharray="5 4" fill="none"/>`); });
+      }
+      g.push(`<path d="M${f(fd.a.x)} ${f(fd.a.y)}L${f(fd.b.x)} ${f(fd.b.y)}" class="ns" stroke="#e8590c" stroke-width="1.4" stroke-dasharray="10 3 2 3" data-fold="line"/>`);
+    }
     // half piece axis
     if (p.half) g.push(`<path d="M${f(p.half.a.x)} ${f(p.half.a.y)}L${f(p.half.b.x)} ${f(p.half.b.y)}" class="ns" stroke="#16a085" stroke-width="1.2" stroke-dasharray="8 3 2 3"/>`);
     g.push('</g>');
