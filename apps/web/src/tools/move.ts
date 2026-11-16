@@ -1509,10 +1509,10 @@ export const curveTool: Tool = {
   busy: () => !!CV.op || !!CV.segOp || !!CV.runOp,
   badge(app) { return app.activeSize !== app.baseSize() ? { text: 'Handles are not graded: switch to the base size to edit them', amber: true } : null; },
   hint(app) {
-    if (CV.runOp?.moved) return `Curve · shaping ${CV.run?.length ?? 0} lines as one curve · the two ends of the run stay, the points where the lines meet move onto the curve · Shift = H/V/45° · Esc cancel`;
+    if (CV.runOp?.moved) return `Curve · shaping ${CV.run?.length ?? 0} lines as one curve · the two ends of the run stay, every other corner point moves onto the curve · Shift = H/V/45° · Esc cancel`;
     if (CV.run) {
       const rc = cvRun(app);
-      if (rc) return `Curve · ${rc.parts.length + rc.overlays.length} lines as one curve${rc.overlays.length ? ` (${rc.overlays.length} laid over the run, they follow it)` : ''} · ${fmt(rc.length)} ${unitLabel()} · drag the handle at either end of the run${rc.dev > 0.05 ? ` (the lines become one curve, shape within ${fmt(rc.dev)} ${unitLabel()})` : ''} · Shift+click a line = add / remove · Esc = deselect`;
+      if (rc) return `Curve · ${rc.parts.length + rc.overlays.length} lines as one curve${rc.overlays.length ? ` (${rc.overlays.length} laid over the run: same shape, their corner points move onto it)` : ''} · ${fmt(rc.length)} ${unitLabel()} · drag the handle at either end of the run${rc.dev > 0.05 ? ` (the lines become one curve, shape within ${fmt(rc.dev)} ${unitLabel()})` : ''} · Shift+click a line = add / remove · Esc = deselect`;
       if (CV.run) return `Curve · ${CV.run.length} lines · ⚠ ${CV.runErr} · Shift+click a line = add / remove · Esc = deselect`;
     }
     if (CV.segOp?.moved) { const g = cvSeg(app); return `Curve · shaping the line · length ${g ? fmt(g.sc.length) : ''} ${unitLabel()} · only this line changes · Shift = H/V/45° · Esc cancel`; }
@@ -1650,7 +1650,7 @@ export const curveTool: Tool = {
       const tol = runTol(app);
       if (commitWith(app, runPieces(run), 'Shape lines', d => { ops.shapeRun(d, run, { [ro.which]: ro.rel! }, { tol }); })) {
         const rc = cvRun(app);
-        app.status(`${run.length} lines shaped as one curve${rc ? ` · ${fmt(rc.length)} ${unitLabel()}` : ''} · the points where they meet moved onto it`);
+        app.status(`${run.length} lines shaped as one curve${rc ? ` · ${fmt(rc.length)} ${unitLabel()}` : ''} · their corner points moved onto it`);
       }
       app.invalidate(); return;
     }
@@ -1711,9 +1711,9 @@ export const curveTool: Tool = {
       const at = (t: number) => { const u = 1 - t; return { x: u * u * u * a.x + 3 * u * u * t * b.x + 3 * u * t * t * c.x + t * t * t * d.x, y: u * u * u * a.y + 3 * u * u * t * b.y + 3 * u * t * t * c.y + t * t * t * d.y }; };
       const m = at(0.5);
       const dot = (q: Vec) => `<circle cx="${fs(q.x)}" cy="${fs(q.y)}" r="4" fill="#fff" stroke="#3b7cff" stroke-width="1.6" data-run-handle="1"/>`;
-      // where the lines will meet on the curve
-      const js = ops.runJointParams(rc.p0, h0w, h3w, rc.p3, rc.parts.slice(0, -1).map(x => x.share)).map(t => { const q = at(t); return `<circle cx="${fs(q.x)}" cy="${fs(q.y)}" r="3.4" fill="${SEG_YELLOW}" stroke="#1d2330" stroke-width="1.2" data-run-joint="1"/>`; }).join('');
-      // lines laid over the run (they follow it): shown thin, as they are now
+      // where the corner points land on the curve: the joints of the run and the ends of the lines laid over it
+      const js = ops.runJointParams(rc.p0, h0w, h3w, rc.p3, [...rc.parts.slice(0, -1).map(x => x.share), ...rc.overlays.flatMap(o => [o.na < 0 ? [o.sa] : [], o.nb < 0 ? [o.sb] : []].flat())]).map(t => { const q = at(t); return `<circle cx="${fs(q.x)}" cy="${fs(q.y)}" r="3.4" fill="${SEG_YELLOW}" stroke="#1d2330" stroke-width="1.2" data-run-joint="1"/>`; }).join('');
+      // lines laid over the run (they take its shape): shown thin, as they are now
       let ovs = '';
       for (const ov of rc.overlays) {
         const dp = app.piece(ov.pieceId); const pc = dp && (app.preview.get(ov.pieceId) ?? dp); if (!dp || !pc) continue;
