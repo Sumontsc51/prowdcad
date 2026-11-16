@@ -1465,6 +1465,7 @@ function cvAdopt(app: App) {
   const segs: SegSel[] = [...app.sel.segments];
   for (const c of app.sel.internals) { const pc = app.piece(c.pieceId); const ct = pc && contourById(pc, c.contourId); if (ct && ct.points.length > 1) segs.push({ pieceId: c.pieceId, contourId: c.contourId, from: ct.points[0].id, to: ct.points[ct.points.length - 1].id }); }
   if (segs.length >= 2) { CV.run = segs; CV.seg = null; } else if (segs.length === 1) { CV.seg = segs[0]; CV.run = null; }
+  if (segs.length) { app.sel = { pieces: [], anchors: [] }; app.liveSel = null; }
 }
 const cvDbl = new DoubleClick();
 
@@ -1511,11 +1512,11 @@ export const curveTool: Tool = {
     if (CV.runOp?.moved) return `Curve · shaping ${CV.run?.length ?? 0} lines as one curve · the two ends of the run stay, the points where the lines meet move onto the curve · Shift = H/V/45° · Esc cancel`;
     if (CV.run) {
       const rc = cvRun(app);
-      if (rc) return `Curve · ${rc.parts.length} lines as one curve · ${fmt(rc.length)} ${unitLabel()} · drag the handle at either end of the run${rc.dev > 0.05 ? ` (the lines become one curve, shape within ${fmt(rc.dev)} ${unitLabel()})` : ''} · Shift+click a line = add / remove · Esc = deselect`;
+      if (rc) return `Curve · ${rc.parts.length + rc.overlays.length} lines as one curve${rc.overlays.length ? ` (${rc.overlays.length} laid over the run, they follow it)` : ''} · ${fmt(rc.length)} ${unitLabel()} · drag the handle at either end of the run${rc.dev > 0.05 ? ` (the lines become one curve, shape within ${fmt(rc.dev)} ${unitLabel()})` : ''} · Shift+click a line = add / remove · Esc = deselect`;
       if (CV.run) return `Curve · ${CV.run.length} lines · ⚠ ${CV.runErr} · Shift+click a line = add / remove · Esc = deselect`;
     }
     if (CV.segOp?.moved) { const g = cvSeg(app); return `Curve · shaping the line · length ${g ? fmt(g.sc.length) : ''} ${unitLabel()} · only this line changes · Shift = H/V/45° · Esc cancel`; }
-    if (CV.seg) { const g = cvSeg(app); if (g) return `Curve · line ${fmt(g.sc.length)} ${unitLabel()} · drag one of its two handles to shape it${g.sc.between ? ` · its ${g.sc.between} curve point(s) become one curve (shape within ${fmt(g.sc.dev)} ${unitLabel()})` : ''} · Shift+click more lines (also of a piece laid against it) = shape them as one curve · Esc = deselect`; }
+    if (CV.seg) { const g = cvSeg(app); if (g) return `Curve · line ${fmt(g.sc.length)} ${unitLabel()} · drag one of its two handles to shape it${g.sc.between ? ` · its ${g.sc.between} curve point(s) become one curve (shape within ${fmt(g.sc.dev)} ${unitLabel()})` : ''} · Shift+click more lines (of a piece laid against it or on top of it) = shape them as one curve · Esc = deselect`; }
     if (CV.op?.moved) return 'Curve · drag the handle · Alt = break the pair · Shift = H/V/45° · Esc cancel';
     if (CV.picked) return 'Curve · handle picked · type a length or right-click = input box (length ∠) · drag a handle to reshape · Shift+click a point = corner ⇄ smooth · Esc = Select';
     const pa = app.primaryAnchor();
@@ -1712,10 +1713,17 @@ export const curveTool: Tool = {
       const dot = (q: Vec) => `<circle cx="${fs(q.x)}" cy="${fs(q.y)}" r="4" fill="#fff" stroke="#3b7cff" stroke-width="1.6" data-run-handle="1"/>`;
       // where the lines will meet on the curve
       const js = ops.runJointParams(rc.p0, h0w, h3w, rc.p3, rc.parts.slice(0, -1).map(x => x.share)).map(t => { const q = at(t); return `<circle cx="${fs(q.x)}" cy="${fs(q.y)}" r="3.4" fill="${SEG_YELLOW}" stroke="#1d2330" stroke-width="1.2" data-run-joint="1"/>`; }).join('');
-      return `<path d="M${fs(a.x)} ${fs(a.y)}C${fs(b.x)} ${fs(b.y)} ${fs(c.x)} ${fs(c.y)} ${fs(d.x)} ${fs(d.y)}" fill="none" stroke="${SEG_YELLOW}" stroke-width="2.6" stroke-linecap="round" data-run="${rc.parts.length}"/>`
+      // lines laid over the run (they follow it): shown thin, as they are now
+      let ovs = '';
+      for (const ov of rc.overlays) {
+        const dp = app.piece(ov.pieceId); const pc = dp && (app.preview.get(ov.pieceId) ?? dp); if (!dp || !pc) continue;
+        try { const sc = ops.segmentCurve(pc, app.doc.sizeLine(dp), ov.contourId, ov.from, ov.to); const [oa, ob, oc, od] = [sc.p0, sc.h0, sc.h3, sc.p3].map(q => S(toWorld(pc, q)));
+          ovs += `<path d="M${fs(oa.x)} ${fs(oa.y)}C${fs(ob.x)} ${fs(ob.y)} ${fs(oc.x)} ${fs(oc.y)} ${fs(od.x)} ${fs(od.y)}" fill="none" stroke="${SEG_YELLOW}" stroke-width="1.6" stroke-dasharray="7 4" stroke-linecap="round" data-run-overlay="1"/>`; } catch { /* stale */ }
+      }
+      return ovs + `<path d="M${fs(a.x)} ${fs(a.y)}C${fs(b.x)} ${fs(b.y)} ${fs(c.x)} ${fs(c.y)} ${fs(d.x)} ${fs(d.y)}" fill="none" stroke="${SEG_YELLOW}" stroke-width="2.6" stroke-linecap="round" data-run="${rc.parts.length + rc.overlays.length}"/>`
         + `<path d="M${fs(a.x)} ${fs(a.y)}L${fs(b.x)} ${fs(b.y)}M${fs(d.x)} ${fs(d.y)}L${fs(c.x)} ${fs(c.y)}" stroke="#3b7cff" stroke-width="1.1"/>` + js + dot(b) + dot(c)
         + `<circle cx="${fs(a.x)}" cy="${fs(a.y)}" r="3.2" fill="#1d2330"/><circle cx="${fs(d.x)}" cy="${fs(d.y)}" r="3.2" fill="#1d2330"/>`
-        + `<text x="${fs(m.x + 8)}" y="${fs(m.y - 8)}" class="tool-note">${rc.parts.length} lines · ${fmt(rc.length)}</text>`;
+        + `<text x="${fs(m.x + 8)}" y="${fs(m.y - 8)}" class="tool-note">${rc.parts.length + rc.overlays.length} lines · ${fmt(rc.length)}</text>`;
     }
     const g = cvSeg(app);
     if (g) {
