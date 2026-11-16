@@ -261,7 +261,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <div class="grid2">
         <div class="tile"><kbd>Shift+M</kbd><h4>Smooth run</h4><p>Its own tool button. Click the first and the last point of a run on one line: the points between them are smoothed (click a point in between to keep it). Enter or right-click applies it.</p></div>
         <div class="tile"><kbd>R</kbd><h4>Rectangle, circle, polygon</h4><p>Drag to draw, or click once for a dialog with exact sizes. A circle can be set by diameter or by perimeter.</p></div>
-        <div class="tile"><kbd>I</kbd><h4>Internal line</h4><p>Start inside a piece. Click the last point a second time (or double-click, or Enter) to end a line, clicking the start closes a shape. Right-click gives an exact length and mirror options. An end you put on the outline is <strong>locked</strong> to it (see below).</p></div>
+        <div class="tile"><kbd>I</kbd><h4>Internal line</h4><p>Start inside a piece. Click the last point a second time (or double-click, or Enter) to end a line, clicking the start closes a shape. Right-click gives an exact length and mirror options. An end you put on the outline is <strong>locked</strong> to it (see below).</p><p><strong>Exact place on a line:</strong> when the cursor is on the outline or an internal line of the piece, a dot slides along that line and shows the distance to both of its ends. Click to put the point there; type a number, or right-click before the first point, for the same box as Cut Point: <em>From start</em>, <em>From end</em>, <em>Ratio %</em>. <strong>Helpers for the next point</strong> (right-click after the first point, <em>Next point</em>): <em>90°</em> runs the line square to the line the last point is on, and snaps where it meets another line; <em>Compass</em> keeps the next point at the Length you type from the last point and snaps where that circle meets a line; <em>2-point curve</em>: click the end point, then move to bend the line and click again; <em>Length + angle</em> as before. <kbd>Esc</kbd> switches a helper off.</p></div>
         <div class="tile"><kbd>Shift+I</kbd><h4>Clip Line</h4><p>Makes one internal line end exactly on another line. Click the internal line to change, near the end that should move, then click the line to clip to: a line of the outline or another internal line. The first line is cut back to it, or extended onto it. Nothing is locked.</p></div>
         <div class="tile"><kbd>Shift+T</kbd><h4>Trace Piece</h4><p>Click the lines that make the new outline, one after another, clockwise or counter-clockwise. Outline lines and internal lines both count, and a line is taken up to where another line meets it. Right-click a picked line (or Enter) to create the piece beside the original; the original is not changed. Click a picked line again to drop it.</p></div>
       </div>
@@ -364,6 +364,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
     <section id="notches">
       <h2><small>Chapter 8</small>Notches, drills, text</h2>
       <p>Press <kbd>N</kbd> and click a sew line or internal line. Choose how the notch is placed:</p>
+      <p><strong>Exact place without the dialog:</strong> on a line a dot slides along it and shows the distance to both ends. Type a number or right-click for the same box as Cut Point: <em>From start</em>, <em>From end</em>, <em>Ratio %</em>, <em>Divide</em> (N equal parts) and <em>Every</em> (one every X). The notches are added at once with the current type and its default size, as one undo step.</p>
       <div class="tbl"><table>
         <thead><tr><th>Placement</th><th>Behaviour when the seam changes</th></tr></thead>
         <tbody>
@@ -387,7 +388,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       </div>
       <h3>Dart</h3>
       <ol class="steps">
-        <li><div><strong>Leg A:</strong> press <kbd>Shift+D</kbd> and click the sew line where the first leg goes.</div></li>
+        <li><div><strong>Leg A:</strong> press <kbd>Shift+D</kbd> and click the sew line where the first leg goes. The distance to both ends of that line shows as you move; type a number or right-click on the line for the exact place (<em>From start</em>, <em>From end</em>, <em>Ratio %</em>, the same box as Cut Point).</div></li>
         <li><div><strong>Leg B:</strong> move along the line; the opening is highlighted with its width. Click the second leg (<kbd>Shift</kbd> rounds the width), or type the width.</div></li>
         <li><div><strong>Apex:</strong> move inside the piece. You see the dart, its depth and both leg lengths; <span style="color:#1e8449">✓ equal</span> means the legs match. <kbd>Shift</kbd> keeps the apex on the centre line. Click to finish, or right-click for exact <em>Width · Depth</em>, <em>Width · Leg length</em> or <em>Width · Angle</em>.</div></li>
       </ol>
