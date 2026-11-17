@@ -86,6 +86,8 @@ export class App {
   /** grading table point-tracking mode (arrow keys step through grade anchors) */
   pointTracking = false;
   gradeAbsolute = false;
+  /** grading table view “Small → large”: each size shows the change from the next smaller size (overrides gradeAbsolute while on) */
+  gradeSmallLarge = false;
   space = false;
   fileName = 'untitled.prowd.json';
   fileHandle: unknown = null;
