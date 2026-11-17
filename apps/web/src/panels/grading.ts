@@ -1,20 +1,22 @@
 /**
  * Grading table — ROWS = sizes (1…80+, virtualised), COLUMNS = the selected point(s): dX / dY per
- * point (several points = one column pair each; one point = extra read-only columns X / Y position,
- * the other view, and its rule). No point selected = every grade point of the selected piece.
+ * point (several points = one column pair each; one point = extra read-only columns X / Y position
+ * and the total from base). No point selected = every grade point of the selected piece.
  *
- * Two plain-language views (Gerber-style, docs/GERBER-GRADING-RESEARCH.md):
- *   “Step into this size”  (Incremental) — the step from the neighbouring size toward the base
- *                          (AccuMark convention: smaller sizes carry their own, usually negative,
- *                          step). Editing a step moves that size and every size further from the
- *                          base: those rows are tinted while the cell has focus.
- *   “Total from base size” (Cumulative)  — the offset from the base ★. Editing changes that size only.
- * “Edit this size only” switches a ripple edit to the total view for the focused cell.
+ * Three views of the same grading:
+ *   “Step into this size”   — the step from the neighbouring size toward the base ★ (AccuMark incremental:
+ *                             smaller sizes carry their own, usually negative, step). A step edit moves that
+ *                             size and every size further from the base.
+ *   “Total from base size”  — the offset from the base ★. An edit changes that size only.
+ *   “Small → large”         — every size shows the change from the next SMALLER size, running from the
+ *                             smallest size up (the smallest size has no entry). The base ★ stays where it is.
  *
- * Smart fill: type a few rows (they get a dot), pick Equal steps / Interpolate / Repeat step /
- * Split by break, press Fill (kernel smartFill). Size breaks: click the ◆ gutter of a row.
+ * The cells work like a spreadsheet (sizegrid sheet mode): drag / Ctrl+click / Shift+click to select cells and
+ * type one value into all of them; a value can be a calculation; a zero shows as a blank cell; right-click =
+ * Double · Half · Multiply by… · Add constant… · Subtract constant…; drag the corner square to fill down;
+ * Enter = next size down, arrows move. Only dX / dY entry lives here: copy / paste / flip / rules / stack are
+ * in the Grade menu and on the Edit Grade tool.
  * Live nest strip: the point's path through all sizes, redrawn while typing.
- * Edits keep a point's rule link (badge turns amber “edited” when its values differ from the rule).
  *
  * Point Tracking (Alt+T): ←/→ previous/next grade point (selection follows, canvas centres on
  * it), ↑/↓ the active size.
@@ -25,64 +27,57 @@ import { h, clear } from '../ui/dom';
 import { fmt, unitLabel } from '../units-ui';
 import { resolveFor, toWorld, sizeColor } from '../geometry';
 import { ops } from '../ops-bridge';
-import { getCommand, isEnabled, runCommand, effectiveHotkey, reportError } from '../commands';
-import { sizeGrid, keepScroll, sizeRows, VIRT, type SGCol, type SGState } from './sizegrid';
-import { lengthInput, numberInput } from './widgets';
-import { toast } from '../ui/toast';
-import type { FillMethod } from '@prowdcad/kernel';
+import { reportError } from '../commands';
+import { sizeGrid, keepScroll, sizeRows, type SGCol, type SGState } from './sizegrid';
 
 interface PtCol { id: Id; contourId: Id; label: string; num: number; ruleLabel: string; total: { dx: number[]; dy: number[] } }
 
+type GView = 'step' | 'total' | 'inc';
 const GS = {
   scroll: { scrollTop: 0 } as SGState,
-  /** typed anchors since the last Fill: colKey → (row → value in the view it was typed in) */
-  typed: new Map<string, Map<number, number>>(),
-  typedView: 'step' as 'step' | 'total',
   /** rows the focused edit affects */
   aff: new Set<number>(),
   focus: null as { r: number; c: number } | null,
   /** uncommitted typed value (live strip) */
   live: null as { r: number; c: number; v: number } | null,
-  method: 'linear' as FillMethod,
   pieceKey: '',
-  /** Calculate: which cells a calculation changes, its constant (mm) and factor, and the size range it is limited to */
-  calcScope: 'col' as 'cell' | 'col' | 'all',
-  calcK: 5,
-  calcF: 2,
-  from: -1,
-  to: -1,
 };
 
-const VIEW_TIP = {
+const VIEW_TIP: Record<GView, string> = {
   step: 'Step into this size: the change from the neighbouring size toward the base ★. Editing a step moves that size AND every size further from the base (AccuMark incremental). The tinted rows show which sizes an edit moves.',
   total: 'Total from base size: the offset from the base ★. Editing a total changes that size only (AccuMark Maintain Growths / absolute).',
+  inc: 'Small → large: every size shows the change from the next smaller size, from the smallest size up. The base ★ stays where it is: an entry above the base moves that size and the larger ones, an entry at or below the base moves the smaller ones.',
 };
+/** Small → large: inc[r] = total[r] − total[r−1]; the smallest size has no entry */
+const incOf = (t: number[]): (number | null)[] => t.map((v, r) => (r === 0 ? null : v - t[r - 1]));
+/** totals from small → large increments, with the base kept at 0 */
+function totalsFromInc(inc: (number | null)[], b: number): number[] {
+  const t = new Array<number>(inc.length).fill(0);
+  for (let r = b + 1; r < inc.length; r++) t[r] = t[r - 1] + (inc[r] ?? 0);
+  for (let r = b - 1; r >= 0; r--) t[r] = t[r + 1] - (inc[r + 1] ?? 0);
+  return t;
+}
+/** sizes an edit of row r moves, per view */
+const affected = (n: number, b: number, r: number, view: GView): number[] =>
+  view === 'inc' ? (r > b ? Array.from({ length: n - r }, (_, k) => r + k) : Array.from({ length: r }, (_, k) => k)) : ops.affectedSizes(n, b, r, view);
 
 export function renderGrading(app: App, host: HTMLElement) {
   keepScroll(host, GS.scroll);
   clear(host);
   const piece = app.primaryPiece();
   const line = app.sizeLine();
-  const view: 'step' | 'total' = app.gradeAbsolute ? 'total' : 'step';
+  const view: GView = app.gradeSmallLarge ? 'inc' : app.gradeAbsolute ? 'total' : 'step';
   const bar = h('div.gr-bar');
   const mode = h('div.seg');
-  for (const [abs, label, sub] of [[false, 'Step into this size', 'Incremental'], [true, 'Total from base size', 'Cumulative']] as const) {
-    mode.append(h('button' + (app.gradeAbsolute === abs ? '.on' : ''), { title: abs ? VIEW_TIP.total : VIEW_TIP.step, 'data-view': abs ? 'total' : 'step', onclick: () => { app.gradeAbsolute = abs; GS.typed.clear(); app.invalidate('panels'); } }, label, h('span.seg-sub', {}, ' · ' + sub)));
+  for (const [id, label, sub] of [['step', 'Step into this size', 'Incremental'], ['total', 'Total from base size', 'Cumulative'], ['inc', 'Small → large', 'From the smallest']] as const) {
+    mode.append(h('button' + (view === id ? '.on' : ''), { title: VIEW_TIP[id], 'data-view': id, onclick: () => { app.gradeSmallLarge = id === 'inc'; if (id !== 'inc') app.gradeAbsolute = id === 'total'; app.invalidate('panels'); } }, label, h('span.seg-sub', {}, ' · ' + sub)));
   }
-  const track = h('button.btn.sm' + (app.pointTracking ? '.on' : ''), { title: 'Point Tracking: ←/→ previous/next grade point, ↑/↓ size (Alt+T)', onclick: () => { app.pointTracking = !app.pointTracking; app.invalidate('panels'); } }, app.pointTracking ? '◉ Tracking' : '○ Tracking');
-  bar.append(mode, track, h('span.dim', {}, unitLabel()));
-  const tools = h('div.gr-tools');
-  for (const [id, label, tip] of TOOLBAR) {
-    if (id === '|') { tools.append(h('span.gr-sep')); continue; }
-    const c = getCommand(id); if (!c) continue;
-    tools.append(h('button.btn.sm' + (isEnabled(c) ? '' : '.disabled'), { title: `${tip}${effectiveHotkey(id) ? ` (${effectiveHotkey(id).split(',')[0]})` : ''}`, 'data-cmd': id, onclick: () => void runCommand(id) }, label));
-  }
-  bar.append(tools);
+  bar.append(mode, h('span.dim', {}, unitLabel()), h('span.dim.gr-tip', { title: 'Drag over cells, Ctrl+click or Shift+click = select several · type a value = it goes into every selected cell · a value can be a calculation (10/4, 5+2.5) · right-click = Double, Half, Multiply by…, Add / Subtract constant… · drag the corner square = fill down · Enter = next size · arrows move' }, 'Select cells · type · right-click = calculate · drag the corner = fill'));
   host.append(bar);
   if (!piece) { host.append(noteEl(app, view, null), h('div.empty', {}, 'Select a piece (or points) to see its grading. Rows = sizes, columns = points.')); return; }
   const live = app.doc.piece(piece.id);
   const key = live.id + '|' + app.sel.anchors.map(a => a.anchorId).join(',') + '|' + view;
-  if (key !== GS.pieceKey) { GS.pieceKey = key; GS.typed.clear(); GS.aff.clear(); GS.live = null; }
+  if (key !== GS.pieceKey) { GS.pieceKey = key; GS.aff.clear(); GS.live = null; }
 
   // ── columns: selected points of this piece, else all its grade points ──
   let table;
@@ -113,11 +108,11 @@ export function renderGrading(app: App, host: HTMLElement) {
       posCache.clear();
     } catch { /* */ }
   };
-  const breaks = (() => { try { return ops.sizeBreaks(app.doc, line.id); } catch { return []; } })();
-  const brkIdx = breaks.map(id => sizes.findIndex(s => s.id === id)).filter(i => i >= 0);
   const readOnly = live.locked;
 
-  const valOf = (p: PtCol, axis: 'dx' | 'dy', v: 'step' | 'total') => (v === 'total' ? p.total[axis] : ops.outwardSteps(p.total[axis], b));
+  const valOf = (p: PtCol, axis: 'dx' | 'dy', v: GView): (number | null)[] => (v === 'total' ? p.total[axis] : v === 'inc' ? incOf(p.total[axis]) : ops.outwardSteps(p.total[axis], b));
+  /** the row of a view that cannot be typed in: the base (step / total), the smallest size (small → large) */
+  const fixedRow = view === 'inc' ? 0 : b;
   const cols: SGCol[] = [];
   pts.forEach(p => {
     const grp = p.label + (p.ruleLabel ? ` · rule ${p.ruleLabel}` : '');
@@ -126,15 +121,15 @@ export function renderGrading(app: App, host: HTMLElement) {
       cols.push({
         key: ck, group: grp, groupTitle: p.ruleLabel ? `Rule ${p.ruleLabel}${p.ruleLabel.endsWith('*') ? ' — locally edited (values differ from the rule)' : ''}` : 'No rule',
         head: axis === 'dx' ? 'dX' : 'dY', edit: !readOnly,
-        title: view === 'step' ? VIEW_TIP.step : VIEW_TIP.total,
+        title: VIEW_TIP[view],
         attrs: { 'data-pt': p.label.split(' (')[0], 'data-axis': axis, 'data-view': view },
         get: r => valOf(p, axis, view)[r],
-        ro: r => r === b,
-        cls: r => [GS.typed.get(ck)?.has(r) ? 'typed' : '', r === b ? 'basecell' : ''].join(' ').trim(),
+        ro: r => r === fixedRow,
+        cls: r => (r === fixedRow ? 'basecell' : ''),
       });
     }
     if (pts.length === 1) {
-      const other = view === 'step' ? 'total' : 'step';
+      const other: GView = view === 'total' ? 'step' : 'total';
       const pos = () => { let v = posCache.get(p.id); if (!v) posCache.set(p.id, v = posOf(p.id)); return v; };
       cols.push(
         { key: p.id + ':x', group: 'Position', head: 'X', get: r => pos()[r].x, attrs: { 'data-axis': 'x' } },
@@ -144,124 +139,63 @@ export function renderGrading(app: App, host: HTMLElement) {
       );
     }
   });
-  const editCols = cols.map((c, i) => ({ c, i })).filter(x => x.c.edit);
 
   const commit = (cells: { r: number; c: number; v: number }[]) => {
     const touched = new Map<PtCol, { dx: number[]; dy: number[] }>();
     for (const { r, c, v } of cells) {
       const col = cols[c]; const [pid, axis] = col.key.split(':') as [Id, 'dx' | 'dy'];
-      const p = pts.find(q => q.id === pid)!; if (!p || r === b) continue;
+      const p = pts.find(q => q.id === pid)!; if (!p || r === fixedRow) continue;
       const t = touched.get(p) ?? { dx: p.total.dx.slice(), dy: p.total.dy.slice() };
       if (view === 'total') t[axis][r] = v;
+      else if (view === 'inc') { const inc = incOf(t[axis]); inc[r] = v; t[axis] = totalsFromInc(inc, b); }
       else { const st = ops.outwardSteps(t[axis], b); st[r] = v; t[axis] = ops.totalsFromSteps(st, b); }
       touched.set(p, t);
-      let m = GS.typed.get(col.key); if (!m) GS.typed.set(col.key, m = new Map());
-      m.set(r, v); GS.typedView = view;
     }
     if (!touched.size) return;
     writeTotals(app, live.id, [...touched].map(([p, t]) => ({ p, t })), sizes.map(s => s.id), 'Grading table edit');
     reload();
     queueMicrotask(() => drawStrip(strip, app, pts, cols, b, view, sizes.map(s => s.id), live.id));
-    if (view === 'step' && cells.length === 1) {
-      const moved = ops.affectedSizes(sizes.length, b, cells[0].r, 'step').map(i => sizes[i].name);
-      if (moved.length > 1) app.status(`Step edit moved sizes ${moved.join(', ')} · “Total from base size” (or Edit this size only) changes one size`);
-    }
+    if (view !== 'total' && cells.length === 1) {
+      const moved = affected(sizes.length, b, cells[0].r, view).map(i => sizes[i].name);
+      if (moved.length > 1) app.status(`${view === 'inc' ? 'The entry' : 'Step edit'} moved sizes ${moved.join(', ')} · “Total from base size” changes one size`);
+    } else if (cells.length > 1) app.status(`${cells.length} cells changed · Ctrl+Z undoes`);
     GS.live = null;
   };
 
-  // size range (AccuMark Edit Delta ▸ Sizes): rows outside it are hidden and no calculation touches them
-  const n = sizes.length;
-  const lo = () => (GS.from >= 0 && GS.from < n ? GS.from : 0), hi = () => (GS.to >= 0 && GS.to < n ? GS.to : n - 1);
-  const inRange = (r: number) => r === b || (r >= Math.min(lo(), hi()) && r <= Math.max(lo(), hi()));
   let note = noteEl(app, view, null);
   const strip = h('div.gr-strip');
   const grid = sizeGrid({
-    rows: sizeRows(line, app.activeSize, breaks), cols, state: GS.scroll, cls: 'gr',
+    rows: sizeRows(line, app.activeSize), cols, state: GS.scroll, cls: 'gr', sheet: { blankZero: true },
     onCommit: commit,
     onRowClick: r => { app.activeSize = sizes[r].id; app.invalidate(); },
-    rowClass: r => [GS.aff.has(r) ? 'aff' : '', inRange(r) || n > VIRT ? '' : 'out'].join(' ').trim(),
-    rowExtra: r => h('button.sg-brk' + (brkIdx.includes(r) ? '.on' : ''), {
-      title: brkIdx.includes(r) ? 'Size break (click to remove) — Split by break fills between breaks' : 'Make this a size break (AccuMark Edit Size Breaks)',
-      onclick: (e: Event) => { e.stopPropagation(); if (r === b) { toast('The base size is always a break', 'info'); return; } const s = new Set(breaks); if (s.has(sizes[r].id)) s.delete(sizes[r].id); else s.add(sizes[r].id); try { ops.setSizeBreaks(app.doc, line.id, sizes.filter(x => s.has(x.id)).map(x => x.id)); } catch (err) { reportError(err, 'Size breaks'); } },
-    }, '◆'),
+    rowClass: r => (GS.aff.has(r) ? 'aff' : ''),
     onFocus: (r, c) => {
       GS.focus = { r, c };
-      GS.aff = new Set(ops.affectedSizes(sizes.length, b, r, view));
+      GS.aff = new Set(affected(sizes.length, b, r, view));
       for (const tr of grid.table.querySelectorAll('tbody tr[data-r]')) tr.classList.toggle('aff', GS.aff.has(+(tr as HTMLElement).dataset.r!));
-      const nn = noteEl(app, view, { r, sizes: sizes.map(s => s.name), b }, () => { app.gradeAbsolute = true; GS.scroll.focus = { r, c }; app.invalidate('panels'); requestAnimationFrame(() => (host.querySelector(`input[data-r="${r}"][data-c="${c}"]`) as HTMLInputElement | null)?.focus()); });
+      const nn = noteEl(app, view, { r, sizes: sizes.map(s => s.name), b }, () => { app.gradeSmallLarge = false; app.gradeAbsolute = true; GS.scroll.focus = { r, c }; app.invalidate('panels'); requestAnimationFrame(() => (host.querySelector(`input[data-r="${r}"][data-c="${c}"]`) as HTMLInputElement | null)?.focus()); });
       note.replaceWith(nn); note = nn;
     },
     onInput: (r, c, v) => { GS.live = v === null ? null : { r, c, v }; drawStrip(strip, app, pts, cols, b, view, sizes.map(s => s.id), live.id); },
   });
   host.append(note);
-  // smart fill + breaks bar
-  const fill = h('div.gr-fill');
-  const msel = h('select.gr-method', { title: 'How Fill completes the rows you did not type' }) as HTMLSelectElement;
-  for (const [v, l] of [['linear', 'Equal steps'], ['interpolate', 'Interpolate'], ['repeat', 'Repeat step'], ['breaks', 'Split by break']] as const) msel.append(h('option', { value: v }, l));
-  msel.value = GS.method; msel.onchange = () => { GS.method = msel.value as FillMethod; };
-  msel.addEventListener('keydown', e => e.stopPropagation());
-  const nTyped = [...GS.typed.values()].reduce((n, m) => n + m.size, 0);
-  fill.append(h('span.dim', {}, 'Smart fill:'), msel,
-    h('button.btn.sm.primary' + (nTyped ? '' : '.disabled'), { 'data-act': 'fill', title: 'Fill the other sizes from the rows you typed (dots). Equal steps · Interpolate between typed rows · Repeat a typed step outward · Split the change at each size break evenly', onclick: () => doFill(app, live.id, pts, cols, b, view, sizes.map(s => s.id), brkIdx) }, `Fill${nTyped ? ` (${nTyped} typed)` : ''}`),
-    h('button.btn.sm', { title: 'Forget the typed-row marks', onclick: () => { GS.typed.clear(); app.invalidate('panels'); } }, 'Clear marks'),
-    h('span.dim', {}, breaks.length ? `Breaks: ${breaks.map(id => sizes.find(s => s.id === id)?.name).join(' ')}` : 'Breaks: click ◆ next to a size'),
-  );
-  host.append(fill);
-  // ── Calculate (AccuMark Edit Delta calculations): halve, double, or a constant, on a cell, a column or every column ──
-  const calc = h('div.gr-calc');
-  const scope = h('select.gr-scope', { title: 'Which values a calculation changes. The base size ★ and sizes outside the range never change.' }) as HTMLSelectElement;
-  for (const [v, l] of [['cell', 'The cell I am in'], ['col', 'The column I am in'], ['all', 'Every dX / dY column shown']] as const) scope.append(h('option', { value: v }, l));
-  scope.value = GS.calcScope; scope.onchange = () => { GS.calcScope = scope.value as typeof GS.calcScope; };
-  scope.addEventListener('keydown', e => e.stopPropagation());
-  const kIn = lengthInput(GS.calcK, v => { GS.calcK = v; }, { title: 'Constant (a length) for +, − and =' }); kIn.classList.add('gr-k');
-  const fIn = numberInput(GS.calcF, v => { GS.calcF = v || 1; }, { title: 'Factor for × and ÷', decimals: 3 }); fIn.classList.add('gr-f');
-  const apply = (label: string, fn: (v: number) => number) => {
-    if (readOnly) { toast(`${live.name} is locked`, 'warn'); return; }
-    kIn.dispatchEvent(new Event('change')); fIn.dispatchEvent(new Event('change'));
-    const f = GS.focus;
-    if (GS.calcScope !== 'all' && (!f || !cols[f.c]?.edit)) { toast('Click a dX or dY cell first, so the calculation knows which ' + (GS.calcScope === 'cell' ? 'cell' : 'column'), 'warn'); return; }
-    const cs = GS.calcScope === 'all' ? editCols.map(x => x.i) : [f!.c];
-    const rs = GS.calcScope === 'cell' ? [f!.r] : sizes.map((_, r) => r);
-    const cells: { r: number; c: number; v: number }[] = [];
-    for (const c of cs) for (const r of rs) { if (r === b || !inRange(r)) continue; const v0 = cols[c].get(r); if (v0 === null || !Number.isFinite(v0)) continue; const v = fn(v0); if (Number.isFinite(v) && Math.abs(v - v0) > 1e-12) cells.push({ r, c, v }); }
-    if (!cells.length) { app.status('Calculate: nothing to change'); return; }
-    commit(cells);
-    grid.refresh();
-    app.status(`Calculate ${label}: ${cells.length} value${cells.length > 1 ? 's' : ''} changed · Ctrl+Z undoes`);
-    app.invalidate('panels', 'canvas');
-  };
-  const cb = (txt: string, act: string, tip: string, fn: () => void) => h('button.btn.sm', { 'data-calc': act, title: tip, onmousedown: (e: Event) => e.preventDefault(), onclick: fn }, txt);
-  const sizeSel = (cur: number, set: (i: number) => void, tip: string) => { const s2 = h('select.gr-range', { title: tip }) as HTMLSelectElement; sizes.forEach((z, i) => s2.append(h('option', { value: String(i) }, z.name))); s2.value = String(cur); s2.onchange = () => { set(+s2.value); s2.blur(); const ae = document.activeElement as HTMLElement | null; if (ae && host.contains(ae)) ae.blur(); app.invalidate('panels'); }; s2.addEventListener('keydown', e => e.stopPropagation()); return s2; };
-  calc.append(h('span.dim', {}, 'Calculate:'), scope,
-    cb('½ Halve', 'half', 'Halve the values', () => apply('halve', v => v / 2)),
-    cb('×2 Double', 'double', 'Double the values', () => apply('double', v => v * 2)),
-    cb('± Negate', 'neg', 'Change the sign of the values', () => apply('negate', v => -v)),
-    h('span.gr-sep'), h('span.dim', {}, 'Constant'), kIn,
-    cb('+', 'add', 'Add the constant', () => apply('+ constant', v => v + GS.calcK)),
-    cb('−', 'sub', 'Subtract the constant', () => apply('− constant', v => v - GS.calcK)),
-    cb('=', 'set', 'Set the values to the constant', () => apply('= constant', () => GS.calcK)),
-    h('span.gr-sep'), h('span.dim', {}, 'Factor'), fIn,
-    cb('×', 'mul', 'Multiply by the factor', () => apply('× factor', v => v * GS.calcF)),
-    cb('÷', 'div', 'Divide by the factor', () => apply('÷ factor', v => (GS.calcF ? v / GS.calcF : v))),
-    h('span.gr-sep'), h('span.dim', {}, 'Sizes'), sizeSel(lo(), i => { GS.from = i; }, 'First size shown and calculated'), h('span.dim', {}, 'to'), sizeSel(hi(), i => { GS.to = i; }, 'Last size shown and calculated'),
-  );
-  if (lo() !== 0 || hi() !== n - 1) calc.append(h('button.mini', { title: 'Show every size again', 'data-calc': 'allsizes', onclick: () => { GS.from = -1; GS.to = -1; app.invalidate('panels'); } }, '×'));
-  host.append(calc);
   const body = h('div.gr-body', {}, grid.el, strip);
   host.append(body);
   drawStrip(strip, app, pts, cols, b, view, sizes.map(s => s.id), live.id);
 }
 
 /** the plain-language line above the table; with a focused cell it names the sizes that edit moves */
-function noteEl(app: App, view: 'step' | 'total', f: { r: number; sizes: string[]; b: number } | null, onlyThis?: () => void): HTMLElement {
-  if (!f || f.r === f.b) {
-    return h('div.gr-note' + (view === 'step' ? '.warn' : ''), { title: view === 'step' ? VIEW_TIP.step : VIEW_TIP.total }, view === 'step'
+function noteEl(app: App, view: GView, f: { r: number; sizes: string[]; b: number } | null, onlyThis?: () => void): HTMLElement {
+  void app;
+  if (!f || f.r === (view === 'inc' ? 0 : f.b)) {
+    return h('div.gr-note' + (view === 'total' ? '' : '.warn'), { title: VIEW_TIP[view] }, view === 'step'
       ? 'Step view: a step edit also moves every size further from the base (XL follows L). Use “Total from base size” to change one size.'
-      : 'Total view: offsets from the base size ★ — editing a size changes that size only.');
+      : view === 'inc' ? 'Small → large: each size is the change from the next smaller size. The base ★ stays; an entry also moves the sizes beyond it.'
+        : 'Total view: offsets from the base size ★ — editing a size changes that size only.');
   }
-  const moved = ops.affectedSizes(f.sizes.length, f.b, f.r, view).map(i => f.sizes[i]);
+  const moved = affected(f.sizes.length, f.b, f.r, view).map(i => f.sizes[i]);
   const el = h('div.gr-note' + (moved.length > 1 ? '.warn' : ''), {},
-    moved.length > 1 ? `Editing ${f.sizes[f.r]}'s step moves ${moved.join(', ')} (${moved.length} sizes, tinted). ` : `Editing ${f.sizes[f.r]} changes ${f.sizes[f.r]} only. `);
+    moved.length > 1 ? `Editing ${f.sizes[f.r]}'s ${view === 'inc' ? 'entry' : 'step'} moves ${moved.join(', ')} (${moved.length} sizes, tinted). ` : `Editing ${f.sizes[f.r]} changes ${moved[0] ?? f.sizes[f.r]} only. `);
   if (moved.length > 1 && onlyThis) el.append(h('button.btn.sm', { 'data-act': 'only', title: 'Switch to Total from base size for this cell: the edit changes this size only', onmousedown: (e: Event) => e.preventDefault(), onclick: onlyThis }, `Edit ${f.sizes[f.r]} only`));
   return el;
 }
@@ -283,30 +217,10 @@ function writeTotals(app: App, pieceId: Id, list: { p: PtCol; t: { dx: number[];
   } catch (err) { reportError(err, 'Grade'); }
 }
 
-function doFill(app: App, pieceId: Id, pts: PtCol[], cols: SGCol[], b: number, view: 'step' | 'total', sizeIds: SizeId[], brk: number[]) {
-  const list: { p: PtCol; t: { dx: number[]; dy: number[] } }[] = [];
-  for (const p of pts) {
-    const t = { dx: p.total.dx.slice(), dy: p.total.dy.slice() };
-    let any = false;
-    for (const axis of ['dx', 'dy'] as const) {
-      const m = GS.typed.get(p.id + ':' + axis); if (!m?.size) continue;
-      any = true;
-      const res = ops.smartFill(t[axis], b, [...m].map(([i, v]) => ({ i, v })), GS.typedView, GS.method, brk);
-      t[axis] = res.totals;
-    }
-    if (any) list.push({ p, t });
-  }
-  void cols; void view;
-  if (!list.length) { toast('Type values in a few size rows first (they get a dot), then press Fill', 'warn'); return; }
-  writeTotals(app, pieceId, list, sizeIds, 'Smart fill (' + GS.method + ')');
-  app.status(`Smart fill: ${GS.method === 'linear' ? 'equal steps' : GS.method === 'breaks' ? 'split by break' : GS.method} · ${list.length} point(s)`);
-  GS.typed.clear();
-}
-
 /** Live nest strip of the grading table: maps the live cell to its point / axis. */
-function drawStrip(el: HTMLElement, app: App, pts: PtCol[], cols: SGCol[], b: number, view: 'step' | 'total', sizeIds: SizeId[], pieceId: Id) {
+function drawStrip(el: HTMLElement, app: App, pts: PtCol[], cols: SGCol[], b: number, view: GView, sizeIds: SizeId[], pieceId: Id) {
   let live: LiveCell | null = null;
-  if (GS.live) {
+  if (GS.live && view !== 'inc') {
     const [pid, axis] = cols[GS.live.c].key.split(':');
     const k = pts.findIndex(p => p.id === pid);
     if (k >= 0 && (axis === 'dx' || axis === 'dy')) live = { k, axis, r: GS.live.r, v: GS.live.v, view };
@@ -345,16 +259,6 @@ export function drawNestStrip(el: HTMLElement, line: { sizes: { id: SizeId; name
   }
   el.innerHTML = `<div class="gr-strip-h">Nest preview${live ? ' · live' : ''}</div><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" data-n="${sizeIds.length}" data-live="${live ? 1 : 0}">${s}</svg><div class="dim">± ${fmt(m)} ${unitLabel()} · ${series.length > 6 ? 'first 6' : series.length + ' path(s)'}</div>`;
 }
-
-const TOOLBAR: [string, string, string][] = [
-  ['grade.copy', 'Copy', 'Copy grade of selected points'], ['grade.paste', 'Paste', 'Paste grade'], ['grade.pasteX', 'X', 'Paste X only'], ['grade.pasteY', 'Y', 'Paste Y only'],
-  ['grade.smartPaste', 'Smart', 'Smart paste (flips X across the mirror axis)'], ['grade.pasteAround', 'Around', 'Paste around a run'], ['|', '', ''],
-  ['grade.flipX', '⇋X', 'Flip X'], ['grade.flipY', '⇅Y', 'Flip Y'], ['grade.equalX', '=X', 'Equal X'], ['grade.equalY', '=Y', 'Equal Y'],
-  ['grade.deleteX', '∅X', 'Delete X'], ['grade.deleteY', '∅Y', 'Delete Y'], ['grade.zero', '∅', 'Delete all grading'], ['|', '', ''],
-  ['grade.stackPoint', 'Stack', 'Stack nest at a point'], ['grade.stackLine', 'Stack line', 'Stack along line'], ['grade.angle', '∠', 'Angle grading (auto-aim)'],
-  ['grade.parallel', '∥', 'Grade parallel'], ['grade.proportional', 'Prop', 'Grade proportionally'], ['|', '', ''],
-  ['grade.rules', 'Rules', 'Grade rules window (rule table, library chips)'], ['grade.byMeasurement', 'By measure', 'Grade by measurement: solve the selected points to hit a spec'], ['grade.badges', '#', 'Rule badges on the canvas'], ['grade.movement', 'MTM', 'Movement programs'],
-];
 
 /** Point-tracking key handling; returns true when consumed. */
 export function trackingKey(app: App, e: KeyboardEvent, centreOn: (x: number, y: number) => void): boolean {

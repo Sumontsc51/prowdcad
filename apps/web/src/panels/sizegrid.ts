@@ -11,10 +11,18 @@
  * - Paste: a TSV block from Excel lands from the focused cell into consecutive size rows (and the
  *   columns to the right); values landing on read-only cells (base row) are skipped.
  * - Values are typed in the display unit, decimals or fractions (units-ui parseLen).
+ * - Sheet mode (`sheet`, the grading table): cells work like a spreadsheet —
+ *     drag over cells = select a block · Ctrl+click = add / remove single cells · Shift+click / Shift+↑↓ = extend;
+ *     typing a value with several cells selected writes it into all of them; Delete clears them;
+ *     a value can be a calculation (10/4, 5+2.5, =3*1.5); a zero shows as a blank cell;
+ *     right-click = Double · Half · Multiply by… · Add constant… · Subtract constant… · Clear;
+ *     the small square at the corner of the selection drags down (or up) to fill.
  */
 import { h, clear } from '../ui/dom';
 import { fmt, parseLen } from '../units-ui';
 import { toast } from '../ui/toast';
+import { openContextMenu } from '../ui/menu';
+import { showDialog } from '../ui/dialog';
 
 export interface SGRow { id: string; name: string; base?: boolean; active?: boolean; brk?: boolean }
 export interface SGCol {
@@ -57,6 +65,8 @@ export interface SGOpts {
   maxHeight?: number;
   state?: SGState;
   cls?: string;
+  /** spreadsheet behaviour: multi-cell selection, type into all, calculations, right-click maths, fill handle */
+  sheet?: { blankZero?: boolean };
 }
 
 export const ROW_H = 22;
@@ -96,11 +106,119 @@ export function sizeGrid(o: SGOpts): SizeGrid {
   let range = { a: 0, b: o.rows.length };
   const editable = (r: number, c: number) => !!o.cols[c]?.edit && !o.cols[c].ro?.(r);
 
+  const sheet = o.sheet;
   const cellText = (col: SGCol, r: number) => {
     if (col.text) return col.text(r);
     const v = col.get(r);
+    if (sheet?.blankZero && col.edit && v !== null && Math.abs(v) < 1e-9) return '';
     return v === null || !Number.isFinite(v) ? '' : (col.format ?? fmt)(v);
   };
+
+  // ───── sheet mode: selection ─────
+  const sel = new Set<string>();
+  let anchor: { r: number; c: number } | null = null, selEnd: { r: number; c: number } | null = null;
+  let dragging = false, filling = false, fillTo = -1;
+  const K = (r: number, c: number) => r + ':' + c;
+  const cellsOf = () => [...sel].map(k => { const [r, c] = k.split(':').map(Number); return { r, c }; }).filter(x => editable(x.r, x.c));
+  const fillH = h('div.sg-fillh', { title: 'Drag down (or up) to fill' });
+  function setRange(a: { r: number; c: number }, b2: { r: number; c: number }) {
+    sel.clear();
+    for (let r = Math.min(a.r, b2.r); r <= Math.max(a.r, b2.r); r++) for (let c = Math.min(a.c, b2.c); c <= Math.max(a.c, b2.c); c++) if (editable(r, c)) sel.add(K(r, c));
+    selEnd = b2;
+  }
+  function selectOne(r: number, c: number) { sel.clear(); sel.add(K(r, c)); anchor = { r, c }; selEnd = { r, c }; }
+  /** rows the fill handle would write (below or above the selection), per column of the selection */
+  function fillCells(): { r: number; c: number; v: number }[] {
+    const cs = cellsOf(); if (!cs.length || fillTo < 0) return [];
+    const rmin = Math.min(...cs.map(x => x.r)), rmax = Math.max(...cs.map(x => x.r));
+    const out: { r: number; c: number; v: number }[] = [];
+    for (const c of new Set(cs.map(x => x.c))) {
+      const src = cs.filter(x => x.c === c).map(x => x.r).sort((a, b2) => a - b2).map(r => o.cols[c].get(r) ?? 0);
+      if (fillTo > rmax) for (let r = rmax + 1, k = 0; r <= fillTo; r++, k++) { if (editable(r, c)) out.push({ r, c, v: src[k % src.length] }); }
+      else if (fillTo < rmin) for (let r = rmin - 1, k = 0; r >= fillTo; r--, k++) { if (editable(r, c)) out.push({ r, c, v: src[src.length - 1 - (k % src.length)] }); }
+    }
+    return out;
+  }
+  function paintSel() {
+    if (!sheet) return;
+    const fc = new Set(filling ? fillCells().map(x => K(x.r, x.c)) : []);
+    let last: HTMLElement | null = null, lr = -1, lc = -1;
+    for (const [k, inp] of inputs) {
+      const td = inp.parentElement as HTMLElement;
+      const on = sel.has(k) && sel.size > 0;
+      td.classList.toggle('sel', on && (sel.size > 1 || document.activeElement === inp));
+      td.classList.toggle('fill', fc.has(k));
+      if (on) { const [r, c] = k.split(':').map(Number); if (r > lr || (r === lr && c > lc)) { lr = r; lc = c; last = td; } }
+    }
+    if (last && !o.cols[lc]?.ro?.(lr)) {
+      if (fillH.parentElement !== wrap) wrap.append(fillH);
+      const wr = wrap.getBoundingClientRect(), tr = last.getBoundingClientRect();
+      fillH.style.left = (tr.right - wr.left + wrap.scrollLeft - 4) + 'px'; fillH.style.top = (tr.bottom - wr.top + wrap.scrollTop - 4) + 'px';
+      fillH.style.display = 'block';
+    } else fillH.style.display = 'none';
+  }
+  /** write values into cells as ONE commit, skipping cells that already hold the value */
+  function commitCells(cells: { r: number; c: number; v: number }[]) {
+    const ch = cells.filter(x => Number.isFinite(x.v) && Math.abs(x.v - (o.cols[x.c].get(x.r) ?? 0)) > 1e-9);
+    if (ch.length) o.onCommit?.(ch);
+    refresh();
+  }
+  const calcSel = (fn: (v: number) => number) => commitCells(cellsOf().map(x => ({ ...x, v: fn(o.cols[x.c].get(x.r) ?? 0) })));
+  /** a typed value: a length, or a calculation in the display unit (10/4 · 5+2.5 · =3*1.5 · (2+1)/4) */
+  function parseCell(txt: string): number {
+    const t = txt.trim().replace(/^=/, '').trim();
+    const v = parseLen(t);
+    if (Number.isFinite(v)) return v;
+    if (!/^[-+*/().\d\s×÷x]+$/i.test(t)) return NaN;
+    const src = t.replace(/[×x]/gi, '*').replace(/÷/g, '/').replace(/\s+/g, '');
+    let i = 0;
+    const num = (): number => {
+      if (src[i] === '(') { i++; const v2 = expr(); if (src[i] !== ')') throw new Error('bracket'); i++; return v2; }
+      if (src[i] === '-') { i++; return -num(); }
+      if (src[i] === '+') { i++; return num(); }
+      const m = /^\d*\.?\d+/.exec(src.slice(i)); if (!m) throw new Error('number'); i += m[0].length; return parseFloat(m[0]);
+    };
+    const term = (): number => { let v2 = num(); while (src[i] === '*' || src[i] === '/') { const op = src[i++]; const w = num(); v2 = op === '*' ? v2 * w : v2 / w; } return v2; };
+    const expr = (): number => { let v2 = term(); while (src[i] === '+' || src[i] === '-') { const op = src[i++]; const w = term(); v2 = op === '+' ? v2 + w : v2 - w; } return v2; };
+    try { const res = expr(); if (i !== src.length || !Number.isFinite(res)) return NaN; return parseLen(String(Math.round(res * 1e8) / 1e8)); } catch { return NaN; }
+  }
+  async function askNumber(title: string, label: string, kind: 'number' | 'length', value: number): Promise<number | null> {
+    const r = await showDialog({ title, fields: [kind === 'length' ? { kind: 'length', key: 'v', label, value } : { kind: 'number', key: 'v', label, value }] });
+    return r ? (r.v as number) : null;
+  }
+  function cellMenu(e: MouseEvent, r: number, c: number) {
+    if (!sel.has(K(r, c))) { selectOne(r, c); paintSel(); }
+    const n = cellsOf().length, s2 = n > 1 ? ` (${n} cells)` : '';
+    openContextMenu(e.clientX, e.clientY, [], [
+      { label: 'Double' + s2, run: () => calcSel(v => v * 2) },
+      { label: 'Half' + s2, run: () => calcSel(v => v / 2) },
+      { label: 'Multiply by…', run: () => void askNumber('Multiply' + s2, 'Multiply by', 'number', 2).then(f => { if (f !== null) calcSel(v => v * f); }) },
+      { label: 'Add constant…', run: () => void askNumber('Add a constant' + s2, 'Add', 'length', 0).then(k => { if (k !== null) calcSel(v => v + k); }) },
+      { label: 'Subtract constant…', run: () => void askNumber('Subtract a constant' + s2, 'Subtract', 'length', 0).then(k => { if (k !== null) calcSel(v => v - k); }) },
+      { label: 'Clear (0)' + s2, run: () => calcSel(() => 0) },
+    ]);
+  }
+  if (sheet) {
+    wrap.classList.add('sheet');
+    const cellAt = (e: MouseEvent) => { const el = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)?.closest('td')?.querySelector('input.sg-in') as HTMLInputElement | null; return el && wrap.contains(el) ? { r: +el.dataset.r!, c: +el.dataset.c! } : null; };
+    wrap.addEventListener('mousemove', e => {
+      if (!(e.buttons & 1)) { dragging = false; if (filling) endFill(false); return; }
+      if (filling) { const row = ((document.elementFromPoint(e.clientX, e.clientY) as Element | null)?.closest('tr[data-r]') as HTMLElement | null); if (row && wrap.contains(row)) { fillTo = +row.dataset.r!; paintSel(); } return; }
+      if (!dragging || !anchor) return;
+      const q = cellAt(e); if (!q || (selEnd && q.r === selEnd.r && q.c === selEnd.c)) return;
+      setRange(anchor, q);
+      if (sel.size > 1) window.getSelection()?.removeAllRanges();
+      paintSel();
+    });
+    const endFill = (apply: boolean) => {
+      const cells = apply ? fillCells() : [];
+      filling = false; fillTo = -1;
+      if (cells.length) { for (const x of cells) sel.add(K(x.r, x.c)); commitCells(cells); }
+      paintSel();
+    };
+    wrap.addEventListener('mouseup', () => { dragging = false; if (filling) endFill(true); });
+    fillH.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); filling = true; fillTo = -1; });
+  }
 
   function rowEl(r: number): HTMLElement {
     const row = o.rows[r];
@@ -169,9 +287,12 @@ export function sizeGrid(o: SGOpts): SizeGrid {
     const r = +inp.dataset.r!, c = +inp.dataset.c!;
     const txt = inp.value.trim();
     const cur = o.cols[c].get(r);
-    if (txt === '') { inp.value = cellText(o.cols[c], r); return true; }
-    const v = parseLen(txt);
-    if (!Number.isFinite(v)) { toast(`“${inp.value}” is not a valid length`, 'warn'); inp.value = cellText(o.cols[c], r); return false; }
+    if (txt === '' && !sheet?.blankZero) { inp.value = cellText(o.cols[c], r); return true; }
+    // sheet mode: an emptied cell is 0 (shown blank); a value may be a calculation
+    const v = txt === '' ? 0 : sheet ? parseCell(txt) : parseLen(txt);
+    if (!Number.isFinite(v)) { toast(`“${inp.value}” is not a valid ${sheet ? 'value or calculation' : 'length'}`, 'warn'); inp.value = cellText(o.cols[c], r); return false; }
+    // several cells selected: the value goes into every one of them
+    if (sheet && sel.size > 1 && sel.has(K(r, c))) { commitCells(cellsOf().map(x => ({ ...x, v }))); inp.value = cellText(o.cols[c], r); return true; }
     if (cur !== null && Math.abs(v - cur) < 1e-9) { inp.value = cellText(o.cols[c], r); return true; }
     o.onCommit?.([{ r, c, v }]);
     refresh();
@@ -191,7 +312,9 @@ export function sizeGrid(o: SGOpts): SizeGrid {
     } else {
       for (let k = 0; k < o.rows.length; k++) { nr += dr; if (nr < 0 || nr >= o.rows.length) return; if (editable(nr, nc)) break; }
     }
+    if (sheet) selectOne(nr, nc);
     focusCell(nr, nc);
+    paintSel();
   }
 
   function wire(inp: HTMLInputElement, r: number, c: number) {
@@ -201,11 +324,29 @@ export function sizeGrid(o: SGOpts): SizeGrid {
       o.onInput?.(r, c, inp.value.trim() && Number.isFinite(v) ? v : null);
     });
     // select the text once focused; select() also FOCUSES, so only when the cell still has focus (else two cells ping-pong)
-    inp.addEventListener('focus', () => { st.focus = { r, c }; o.onFocus?.(r, c); setTimeout(() => { if (document.activeElement === inp) try { inp.select(); } catch { /* */ } }, 0); });
-    inp.addEventListener('blur', () => { commitInput(inp); });
+    inp.addEventListener('focus', () => { st.focus = { r, c }; if (sheet && !sel.has(K(r, c))) selectOne(r, c); if (sheet) setTimeout(paintSel, 0); o.onFocus?.(r, c); setTimeout(() => { if (document.activeElement === inp) try { inp.select(); } catch { /* */ } }, 0); });
+    inp.addEventListener('blur', () => { commitInput(inp); if (sheet) setTimeout(paintSel, 0); });
+    if (sheet) {
+      inp.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+        if (e.ctrlKey || e.metaKey) { const k2 = K(r, c); if (sel.has(k2) && sel.size > 1) sel.delete(k2); else sel.add(k2); anchor = { r, c }; selEnd = { r, c }; setTimeout(paintSel, 0); return; }
+        if (e.shiftKey && anchor) { e.preventDefault(); setRange(anchor, { r, c }); paintSel(); return; }
+        selectOne(r, c); dragging = true; setTimeout(paintSel, 0);
+      });
+      inp.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); cellMenu(e, r, c); });
+    }
     inp.addEventListener('keydown', e => {
       e.stopPropagation();
       const k = e.key;
+      if (sheet) {
+        if (e.shiftKey && (k === 'ArrowDown' || k === 'ArrowUp') && anchor) {
+          e.preventDefault();
+          const end = selEnd ?? anchor, nr = Math.max(0, Math.min(o.rows.length - 1, end.r + (k === 'ArrowDown' ? 1 : -1)));
+          setRange(anchor, { r: nr, c: end.c }); paintSel(); return;
+        }
+        if ((k === 'Delete' || k === 'Backspace') && sel.size > 1 && !inp.dataset.typed) { e.preventDefault(); calcSel(() => 0); return; }
+        if (k === 'Escape' && sel.size > 1) { selectOne(r, c); paintSel(); }
+      }
       if (k === 'Enter') { e.preventDefault(); commitInput(inp); move(r, c, e.shiftKey ? -1 : 1, 0); return; }
       if (k === 'Tab') { e.preventDefault(); commitInput(inp); move(r, c, 0, e.shiftKey ? -1 : 1); return; }
       if (k === 'Escape') { e.preventDefault(); delete inp.dataset.typed; inp.value = cellText(o.cols[c], r); o.onInput?.(r, c, null); inp.blur(); return; }
@@ -272,6 +413,7 @@ export function sizeGrid(o: SGOpts): SizeGrid {
         td.className = (inp ? '' : 'ro ') + cls;
       });
     }
+    paintSel();
   }
 
   renderBody();
