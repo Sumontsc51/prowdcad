@@ -110,7 +110,7 @@
     document.querySelectorAll('.fwin .fw-x').forEach(b => b.click());
     if (app.tool?.id !== 'select') app.setTool('select');
     app.doc.load(JSON.parse(json));
-    app.nested = false; app.pointTracking = false; app.gradeAbsolute = false; app.liveSel = null;
+    app.nested = false; app.pointTracking = false; app.gradeAbsolute = false; app.gradeSmallLarge = false; app.liveSel = null;
     app.preview.clear();
     app.fileName = 'e2e.prowd.json'; app.markSaved();
     Object.assign(S.settings, structuredClone(S.DEFAULT_SETTINGS));
