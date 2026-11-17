@@ -253,26 +253,62 @@ const cases = [
     expect: (h, c) => { const g = abs(c.after, 'FRONT', 'UA'); return req(near(g.S.dx, -8) && near(g.S.dy, -1) && near(g.L.dx, 9) && near(g.L.dy, 2) && near(g.XL.dx, 19) && near(g.XL.dy, 3) && near(g.M.dx, 0), 'pasted ' + JSON.stringify(g)); },
   }),
   C('table-fill', {
-    title: 'Grading table: type one step (L = 7), Fill (Equal steps) → XL step 7; the side without typed rows keeps its values; arrows / Tab move cells',
-    sel: A('FRONT', 'UA'),
+    title: 'Grading table as a sheet: type a step; select two cells and type one value into both; right-click ▸ Double; a calculation in a cell; drag the corner to fill down; a zero shows blank; arrows / Tab move cells',
+    sel: A('FRONT', 'UA'), undo: false, // seven edits: more than the runner's undo check walks back
     invoke: async h => { await h.key('Control+g'); await h.settle(100); },
     drive: async h => {
-      await typeInto(h, gcell(h, 'L', 'dx'), '7');
-      await h.page.locator('.gr-fill select').selectOption('linear');
-      await h.page.locator('.gr-fill [data-act="fill"]').click(); await h.settle(80);
+      const st = () => h.ev(() => { const E = window.__e2e, p = E.P('FRONT'), a = p.sew.points.find(q => q.name === 'UA'); const t = n => { const g = E.ops.gradedPosition(E.app.doc, p.id, a.id, E.sizeId(n)); return [Math.round((g.x - a.x) * 100) / 100, Math.round((g.y - a.y) * 100) / 100]; }; return { S: t('S'), L: t('L'), XL: t('XL') }; });
+      h._tools = await h.ev(() => document.querySelectorAll('.gr-tools button, .gr-fill, .gr-calc').length);
+      await typeInto(h, gcell(h, 'L', 'dx'), '7'); h._a = await st();
+      // two cells, one typed value
+      await gcell(h, 'L', 'dx').click(); await gcell(h, 'XL', 'dx').click({ modifiers: ['Shift'] }); await h.settle(60);
+      h._sel = await h.ev(() => document.querySelectorAll('.sg-wrap.gr td.sel').length);
+      await h.page.keyboard.type('8'); await h.page.keyboard.press('Enter'); await h.settle(120); h._b = await st();
+      // right-click ▸ Double on the same two cells
+      await gcell(h, 'L', 'dx').click(); await gcell(h, 'XL', 'dx').click({ modifiers: ['Shift'] }); await gcell(h, 'XL', 'dx').click({ button: 'right' });
+      await h.page.waitForSelector('.ctx-menu .menu-item'); h._menu = await h.ev(() => [...document.querySelectorAll('.ctx-menu .menu-item')].map(b => b.textContent.trim().replace(/ \(.*/, '')));
+      await h.page.locator('.ctx-menu .menu-item', { hasText: /^Double/ }).click(); await h.settle(120); h._c = await st();
+      // a calculation
+      await typeInto(h, gcell(h, 'S', 'dx'), '=-6-6'); h._d = await st();
+      // fill down with the corner square
+      await typeInto(h, gcell(h, 'L', 'dx'), '5'); await gcell(h, 'L', 'dx').click(); await h.settle(80);
+      const hb = await h.page.locator('.sg-wrap.gr .sg-fillh').boundingBox(), xb = await gcell(h, 'XL', 'dx').boundingBox();
+      h._handle = !!hb;
+      if (hb && xb) { await h.page.mouse.move(hb.x + 4, hb.y + 4); await h.page.mouse.down(); await h.page.mouse.move(hb.x + 4, hb.y + 10); await h.page.mouse.move(xb.x + xb.width / 2, xb.y + xb.height / 2); await h.page.mouse.up(); await h.settle(150); }
+      h._e = await st();
+      // a zero is a blank cell
+      await typeInto(h, gcell(h, 'L', 'dy'), '0'); h._blank = await gcell(h, 'L', 'dy').inputValue();
       // keyboard navigation
       await gcell(h, 'L', 'dx').click(); await h.page.keyboard.press('ArrowRight'); h._k1 = await ae(h);
       await h.page.keyboard.press('ArrowDown'); h._k2 = await ae(h);
       await h.page.keyboard.press('ArrowUp'); await h.page.keyboard.press('Tab'); h._k3 = await ae(h);
       await h.page.keyboard.press('Escape'); await h.settle(40);
     },
-    expect: (h, c) => { const g = abs(c.after, 'FRONT', 'UA'); return [
-      req(near(g.L.dx, 7) && near(g.XL.dx, 14) && near(g.S.dx, -10), 'fill ' + JSON.stringify(g)),
+    expect: h => [
+      req(h._tools === 0, 'the old button rows / fill / calculate bars should be gone: ' + h._tools),
+      req(h._a.L[0] === 7 && h._a.XL[0] === 17, 'typed step 7: ' + JSON.stringify(h._a)),
+      req(h._sel === 2, 'two cells selected: ' + h._sel), req(h._b.L[0] === 8 && h._b.XL[0] === 16, 'one value into both cells (steps 8, 8): ' + JSON.stringify(h._b)),
+      req(h._menu.slice(0, 5).join() === 'Double,Half,Multiply by…,Add constant…,Subtract constant…', 'right-click menu: ' + h._menu), req(h._c.L[0] === 16 && h._c.XL[0] === 32, 'Double (steps 16, 16): ' + JSON.stringify(h._c)),
+      req(h._d.S[0] === -12, 'calculation =-6-6 → −12: ' + JSON.stringify(h._d)),
+      req(h._handle, 'no fill handle'), req(h._e.L[0] === 5 && h._e.XL[0] === 10, 'fill down (steps 5, 5): ' + JSON.stringify(h._e)),
+      req(h._blank === '', 'a zero should show as a blank cell: “' + h._blank + '”'),
       req(h._k1?.size === 'L' && h._k1?.axis === 'dy', '→ ' + JSON.stringify(h._k1)),
       req(h._k2?.size === 'XL' && h._k2?.axis === 'dy', '↓ ' + JSON.stringify(h._k2)),
-      req(h._k3?.size === 'XL' && h._k3?.axis === 'dx', 'Tab from L dY → XL dX: ' + JSON.stringify(h._k3)),
-    ]; },
-  }),
+      req(h._k3?.size === 'XL' && h._k3?.axis === 'dx', 'Tab ' + JSON.stringify(h._k3)),
+    ] }),
+  C('table-small-large', {
+    title: 'Grading table ▸ Small → large: each size shows the change from the next smaller size; the smallest size has no entry; an entry above the base moves that size and the larger ones, the base stays',
+    sel: A('FRONT', 'UA'),
+    invoke: async h => { await h.key('Control+g'); await h.settle(100); await h.page.locator('.gr-bar button[data-view="inc"]').click(); await h.settle(100); },
+    drive: async h => {
+      h._vals = await h.ev(() => [...document.querySelectorAll('.sg-wrap.gr tbody tr[data-r]')].map(tr => { const i = tr.querySelector('input[data-axis="dx"]'); return tr.dataset.size + ':' + (i ? i.value : 'ro'); }));
+      await typeInto(h, gcell(h, 'XL', 'dx'), '15');
+      await typeInto(h, gcell(h, 'M', 'dx'), '4');
+      h._t = await h.ev(() => { const E = window.__e2e, p = E.P('FRONT'), a = p.sew.points.find(q => q.name === 'UA'); const t = n => Math.round((E.ops.gradedPosition(E.app.doc, p.id, a.id, E.sizeId(n)).x - a.x) * 100) / 100; return { S: t('S'), M: t('M'), L: t('L'), XL: t('XL') }; });
+      await h.page.locator('.gr-bar button[data-view="step"]').click(); await h.settle(60);
+    },
+    expect: h => [req(h._vals.join() === 'S:ro,M:10,L:10,XL:10', 'small → large values: ' + h._vals),
+      req(h._t.M === 0 && h._t.L === 10 && h._t.XL === 25 && h._t.S === -4, 'XL entry 15 → XL total 25; M entry 4 → S total −4; base stays: ' + JSON.stringify(h._t))] }),
   C('table-columns', {
     title: 'Grading table: several selected points = one dX/dY column pair each; one point adds X / Y / other-view columns',
     change: false,

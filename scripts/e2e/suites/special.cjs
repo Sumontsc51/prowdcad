@@ -444,7 +444,7 @@ async function selection(h, fixtures) {
   const pt = () => h.selectA('FRONT', 'UA'), pcF = () => h.selectPiece('FRONT');
   await T('point → Grade ▸ Clipboard ▸ Copy grade (menu)', pt, () => h.cmd('grade.copy'), {});
   await T('point → Copy grade (Ctrl+Alt+C)', pt, () => h.key('Control+Alt+c'), {});
-  await T('point → Copy grade (grading-table toolbar button)', async () => { await pt(); await h.key('Control+g'); }, () => h.page.locator('.gr-tools button', { hasText: /^Copy$/ }).click(), {});
+  await T('point → Copy grade (Grade menu command, grading table open)', async () => { await pt(); await h.key('Control+g'); }, () => h.cmd('grade.copy'), {});
   await T('point → Paste grade', async () => { await h.selectA('FRONT', 'SS_HEM'); await h.key('Control+Alt+c'); await pt(); }, () => h.cmd('grade.paste'), {});
   await T('point → Seam ▸ Seam of segment… (dialog OK)', pt, async () => { await h.cmd('seam.segment'); await h.waitDialog(); await h.fill('v', '12'); await h.ok(); }, {});
   await T('piece → Seam ▸ Whole-piece seam… (dialog OK)', pcF, async () => { await h.cmd('seam.piece'); await h.waitDialog(); await h.fill('v', '12'); await h.ok(); }, {});

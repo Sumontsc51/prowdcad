@@ -362,6 +362,9 @@ const cases = [
   { id: 'cut.foldIn', sel: PC('FRONT'), drive: seq(W(200, -40), W(200, 745), W(80, 300), OK()) },
   { id: 'cut.foldOut', pre: P((app, ops, doc, E) => ops.foldIn(doc, E.P('FRONT').id, { a: { x: 200, y: -40 }, b: { x: 200, y: 745 } }, { keep: { x: 80, y: 300 } })), invoke: h => h.cmd('cut.foldOut'),
     drive: async h => { const w = await h.ev(() => { const E = window.__e2e; const p = E.P('FRONT'); const c = p.internals[p.internals.length - 1]; const a = c.points[0], b = c.points[c.points.length - 1]; return E.localToWorld('FRONT', { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }); }); await h.clickW(w); await OK()(h); } },
+  { id: 'piece.mirror', sel: PC('FRONT'), expect: (h, c) => { const m = c.after.pieces.find(p => p.name === 'FRONT MIRROR'), f = pc(c.after, 'FRONT'); return [req(c.after.pieces.length === 3 && !!m, 'no FRONT MIRROR'), req(!!m && !!m.layout?.flipX !== !!f.layout?.flipX, 'the copy is not mirrored'), req(c.afterSel.pieces[0] === 'FRONT MIRROR', 'mirror copy not selected')]; } },
+  { id: 'piece.mirrorLine', sel: PC('FRONT'), drive: seq(at('FRONT', 'CF_HEM'), at('FRONT', 'CF_NECK'), OK()), expect: (h, c) => req(!!pc(c.after, 'FRONT').half, 'half not set') },
+  { id: 'piece.unfoldMirror', pre: P((app, ops, doc, E) => ops.setHalf(doc, E.P('FRONT').id, { a: { x: 0, y: 0 }, b: { x: 0, y: 622 } }, { openAtOutput: true })), sel: PC('FRONT'), expect: (h, c) => req(!pc(c.after, 'FRONT').half && npts(c.after, 'FRONT') > 12, 'not opened') },
   { id: 'cut.halfSet', sel: PC('FRONT'), drive: seq(at('FRONT', 'CF_HEM'), at('FRONT', 'CF_NECK'), OK()), expect: (h, c) => req(!!pc(c.after, 'FRONT').half, 'half not set') },
   { id: 'cut.halfOpen', pre: P((app, ops, doc, E) => ops.setHalf(doc, E.P('FRONT').id, { a: { x: 0, y: 0 }, b: { x: 0, y: 622 } }, { openAtOutput: true })), sel: PC('FRONT'), expect: (h, c) => req(!pc(c.after, 'FRONT').half && npts(c.after, 'FRONT') > 12, 'not opened') },
   { id: 'cut.halfDelete', pre: P((app, ops, doc, E) => ops.setHalf(doc, E.P('FRONT').id, { a: { x: 0, y: 0 }, b: { x: 0, y: 622 } }, { openAtOutput: true })), sel: PC('FRONT'), expect: (h, c) => req(!pc(c.after, 'FRONT').half, 'half not deleted') },
@@ -393,7 +396,7 @@ const cases = [
 
   // ═════════ Grade ═════════
   { id: 'grade.table', change: false, sel: async h => { h._v0 = await h.ev(() => window.__e2e.settings.panels.grading); }, expect: async h => req((await h.ev(() => window.__e2e.settings.panels.grading)) === !h._v0, 'grading panel not toggled') },
-  toggleApp('grade.nested', 'app.nested'), toggleApp('grade.absolute', 'app.gradeAbsolute'), toggleApp('grade.tracking', 'app.pointTracking'), toggleS('grade.ruleNames', 'showRuleNames'),
+  toggleApp('grade.nested', 'app.nested'), toggleApp('grade.absolute', 'app.gradeAbsolute'), toggleApp('grade.smallLarge', 'app.gradeSmallLarge'), toggleApp('grade.tracking', 'app.pointTracking'), toggleS('grade.ruleNames', 'showRuleNames'),
   { id: 'grade.prevSize', change: false, expect: async h => req((await appv("app.sizeLine().sizes.find(s=>s.id===app.activeSize).name")(h)) === 'S', 'active size not S') },
   { id: 'grade.nextSize', change: false, expect: async h => req((await appv("app.sizeLine().sizes.find(s=>s.id===app.activeSize).name")(h)) === 'L', 'active size not L') },
   { id: 'grade.baseSize', change: false, sel: async h => { await h.page.locator('select.sb-size').selectOption({ label: 'XL' }); }, expect: async h => req((await appv('app.activeSize === app.baseSize()')(h)), 'not base') },
