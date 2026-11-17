@@ -4,7 +4,7 @@
  */
 import { unfoldPieces, foldedIds } from '../tools/fold';
 import { openCommandFinder } from '../ui/cmdk';
-import { registerCommand, type CommandCtx, hotkeyMap, allCommands, normalizeChord, getCommand } from '../commands';
+import { registerCommand, type CommandCtx, hotkeyMap, allCommands, normalizeChord, getCommand, runCommand } from '../commands';
 import type { App } from '../app';
 import type { Canvas } from '../canvas/canvas';
 import { settings, saveSettings } from '../settings';
@@ -88,6 +88,27 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
     app.sel = { pieces: ids, anchors: [] };
   } });
   // Piece ▸ Copy piece / Paste piece: an in-app clipboard (it survives File ▸ New / Open within the session)
+  // Piece ▸ mirror and unfold, in one place
+  registerCommand({ id: 'piece.mirror', title: 'Mirror piece (mirrored copy)', menu: 'Piece', group: 0, enabled: hasPiece, run: () => {
+    const ids: string[] = [];
+    tx('Mirror piece', () => {
+      for (const p of selPieces()) {
+        const c = remapIds(deepClone(p));
+        c.name = p.name + ' MIRROR';
+        delete c.fold;
+        const L = layoutOf(p); const b = pieceWorldBox(app.doc, p, app.sizeOf(p));
+        c.layout = { ...L, flipX: !L.flipX };
+        app.style.pieces.push(c); ids.push(c.id);
+        // the mirrored copy goes to the right of the original, bottoms level
+        const b2 = pieceWorldBox(app.doc, c, app.sizeOf(p));
+        c.layout = { ...c.layout, x: c.layout.x + (b.maxX + 30 - b2.minX), y: c.layout.y + (b.minY - b2.minY) };
+      }
+    });
+    app.sel = { pieces: ids, anchors: [] };
+    app.status(`${ids.length} mirrored cop${ids.length > 1 ? 'ies' : 'y'} made · it is a separate piece`);
+  } });
+  registerCommand({ id: 'piece.mirrorLine', title: 'Mirror line: work on half the piece…', menu: 'Piece', group: 0, enabled: hasPiece, run: () => runCommand('cut.halfSet') });
+  registerCommand({ id: 'piece.unfoldMirror', title: 'Unfold mirror (open the half piece)', menu: 'Piece', group: 0, enabled: c => !!c.app.primaryPiece()?.half, run: () => runCommand('cut.halfOpen') });
   registerCommand({ id: 'piece.unfold', title: 'Unfold piece', menu: 'Piece', group: 0, enabled: c => c.app.sel.pieces.some(id => !!c.app.piece(id)?.fold), run: () => { unfoldPieces(app, app.sel.pieces); } });
   registerCommand({ id: 'piece.unfoldAll', title: 'Unfold all pieces', menu: 'Piece', group: 0, enabled: c => c.app.doc.style.pieces.some(p => !!p.fold), run: () => { unfoldPieces(app, foldedIds(app)); } });
   registerCommand({ id: 'piece.copy', title: 'Copy piece', menu: 'Piece', group: 0, hotkey: 'Ctrl+C', enabled: hasPiece, run: () => {
