@@ -136,6 +136,8 @@ export function renderWorld(app: App): string {
     // cut line (thinner)
     if (settings.showCut && !p.noSeam && r.cut.length > 2) {
       g.push(`<path d="${pathD(r.cut, true)}" class="ns" stroke="${isSel ? '#3a78c2' : '#6b6f78'}" stroke-width="0.9" fill="none"/>`);
+      // fold lines of turn-back hems with several folds
+      try { const fl = ops.turnbackFoldLines(p, line, active); if (fl.length) g.push(`<path d="${fl.map(q => pathD(q, false)).join('')}" class="ns" stroke="${isSel ? '#3a78c2' : '#6b6f78'}" stroke-width="0.8" stroke-dasharray="6 3" fill="none" data-turnback="fold"/>`); } catch { /* no fold lines */ }
     }
     // sew line (solid)
     const sewColor = isSel ? ACCENT : app.nested ? sizeColor(line, active) : '#15171c';
