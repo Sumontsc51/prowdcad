@@ -16,12 +16,16 @@ export type CornerType =
   | 'boxed'        // square corner: extend each seam straight past the corner (folded-back ends)
   | 'turnback'     // mirrored / turn-back corner (hem folds): mirror the adjacent seam across the corner
   | 'angled'       // bevel: chamfer between the two offset edges
+  | 'truncated'    // mitered at a distance: the miter point is cut off square at `dist` from the sew corner
+  | 'cutout'       // cut-out: the allowance is cut away square to the sew corner (each seam ends at the corner)
   | 'manual';      // user-drafted custom corner shape (≤10 points) in the piece's local frame
 
 export interface CornerSpec {
   type: CornerType;
   /** boxed: which side extends — 'prev' | 'next' | 'both' */
   extend?: 'prev' | 'next' | 'both';
+  /** truncated: distance from the sew corner at which the miter is cut off (absent = the larger of the two allowances) */
+  dist?: number;
   /** turnback: widths of the folds of the hem, from the sew line outwards (e.g. [30, 10] = a 30 hem turned in 10).
    *  The edge mirrors the adjacent seam at every fold. Absent / one value = a single turn-back. */
   folds?: number[];
