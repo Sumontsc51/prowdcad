@@ -438,14 +438,29 @@ async function commitImport(app: App, name: string, rep: ImportReport) {
     rep.warnings.length ? `Warnings:\n  ${rep.warnings.join('\n  ')}` : '',
   ].filter(Boolean).join('\n');
   if (!rep.pieces.length) { await alertDialog(`Import ${name} — nothing to import`, msg); return; }
-  const ok = await showDialog({ title: `Import report — ${name}`, message: msg, okLabel: `Add ${rep.pieces.length} piece(s)`, wide: true });
+  // sizes of the file against the sizes of the style
+  const mine = app.doc.sizeLine(), theirs = rep.sizeLine;
+  const names = (l: typeof mine) => l.sizes.map(z => z.name).join(' ');
+  const differ = names(mine) !== names(theirs);
+  const graded = theirs.sizes.length > 1;
+  const ok = await showDialog({
+    title: `Import report — ${name}`, message: msg, okLabel: `Add ${rep.pieces.length} piece(s)`, wide: true,
+    fields: differ && graded ? [{ kind: 'select' as const, key: 'sizes', label: 'Sizes', value: 'file', remember: false, options: [
+      { value: 'file', label: `Use the file's sizes for the style (${names(theirs)})` },
+      { value: 'style', label: `Keep the style's sizes (${names(mine)}), match by size name` },
+    ] }] : [],
+  });
   if (!ok) return;
+  // a file with one size has no grading: its pieces simply join the style's sizes
+  const sizes = !differ ? 'keep' : graded ? (ok.sizes === 'style' ? 'style' : 'file') : 'style';
   app.doc.transact(`Import ${name}`, s => {
-    const added = ops.addImportToDocument(app.doc, rep);
+    const added = ops.addImportToDocument(app.doc, rep, { sizes });
     if (rep.ruleLibrary) s.ruleLibraries.push(JSON.parse(JSON.stringify(rep.ruleLibrary)));
     app.sel = { pieces: added.map(p => p.id), anchors: [] };
   });
-  toast(`Imported ${rep.pieces.length} piece(s) from ${name}`, 'ok');
+  if (!app.doc.sizeLine().sizes.some(z => z.id === app.activeSize)) app.activeSize = app.baseSize();
+  app.invalidate();
+  toast(`Imported ${rep.pieces.length} piece(s) from ${name}${sizes === 'file' ? ` · sizes ${names(app.doc.sizeLine())}` : ''}`, 'ok');
   requestAnimationFrame(() => (app as App & { zoomFit?: () => void }).zoomFit?.());
 }
 
