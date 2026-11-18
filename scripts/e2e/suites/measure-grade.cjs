@@ -303,6 +303,13 @@ const cases = [
     drive: async h => {
       h._saved = await h.ev(() => window.__e2e.settings.gradeView);
       h._vals = await h.ev(() => [...document.querySelectorAll('.sg-wrap.gr tbody tr[data-r]')].map(tr => { const i = tr.querySelector('input[data-axis="dx"]'); return tr.dataset.size + ':' + (i ? i.value : 'ro'); }));
+      // drag over two cells = both selected (the cell text must not be dragged along), one typed value goes into both
+      { const a = await gcell(h, 'M-L', 'dx').boundingBox(), z = await gcell(h, 'L-XL', 'dx').boundingBox();
+        await h.page.mouse.move(a.x + a.width / 2, a.y + a.height / 2); await h.page.mouse.down(); await h.page.waitForTimeout(80);
+        for (let k = 1; k <= 6; k++) await h.page.mouse.move(a.x + a.width / 2, a.y + a.height / 2 + (z.y - a.y) * k / 6); await h.page.mouse.up(); await h.settle(80);
+        h._dsel = await h.ev(() => document.querySelectorAll('.sg-wrap.gr td.sel').length);
+        await h.page.keyboard.type('12'); await h.page.keyboard.press('Enter'); await h.settle(120);
+        h._drag = await h.ev(() => [...document.querySelectorAll('.sg-wrap.gr tbody tr[data-r]')].map(tr => tr.querySelector('input[data-axis="dx"]').value).join()); }
       await typeInto(h, gcell(h, 'L-XL', 'dx'), '15');
       await typeInto(h, gcell(h, 'S-M', 'dx'), '4');
       h._t = await h.ev(() => { const E = window.__e2e, p = E.P('FRONT'), a = p.sew.points.find(q => q.name === 'UA'); const t = n => Math.round((E.ops.gradedPosition(E.app.doc, p.id, a.id, E.sizeId(n)).x - a.x) * 100) / 100; return { S: t('S'), M: t('M'), L: t('L'), XL: t('XL') }; });
@@ -310,7 +317,7 @@ const cases = [
       h._saved2 = await h.ev(() => window.__e2e.settings.gradeView);
     },
     expect: h => [req(h._vals.join() === 'S-M:10,M-L:10,L-XL:10', 'small → large rows: ' + h._vals), req(h._saved === 'inc' && h._saved2 === 'step', 'the chosen view should be saved as the default: ' + h._saved + ' → ' + h._saved2),
-      req(h._t.M === 0 && h._t.L === 10 && h._t.XL === 25 && h._t.S === -4, 'XL entry 15 → XL total 25; M entry 4 → S total −4; base stays: ' + JSON.stringify(h._t))] }),
+      req(h._dsel === 2 && h._drag === '10,12,12', 'drag-select two cells and type 12 → 10,12,12: ' + h._dsel + ' cells, ' + h._drag), req(h._t.M === 0 && h._t.L === 12 && h._t.XL === 27 && h._t.S === -4, 'L-XL entry 15 → XL total 27; S-M entry 4 → S total −4; base stays: ' + JSON.stringify(h._t))] }),
   C('table-columns', {
     title: 'Grading table: several selected points = one dX/dY column pair each; one point adds X / Y / other-view columns',
     change: false,
