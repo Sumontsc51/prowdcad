@@ -174,7 +174,15 @@ export function resolveNotch(doc: Document, piece: Piece, notch: Notch, sizeId?:
   const setup = doc.style.settings.notchSetup[notch.type];
   const depth = notch.depth ?? setup?.depth ?? 5;
   const width = notch.width ?? setup?.width ?? 0;
-  const cutGeometry = notchShape(notch.type, mouth, mul(direction, -1), depth, width);
+  // the mark: on the cut line (default), on the sew line, or on both (a notch of the sew line of a piece with seam)
+  const split = contour.id === piece.sew.id && len(sub(mouth, ap.pt)) > 1e-9;
+  const on = split ? notch.on ?? 'cut' : 'cut';
+  const inward = mul(direction, -1);
+  const cutGeometry = [
+    ...(on !== 'sew' ? notchShape(notch.type, mouth, inward, depth, width) : []),
+    ...(on !== 'cut' ? notchShape(notch.type, ap.pt, inward, depth, width) : []),
+  ];
+  if (on === 'sew') mouth = ap.pt;
   return {
     notchId: notch.id, pos: ap.pt, normal, tangent: ap.tangent, direction, mouth, cutGeometry,
     s, segmentIndex: segmentIndexAt(r, s), type: notch.type,
@@ -198,6 +206,7 @@ export interface AddNotchOptions {
   width?: number;
   angleDeg?: number;
   cornerDir?: 'prev' | 'next';
+  on?: Notch['on'];
   mode?: 'draw' | 'cut';
   source?: Notch['source'];
   spanEndAnchorId?: Id;
@@ -216,6 +225,7 @@ export function makeNotch(doc: Document, piece: Piece, o: AddNotchOptions): Notc
   };
   if (o.mode) n.mode = o.mode;
   if (o.cornerDir) n.cornerDir = o.cornerDir;
+  if (o.on && o.on !== 'cut') n.on = o.on;
   if (o.spanEndAnchorId) n.spanEndAnchorId = o.spanEndAnchorId;
   if (o.tag) n.tag = o.tag;
   if (o.name) n.name = o.name;
@@ -235,6 +245,33 @@ export function addNotch(doc: Document, piece: Piece, o: AddNotchOptions): Notch
 /** Corner notch at a grade corner, oriented along the previous or next segment. */
 export function addCornerNotch(doc: Document, piece: Piece, anchorId: Id, dir: 'prev' | 'next', o: Partial<AddNotchOptions> = {}): Notch {
   return addNotch(doc, piece, { ...o, placement: { kind: 'anchor', anchorId }, cornerDir: dir });
+}
+
+/** The corner notches of a grade corner: 'none', along the previous line ('prev'), along the next line ('next') or 'both'. */
+export function cornerNotchSide(piece: Piece, anchorId: Id): 'none' | 'prev' | 'next' | 'both' {
+  const at = piece.notches.filter(n => n.placement.kind === 'anchor' && n.placement.anchorId === anchorId && n.cornerDir);
+  const p = at.some(n => n.cornerDir === 'prev'), x = at.some(n => n.cornerDir === 'next');
+  return p && x ? 'both' : p ? 'prev' : x ? 'next' : 'none';
+}
+/**
+ * Set the corner notches of a grade corner in one step: one side (the previous line continued past the
+ * corner), the other side (the next line extended back), both, or none. Corner notches already there are
+ * replaced. Returns the notches made.
+ */
+export function setCornerNotches(doc: Document, piece: Piece, anchorId: Id, side: 'none' | 'prev' | 'next' | 'both', o: Partial<AddNotchOptions> = {}): Notch[] {
+  return doc.transact(side === 'none' ? 'Remove corner notch' : 'Corner notch', () => {
+    const p = livePiece(doc, piece);
+    const cid = o.contourId ?? p.sew.id;
+    const a = notchContour(p, cid).points.find(q => q.id === anchorId);
+    if (!a) throw new Error('No point ' + anchorId + ' on that line');
+    p.notches = p.notches.filter(n => !(n.contourId === cid && n.placement.kind === 'anchor' && n.placement.anchorId === anchorId && n.cornerDir));
+    const out: Notch[] = [];
+    for (const d of side === 'both' ? ['prev', 'next'] as const : side === 'none' ? [] : [side]) {
+      const n = makeNotch(doc, p, { ...o, contourId: cid, placement: { kind: 'anchor', anchorId }, cornerDir: d });
+      p.notches.push(n); out.push(n);
+    }
+    return out;
+  });
 }
 
 /**
