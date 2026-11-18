@@ -295,8 +295,16 @@ function angledCorner(c: CornerCtx): Vec[] {
  * line (= the hem's sew line), then mirrored across it until it meets the hem's cut line, so
  * that when the hem is folded back along the sew line its raw edge lies on the adjacent seam.
  */
-function turnbackCorner(c: CornerCtx, side?: 'prev' | 'next' | 'both'): Vec[] {
+function turnbackCorner(c: CornerCtx, side?: 'prev' | 'next' | 'both', folds?: number[]): Vec[] {
   const hem: 'prev' | 'next' = side === 'prev' || side === 'next' ? side : (Math.abs(c.dPrev) > Math.abs(c.dNext) ? 'prev' : 'next');
+  const ws = (folds ?? []).filter(w => Number.isFinite(w) && w > 1e-9);
+  if (ws.length > 1) {
+    const chain = hem === 'next'
+      ? turnbackChain(lineIntersect(c.A, c.tIn, c.C, c.tOut), c.tOut, sub(c.B, c.C), c.tIn, ws, Math.abs(c.dNext))
+      : turnbackChain(lineIntersect(c.B, c.tOut, c.C, c.tIn), c.tIn, sub(c.A, c.C), mul(c.tOut, -1), ws, Math.abs(c.dPrev));
+    if (!chain) return miterCorner(c);
+    return hem === 'next' ? chain : chain.reverse();
+  }
   if (hem === 'next') {
     const X = lineIntersect(c.A, c.tIn, c.C, c.tOut);
     if (!X) return miterCorner(c);
@@ -313,11 +321,33 @@ function turnbackCorner(c: CornerCtx, side?: 'prev' | 'next' | 'both'): Vec[] {
   return dist(X, Y) < 1e-9 ? [X] : [Y, X];
 }
 
+/**
+ * Edge of a hem with several folds, from the hem's sew line (point X, where the adjacent seam's cut line
+ * reaches it) out to the hem's cut line at depth D. `u` = direction of the hem's sew line, `out` = a vector
+ * from the sew line to the cut line, `t` = direction in which the adjacent cut line crosses the sew line.
+ * In fold 1 the edge is the mirror image of the adjacent seam, in fold 2 it runs parallel to it again, and so
+ * on, so that every layer lies exactly on the adjacent seam when the hem is folded. What is left after the
+ * last fold width carries on the same way.
+ */
+function turnbackChain(X: Vec | null, u: Vec, out: Vec, t: Vec, ws: number[], D: number): Vec[] | null {
+  if (!X || D < 1e-9 || Math.hypot(out.x, out.y) < 1e-9) return null;
+  const n = norm(out), a = dot(t, u), b = dot(t, n);
+  if (b < 0.05) return null; // the adjacent seam does not cross the hem line outwards (reflex / flat corner)
+  const pts: Vec[] = [{ ...X }];
+  let depth = 0, cur = X;
+  for (let k = 0; depth < D - 1e-9 && k < 64; k++) {
+    const w = Math.min(k < ws.length ? ws[k] : D - depth, D - depth);
+    const e = add(mul(u, k % 2 === 0 ? -a : a), mul(n, b));
+    cur = add(cur, mul(e, w / b)); pts.push(cur); depth += w;
+  }
+  return pts;
+}
+
 function cornerGeometry(spec: CornerSpec | undefined, c: CornerCtx, piece: Piece, line: SizeLine, sizeId: SizeId, ai: number): Vec[] {
   if (!spec) return miterCorner(c);
   switch (spec.type) {
     case 'boxed': return boxedCorner(c, spec.extend ?? 'both');
-    case 'turnback': return turnbackCorner(c, spec.extend);
+    case 'turnback': return turnbackCorner(c, spec.extend, spec.folds);
     case 'angled': return angledCorner(c);
     case 'manual': {
       const mp = spec.manualPoints;
@@ -492,6 +522,71 @@ export function setSeam(doc: Document, pieceId: Id, fromAnchorId: Id, toAnchorId
     p.noSeam = false;
     afterSeamEdit(doc, p);
   });
+}
+
+/** Most folds a turn-back hem can have. */
+export const TURNBACK_MAX_FOLDS = 6;
+/**
+ * Turn-back hem on the grade segment(s) from `fromAnchorId` to `toAnchorId`: the seam allowance becomes the
+ * sum of `folds` (widths from the sew line outwards, each fold with its own value) and the two end corners
+ * become turn-back corners that mirror the adjacent seams at every fold. An empty list removes the
+ * turn-back corners again (the seam value stays).
+ */
+export function setTurnback(doc: Document, pieceId: Id, fromAnchorId: Id, toAnchorId: Id, folds: number[]): void {
+  if (folds.length > TURNBACK_MAX_FOLDS) throw new Error(`A turn-back can have at most ${TURNBACK_MAX_FOLDS} folds`);
+  if (folds.some(w => !Number.isFinite(w) || w <= 0)) throw new Error('Every turn-back value must be a number above 0');
+  doc.transact(folds.length ? 'Turn-back' : 'Remove turn-back', s => {
+    const p = findPiece(s, pieceId);
+    const run = segmentRange(p, fromAnchorId, toAnchorId);
+    const end = p.sew.points[gradeIndexOf(p, toAnchorId)];
+    if (!folds.length) {
+      if (run[0].corner?.type === 'turnback' && run[0].corner.extend === 'next') delete run[0].corner;
+      if (end.corner?.type === 'turnback' && end.corner.extend === 'prev') delete end.corner;
+    } else {
+      const total = folds.reduce((x, y) => x + y, 0);
+      for (const a of run) a.seamAfter = total;
+      for (const a of run.slice(1)) if (a.corner?.type === 'turnback') delete a.corner;
+      run[0].corner = { type: 'turnback', extend: 'next', folds: folds.slice() };
+      if (end !== run[0]) end.corner = { type: 'turnback', extend: 'prev', folds: folds.slice() };
+      p.noSeam = false;
+    }
+    afterSeamEdit(doc, p);
+  });
+}
+/** The turn-back folds of the grade segment that leaves `anchorId` (empty when it is not a turn-back hem). */
+export function turnbackOf(piece: Piece, anchorId: Id): number[] {
+  const c = piece.sew.points.find(a => a.id === anchorId)?.corner;
+  return c?.type === 'turnback' && c.extend === 'next' ? (c.folds ?? []).slice() : [];
+}
+/**
+ * Fold lines of the turn-back hems of a size (piece-local polylines): one line per fold except the last, at
+ * its depth from the sew line, from edge to edge of the allowance.
+ */
+export function turnbackFoldLines(piece: Piece, line: SizeLine, sizeId: SizeId): Vec[][] {
+  const out: Vec[][] = [];
+  if (piece.noSeam || !piece.sew.closed || (piece.cutMode === 'manual' && piece.manualCut)) return out;
+  if (!piece.sew.points.some(a => a.corner?.type === 'turnback' && (a.corner.folds?.length ?? 0) > 1)) return out;
+  let b: Built; try { b = build(piece, line, sizeId); } catch { return out; }
+  const g = b.r.gradeIdx, G = g.length;
+  const sign = isCCW(b.r.pts) ? -1 : 1;
+  const cps = finalCornerPts(piece, line, sizeId, b);
+  for (let k = 0; k < G; k++) {
+    const sp = b.spec[k];
+    if (!b.live[k] || sp?.type !== 'turnback' || sp.extend !== 'next' || (sp.folds?.length ?? 0) < 2) continue;
+    const n = sp.folds!.length, k2 = (k + 1) % G, sp2 = b.spec[k2];
+    const sew = dedupe(spanPolyline(b.r, g[k], g[k2])); if (sew.length < 2) continue;
+    const c0 = cps[k], c1 = cps[k2];
+    const end = sp2?.type === 'turnback' && sp2.extend === 'prev' && c1.length === c0.length;
+    let depth = 0;
+    for (let j = 1; j < n && j < c0.length - 1; j++) {
+      depth += sp.folds![j - 1];
+      let pl: Vec[];
+      try { pl = offsetPolyline(sew, { distances: depth * sign, join: 'miter', closed: false, cleanup: true }); } catch { continue; }
+      if (pl.length < 2) continue;
+      out.push([{ ...c0[j] }, ...pl.slice(1, -1), end ? { ...c1[c1.length - 1 - j] } : pl[pl.length - 1]]);
+    }
+  }
+  return out;
 }
 
 /** Whole-piece seam: sets the default and clears every per-segment override. */
@@ -737,6 +832,7 @@ function repairPiece(p: Piece, line: SizeLine): RepairReport {
     const badManual = c.type === 'manual' && (!c.manualPoints || c.manualPoints.length < 1 || c.manualPoints.length > MANUAL_CORNER_MAX_POINTS
       || c.manualPoints.some(q => !Number.isFinite(q?.x) || !Number.isFinite(q?.y)));
     if (!okType || badManual) { delete a.corner; rep.droppedCorners++; continue; }
+    if (c.folds && (c.type !== 'turnback' || !Array.isArray(c.folds) || c.folds.length > TURNBACK_MAX_FOLDS || c.folds.some(w => !Number.isFinite(w) || w <= 0))) delete c.folds;
     if (c.lockedPerSize) for (const k of Object.keys(c.lockedPerSize)) if (!sizeIds.has(k)) delete c.lockedPerSize[k];
   }
   // drop the redundant piece-level corner snapshot entries if lock is off
