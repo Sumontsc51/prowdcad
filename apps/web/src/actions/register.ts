@@ -18,7 +18,7 @@ import { registerCutPiece } from './cut-piece';
 import { registerGrade } from './grade-cmds';
 import { registerLive, deleteLive } from './live-cmds';
 import { registerMoveCmds, selectAllByFilter } from './move-cmds';
-import { needs } from './cmd-util';
+import { needs, must } from './cmd-util';
 import { ops, opStatus, type SegmentRef, type AnchorRef } from '../ops-bridge';
 import { showDialog, alertDialog, confirmDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
@@ -89,9 +89,53 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
   } });
   // Piece ▸ Copy piece / Paste piece: an in-app clipboard (it survives File ▸ New / Open within the session)
   // Piece ▸ mirror and unfold, in one place
-  registerCommand({ id: 'piece.mirror', title: 'Mirror piece (mirrored copy)', menu: 'Piece', group: 0, enabled: hasPiece, run: () => {
+  // Mirror piece, the way pattern CAD users know it: the piece is half + mirror line, the other half is generated and stays linked.
+  //   Mirror piece   — click the mirror line: a straight line of the outline (the half opens around it) or an internal line across a full piece (the smaller side is replaced by the mirror)
+  //   Fold mirror    — show only the working half        Unfold mirror — show the full piece again (still linked)
+  //   Open mirror    — break the link: an ordinary full piece
+  const mirrored = needs((c: CommandCtx) => !!c.app.primaryPiece()?.half, 'a mirrored piece (Piece ▸ Mirror piece)');
+  const mirrorView = (open: boolean) => {
+    const ps = selPieces().filter(p => p.half);
+    if (!ps.length) throw new Error('Select a mirrored piece');
+    tx(open ? 'Unfold mirror' : 'Fold mirror', () => { for (const p of ps) app.doc.piece(p.id).half!.openAtOutput = open; });
+    app.status(open ? 'Mirror unfolded: the full piece, both halves linked' : 'Mirror folded: you work on the half, the mirror line is the dash-dot line');
+  };
+  registerCommand({ id: 'piece.mirror', title: 'Mirror piece…', menu: 'Piece', group: 0, run: async () => {
+    const one = app.sel.pieces.length === 1 ? app.sel.pieces[0] : undefined;
+    const r = await must(app, { kind: 'contour', contour: 'any', pieceId: one, prompt: 'Mirror piece: click the mirror line (a straight line of the outline, or an internal line across the piece)' }, 'contour');
+    const { piece, contour } = r.hit;
+    if (piece.half) throw new Error(`${piece.name} is already a mirrored piece (Piece ▸ Open mirror makes it an ordinary piece first)`);
+    const P = contour.points;
+    try {
+      if (contour.id === piece.sew.id) {
+        const a = P.find(q => q.id === r.hit.from), b = P.find(q => q.id === r.hit.to);
+        if (!a || !b) throw new Error('Click a line of the outline between two points');
+        ops.setHalf(app.doc, piece.id, { a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y } }, { openAtOutput: true });
+      } else {
+        if (contour.closed || P.length < 2) throw new Error('The mirror line must be an open, straight internal line');
+        const a = P[0], b = P[P.length - 1];
+        tx('Mirror piece', () => {
+          ops.setHalf(app.doc, piece.id, { a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y } }, { openAtOutput: true, trim: true });
+          const q = app.doc.piece(piece.id); q.internals = q.internals.filter(c => c.id !== contour.id); // the clicked line is the mirror line now
+        });
+      }
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      throw new Error(/straight sew edge/.test(m) ? 'The mirror line must be straight (a straight line of the outline, with no point in between)' : m);
+    }
+    app.sel = { pieces: [piece.id], anchors: [] };
+    app.status(`${piece.name} is mirrored · the other half follows every change · Fold mirror shows the half, Open mirror breaks the link`);
+  } });
+  registerCommand({ id: 'piece.foldMirror', title: 'Fold mirror (show the half)', menu: 'Piece', group: 0, enabled: c => mirrored(c) && c.app.primaryPiece()!.half!.openAtOutput !== false, run: () => mirrorView(false) });
+  registerCommand({ id: 'piece.unfoldMirror', title: 'Unfold mirror (show the full piece)', menu: 'Piece', group: 0, enabled: c => mirrored(c) && c.app.primaryPiece()!.half!.openAtOutput === false, run: () => mirrorView(true) });
+  registerCommand({ id: 'piece.openMirror', title: 'Open mirror (break the link)', menu: 'Piece', group: 0, enabled: mirrored, run: () => {
+    const ps = selPieces().filter(p => p.half);
+    tx('Open mirror', () => { for (const p of ps) ops.openHalf(app.doc, p.id); });
+    app.status('Mirror opened: an ordinary full piece, the two sides are no longer linked');
+  } });
+  registerCommand({ id: 'piece.mirrorCopy', title: 'Mirrored copy (separate piece)', menu: 'Piece', group: 0, enabled: hasPiece, run: () => {
     const ids: string[] = [];
-    tx('Mirror piece', () => {
+    tx('Mirrored copy', () => {
       for (const p of selPieces()) {
         const c = remapIds(deepClone(p));
         c.name = p.name + ' MIRROR';
@@ -107,8 +151,6 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
     app.sel = { pieces: ids, anchors: [] };
     app.status(`${ids.length} mirrored cop${ids.length > 1 ? 'ies' : 'y'} made · it is a separate piece`);
   } });
-  registerCommand({ id: 'piece.mirrorLine', title: 'Mirror line: work on half the piece…', menu: 'Piece', group: 0, enabled: hasPiece, run: () => runCommand('cut.halfSet') });
-  registerCommand({ id: 'piece.unfoldMirror', title: 'Unfold mirror (open the half piece)', menu: 'Piece', group: 0, enabled: c => !!c.app.primaryPiece()?.half, run: () => runCommand('cut.halfOpen') });
   registerCommand({ id: 'piece.unfold', title: 'Unfold piece', menu: 'Piece', group: 0, enabled: c => c.app.sel.pieces.some(id => !!c.app.piece(id)?.fold), run: () => { unfoldPieces(app, app.sel.pieces); } });
   registerCommand({ id: 'piece.unfoldAll', title: 'Unfold all pieces', menu: 'Piece', group: 0, enabled: c => c.app.doc.style.pieces.some(p => !!p.fold), run: () => { unfoldPieces(app, foldedIds(app)); } });
   registerCommand({ id: 'piece.copy', title: 'Copy piece', menu: 'Piece', group: 0, hotkey: 'Ctrl+C', enabled: hasPiece, run: () => {
