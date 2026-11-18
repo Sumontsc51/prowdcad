@@ -153,6 +153,26 @@ async function nested(h, fixtures) {
     await P.locator('.side-arrows [data-side="less"]').click(); await h.settle(120); const e = await wd();
     return { got: `panel/sheet ${a} → hidden ${b} → ${c} → wide ${d} (saved ${saved}) → ${e}`, pass: b[0] === 0 && b[1] > a[1] + 150 && c[0] === a[0] && d[0] > c[0] + 40 && saved === 'wide' && e[0] === a[0] };
   });
+  await T('Marker making: order → Auto plan cuts it exactly; editing a ratio shows over / short; ▶ nests the marker with no overlaps; Stop keeps the best layout; Esc closes', async () => {
+    const P = h.page;
+    await h.ev(() => { void window.__e2e.C.runCommand('marker.open'); }); await P.waitForSelector('.mk-root'); await h.settle(150);
+    for (const [k, n] of Object.entries({ S: 60, M: 120, L: 120, XL: 60 })) { const i = P.locator(`[data-mk-order="${k}"]`); await i.fill(String(n)); await i.press('Tab'); await h.settle(60); }
+    await P.locator('[data-mk="auto"]').click(); await h.settle(200);
+    const plan = await h.ev(() => { const E = window.__e2e, m = E.app.style.meta.marker, ids = E.app.sizeLine().sizes.map(s => s.id); const cut = ids.map(id => m.rows.reduce((a, r) => a + (r.ratio[id] || 0) * r.plies, 0)); return { rows: m.rows.length, cut: cut.join(), order: ids.map(id => m.order[id] || 0).join(), big: m.rows.every(r => r.plies <= m.maxPlies && Object.values(r.ratio).reduce((a, b) => a + b, 0) <= m.maxBundles) }; });
+    const ok0 = await P.locator('.mk-diff td.short, .mk-diff td.over').count();
+    const first = P.locator('.mk-row').first().locator('input.mk-n').nth(1); const v0 = await first.inputValue(); await first.fill(String((Number(v0) || 0) + 1)); await first.press('Tab'); await h.settle(120);
+    const off = await P.locator('.mk-diff td.over').count();
+    await h.key('Control+z'); await h.settle(120);
+    const back = await P.locator('.mk-diff td.over').count();
+    await P.locator('[data-mk="nest"]').click(); await P.waitForSelector('[data-mk="stop"]');
+    await P.waitForFunction(() => /[1-9]\d* of \d+ parts laid/.test(document.querySelector('.mk-status').textContent) && !/^.* 0 of/.test(document.querySelector('.mk-status').textContent), null, { timeout: 20000 });
+    await P.waitForTimeout(2500); await P.locator('[data-mk="stop"]').click(); await h.settle(300);
+    const res = await h.ev(() => { const E = window.__e2e, m = E.app.style.meta.marker, r = m.rows[0]; return { laid: Object.keys(r.placements).length, status: document.querySelector('.mk-status').textContent, bad: document.querySelectorAll('.mk-part.bad').length, parts: document.querySelectorAll('.mk-part').length }; });
+    await h.key('Escape'); await h.settle(150);
+    const closed = await P.locator('.mk-root').count();
+    await h.ev(() => { const E = window.__e2e; E.app.doc.transact('clear marker', s => { delete s.meta.marker; }); });
+    return { got: `${plan.rows} markers, cut ${plan.cut} of ${plan.order}; off-plan cells ${ok0} → ${off} → ${back}; nested ${res.laid}/${res.parts} parts, ${res.bad} bad; closed ${closed === 0}`, pass: plan.rows >= 1 && plan.cut === plan.order && plan.big && ok0 === 0 && off === 1 && back === 0 && res.laid === res.parts && res.parts > 0 && res.bad === 0 && closed === 0 };
+  });
   await T('Size chip click switches active size; selection kept', async () => { await h.selectA('FRONT', 'UA'); await h.page.locator('.sz-chip', { hasText: 'XL' }).click(); await h.settle(); const s = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); const sel = await h.sel(); return { got: `${s}, sel ${sel.anchors}`, pass: s === 'XL' && sel.anchors[0] === 'FRONT/UA' }; });
   await T('Ctrl+] / Ctrl+[ step sizes', async () => { await h.key('Control+]'); await h.key('Control+]'); const a = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); await h.key('Control+['); const b = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); return { got: `${a} then ${b}`, pass: a === 'XL' && b === 'L' }; });
   await T('Nested view: drag the L instance of UA → only L grading of UA changes', async () => {
@@ -539,7 +559,7 @@ async function fsaProbe(h, fixtures) {
 async function noSelectionProbe(h, fixtures, registry) {
   const out = [];
   for (const c of registry) {
-    if (!c.menu || /^file\.(open|import|merge|save|saveAs)$|^art\.place$|^piece\.merge$|^file\.new$/.test(c.id)) continue;
+    if (!c.menu || /^file\.(open|import|merge|save|saveAs)$|^art\.place$|^piece\.merge$|^file\.new$|^marker\.open$/.test(c.id)) continue; // marker.open: a room of its own over the app, covered by the marker test
     await h.reset(fixtures.base);
     const s0 = await h.stable();
     let res = {};
