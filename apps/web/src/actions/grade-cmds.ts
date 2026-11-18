@@ -4,6 +4,7 @@
  * rule library & movement program windows, size housekeeping, axis-2 variation setup.
  * The same commands back the grading-table toolbar.
  */
+import { openSizeTable, sizeTableOpen } from '../panels/sizetable';
 import type { GradeClipboard, Id } from '@prowdcad/kernel';
 import type { App } from '../app';
 import { registerCommand, type CommandCtx } from '../commands';
@@ -36,6 +37,7 @@ export function registerGrade(app: App) {
   };
   registerCommand({ id: 'grade.table', title: 'Grading table', menu: 'Grade', group: 0, hotkey: 'Ctrl+G', checked: () => settings.panels.grading, run: () => { settings.panels.grading = !settings.panels.grading; saveSettings(); } });
   registerCommand({ id: 'grade.nested', title: 'Nested view (all sizes)', menu: 'Grade', group: 0, hotkey: 'Alt+N', checked: c => c.app.nested, run: () => { app.nested = !app.nested; } });
+  registerCommand({ id: 'size.table', title: 'Size table… (names, base, import / export, sizes per piece)', menu: 'Grade', group: 0, checked: () => sizeTableOpen(), run: () => { openSizeTable(app); } });
   registerCommand({ id: 'grade.absolute', title: 'Show absolute values', menu: 'Grade', group: 0, checked: c => c.app.gradeAbsolute, run: () => { app.setGradeView(app.gradeAbsolute && !app.gradeSmallLarge ? 'step' : 'total'); } });
   registerCommand({ id: 'grade.smallLarge', title: 'Show small → large increments', menu: 'Grade', group: 0, checked: c => c.app.gradeSmallLarge, run: () => { app.setGradeView(app.gradeSmallLarge ? 'step' : 'inc'); } });
   registerCommand({ id: 'grade.tracking', title: 'Point tracking (arrow keys)', menu: 'Grade', group: 0, hotkey: 'Alt+T', checked: c => c.app.pointTracking, run: () => { app.pointTracking = !app.pointTracking; app.status(app.pointTracking ? 'Point tracking ON: ←/→ point, ↑/↓ size' : 'Point tracking OFF'); } });
