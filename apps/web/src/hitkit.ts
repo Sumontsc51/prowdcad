@@ -210,3 +210,30 @@ export function linePolyWorld(app: App, g: { pieceId: Id; contourId: Id; from: I
   for (let k = a; k <= b; k++) out.push(lineWorld(pc, folded, rc.pts[k % n]));
   return out;
 }
+
+// ───────────── working on the folded-over side of a folded piece ─────────────
+/** A sheet point seen through the fold of a piece: where the folded-over drawing shows it ⇄ where it really is. */
+export function foldWorld(piece: Piece, w: Vec): Vec { return piece.fold ? toWorld(piece, ops.foldMirror(piece.fold, toLocal(piece, w))) : w; }
+/** True when this point of the piece (piece-local) is on its folded-over part. */
+export function pointFolded(piece: Piece, local: Vec): boolean { return !!piece.fold && ops.onFoldedPart(piece, local); }
+/**
+ * The folded piece whose folded-over drawing is under the cursor: one of its points (the hit target) or one
+ * of its lines within a few px. The tools then get the pointer mapped through the fold, so they work on the
+ * real point / line while the user works on the drawing where the fold shows it.
+ */
+export function foldCtxAt(app: App, w: Vec, hit: { kind: string; pieceId?: string; contourId?: string; anchorId?: string }): string | null {
+  if ((hit.kind === 'anchor' || hit.kind === 'handle') && hit.pieceId) {
+    const p = app.piece(hit.pieceId); if (!p?.fold) return null;
+    const c = p.sew.id === hit.contourId ? p.sew : p.internals.find(x => x.id === hit.contourId); const i = c ? c.points.findIndex(a => a.id === hit.anchorId) : -1;
+    if (!c || i < 0) return null;
+    const r = resolveFor(app.doc, p, app.sizeOf(p)); const rc = c === p.sew ? r.sew : r.internals[p.internals.indexOf(c)];
+    return rc && pointFolded(p, rc.anchorPos[i]) ? p.id : null;
+  }
+  let best: { id: string; d: number } | null = null;
+  for (const p of app.pieces()) {
+    if (!p.fold || app.hiddenPieces.has(p.id) || p.locked) continue;
+    const h = contourNear(app, foldWorld(p, w), { pieceId: p.id, tolPx: 7 });
+    if (h && pointFolded(p, h.local) && (!best || h.dpx < best.d)) best = { id: p.id, d: h.dpx };
+  }
+  return best ? best.id : null;
+}

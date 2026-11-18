@@ -82,6 +82,8 @@ export class App {
   /** live drag previews: pieceId → mutated clone (committed with one transact on release) */
   preview = new Map<Id, Piece>();
   cursorWorld: Vec | null = null;
+  /** the folded piece whose folded-over side the pointer is working on (pointer mapped through the fold); null = none */
+  foldCtx: string | null = null;
   statusMsg = '';
   /** grading table point-tracking mode (arrow keys step through grade anchors) */
   pointTracking = false;
