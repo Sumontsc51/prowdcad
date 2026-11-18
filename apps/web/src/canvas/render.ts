@@ -378,9 +378,12 @@ export function renderOverlay(app: App): string {
           if (generated && ai > 0 && ai < c.points.length - 1) return;
           if (!isActive && a.kind !== 'grade') return; // nested sizes: grade anchors only
           if (!isSel && !allCurve && a.kind !== 'grade') return;     // unselected pieces: grade anchors only (Move tools: all)
-          const s = v.toScreen(toWorld(p, rc.anchorPos[ai]));
+          // a point of the folded-over part is drawn (and grabbed) where the fold shows it
+          const fdA = p.fold && ops.onFoldedPart(p, rc.anchorPos[ai]) ? p.fold : null;
+          const fq = (q: Vec) => fdA ? ops.foldMirror(fdA, q) : q;
+          const s = v.toScreen(toWorld(p, fq(rc.anchorPos[ai])));
           const selA = isActive && app.isAnchorSelected({ anchorId: a.id });
-          const col = !isActive ? sizeColor(line, sid) : selA ? '#b35900' : isSel ? '#1d2330' : '#7b8190';
+          const col = !isActive ? sizeColor(line, sid) : selA ? '#b35900' : fdA ? '#2f6fe0' : isSel ? '#1d2330' : '#7b8190';
           const fill = selA ? SEL_COLOR : '#ffffff';
           const sz = selA ? 4.4 : isSel ? 3.6 : 2.6;
           if (a.kind === 'grade') anchorsOut.push(`<rect x="${fs(s.x - sz)}" y="${fs(s.y - sz)}" width="${fs(sz * 2)}" height="${fs(sz * 2)}" fill="${fill}" stroke="${col}" stroke-width="1.3"/>`);
@@ -401,7 +404,7 @@ export function renderOverlay(app: App): string {
             for (const which of ['in', 'out'] as const) {
               if (which === 'in' ? !hasIn : !hasOut) continue;
               const hp = which === 'in' ? hh.hIn : hh.hOut;
-              const hs = v.toScreen(toWorld(p, hp));
+              const hs = v.toScreen(toWorld(p, fq(hp)));
               if (Math.hypot(hs.x - s.x, hs.y - s.y) < 1.5) continue;
               const explicit = which === 'in' ? !!a.hIn : !!a.hOut;
               handlesOut.push(`<line x1="${fs(s.x)}" y1="${fs(s.y)}" x2="${fs(hs.x)}" y2="${fs(hs.y)}" stroke="#d6309b" stroke-width="1"${explicit ? '' : ' stroke-dasharray="3 2"'}/>` +
@@ -416,7 +419,7 @@ export function renderOverlay(app: App): string {
   }
   out.push(liveHl.join(''), selectionOverlay(app), handlesOut.join(''), anchorsOut.join(''));
   const tool = app.tool?.overlay?.(app);
-  if (tool) out.push(tool);
+  if (tool) out.push(foldOverlay(app, tool));
   // live hit targets sit below anchor / handle targets, so points stay grabbable on top of dart legs
   out.push(hitLive.join(''), hitAnchors.join(''), hitHandles.join(''));
   return out.join('');
@@ -493,4 +496,27 @@ function anchorTip(a: { kind: string; name?: string; grade?: Record<string, unkn
   return Object.keys(a.grade ?? {}).length
     ? `${head} · pinned: own grading, keeps its position when a neighbour moves (Point ▸ Unpin)`
     : `${head} · follows its neighbouring grade points in graded sizes (no own grading) · Point ▸ Pin curve point keeps it in place`;
+}
+
+/**
+ * While the pointer works on the folded-over side of a folded piece, the tool draws its overlay where the
+ * points really are; it is shown through the fold instead (reflected about the fold line on screen), with
+ * the texts turned back so they stay readable.
+ */
+function foldOverlay(app: App, svg: string): string {
+  const p = app.foldCtx ? app.piece(app.foldCtx) : null;
+  if (!p?.fold || app.tool?.foldAware) return svg;
+  const A = app.view.toScreen(toWorld(p, p.fold.a)), B = app.view.toScreen(toWorld(p, p.fold.b));
+  let dx = B.x - A.x, dy = B.y - A.y; const L = Math.hypot(dx, dy); if (L < 1e-6) return svg;
+  dx /= L; dy /= L;
+  const a = 2 * dx * dx - 1, b = 2 * dx * dy, c = b, d = 2 * dy * dy - 1;
+  const e = A.x - (a * A.x + c * A.y), f2 = A.y - (b * A.x + d * A.y);
+  const n = (x: number) => x.toFixed(4);
+  const txt = svg.replace(/<text\b([^>]*)>/g, (m, at: string) => {
+    if (/\btransform=/.test(at)) return m;
+    const x = Number(/\bx="([-\d.e]+)"/.exec(at)?.[1]), y = Number(/\by="([-\d.e]+)"/.exec(at)?.[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return m;
+    return `<text transform="matrix(${n(a)} ${n(b)} ${n(c)} ${n(d)} ${n(x - (a * x + c * y))} ${n(y - (b * x + d * y))})"${at}>`;
+  });
+  return `<g transform="matrix(${n(a)} ${n(b)} ${n(c)} ${n(d)} ${n(e)} ${n(f2)})" data-fold-overlay="1">${txt}</g>`;
 }

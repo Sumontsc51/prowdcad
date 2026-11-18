@@ -12,6 +12,7 @@ import { settings, saveSettings } from '../settings';
 import { allPiecesBox } from '../geometry';
 import { PX_PER_MM_100 } from './view';
 import { reportError } from '../commands';
+import { foldCtxAt, foldWorld } from '../hitkit';
 
 const NS = 'http://www.w3.org/2000/svg';
 const RULER = 20;
@@ -89,8 +90,21 @@ export class Canvas {
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
   ptr(e: PointerEvent | MouseEvent): Ptr {
-    const s = this.screenOf(e);
-    return { s, w: this.app.view.toWorld(s), e, hit: this.decode(e) };
+    const app = this.app, t = app.tool;
+    const s = this.screenOf(e), w = app.view.toWorld(s), hit = this.decode(e);
+    // working on the folded-over side of a folded piece: the pointer is mapped through the fold, so every
+    // tool edits the real point / line while the user works on the drawing where the fold shows it.
+    // The mapping is fixed for the length of a gesture (button down, or the tool is in the middle of something).
+    let id: string | null = null;
+    if (t && !t.foldAware && app.pieces().some(p => p.fold)) {
+      const keep = e.type === 'pointerup' || e.type === 'pointercancel' || (e.type === 'pointermove' && (e.buttons & 1) === 1) || !!t.busy?.(app);
+      id = keep ? app.foldCtx : foldCtxAt(app, w, hit);
+      if (id && !app.piece(id)?.fold) id = null;
+    }
+    if (id !== app.foldCtx) { app.foldCtx = id; app.invalidate('canvas'); }
+    if (!id) return { s, w, e, hit };
+    const wm = foldWorld(app.piece(id)!, w);
+    return { s: app.view.toScreen(wm), w: wm, e, hit: hit.kind === 'anchor' || hit.kind === 'handle' || hit.kind === 'live' ? hit : { kind: 'piece', pieceId: id } };
   }
   decode(e: { clientX: number; clientY: number; target: EventTarget | null }): Hit {
     // pointer capture retargets events to the svg, so look up the element under the cursor

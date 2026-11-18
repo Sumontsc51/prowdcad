@@ -9,7 +9,8 @@
 import type { Vec } from '@prowdcad/kernel';
 import type { App } from '../app';
 import { settings } from '../settings';
-import { resolveFor, toWorld } from '../geometry';
+import { resolveFor, toWorld, toLocal } from '../geometry';
+import { ops } from '../ops-bridge';
 
 export type SnapKind = 'anchor' | 'int' | 'mid' | 'perp' | 'guide' | 'grid' | 'none';
 export interface SnapResult { p: Vec; kind: SnapKind; label?: string }
@@ -73,7 +74,16 @@ function nearSegs(l: Line, w: Vec, tol: number): number[] {
 }
 
 export function snapPoint(app: App, w: Vec, opt: { exclude?: Set<string>; tolPx?: number; noGrid?: boolean; from?: Vec } = {}): SnapResult {
-  const res = snapCore(app, w, opt);
+  let res: SnapResult | null = null;
+  // working on the folded-over side: snap to what lies under the cursor on the sheet (the layer underneath, other
+  // pieces) first, and take that place back through the fold
+  const fp = app.foldCtx ? app.piece(app.foldCtx) : null;
+  if (fp?.fold) {
+    const m = (q: Vec) => toWorld(fp, ops.foldMirror(fp.fold!, toLocal(fp, q)));
+    const seen = snapCore(app, m(w), { ...opt, noGrid: true, from: opt.from ? m(opt.from) : undefined });
+    if (seen.kind !== 'none') res = { ...seen, p: m(seen.p) };
+  }
+  res ??= snapCore(app, w, opt);
   lastSnap = res;
   return res;
 }
