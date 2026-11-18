@@ -16,7 +16,7 @@ import { runOrPick, anchorOrPick, internalOrPick, pieceOrPick, Cancelled } from 
 import { hasPiece, hasAnchor, onePiece, selPieces, must, pickPointLocal } from './cmd-util';
 import { seamDialog } from '../tools/seam';
 import { openNotchGrid } from '../panels/notchgrid';
-import { duplicateDrillDialog, notchType } from '../tools/marks';
+import { duplicateDrillDialog, notchType, notchOn, setNotchOn, NOTCH_ON } from '../tools/marks';
 import { pick } from '../tools/pick';
 import { runWorld, screenPath } from '../hitkit';
 import { toWorld, toLocal, resolveFor } from '../geometry';
@@ -52,6 +52,9 @@ export async function trimCornerFlow(app: App, ref?: AnchorRef) {
   toast('Corner trimmed (manual)', 'ok');
 }
 
+/** corner notch sides: the previous line continued past the corner, the next line extended back, both, none */
+const CORNER_SIDES = [{ value: 'none', label: 'None' }, { value: 'prev', label: 'One side (line before, continued)' }, { value: 'next', label: 'Other side (line after, extended back)' }, { value: 'both', label: 'Both sides' }];
+
 export async function cornerGallery(app: App, ref?: AnchorRef, at?: { x: number; y: number }) {
   const c = ref ?? await sewCorner(app);
   const piece = app.doc.piece(c.pieceId);
@@ -71,13 +74,22 @@ export async function cornerGallery(app: App, ref?: AnchorRef, at?: { x: number;
     grid.append(b);
   }
   const revert = h('button.btn.sm', { onclick: () => { close(); ops.revertCorner(app.doc, c.pieceId, c.anchorId); } }, 'Revert to miter');
+  // notch on the corner: one side, the other side, both or none (kept with any corner type)
+  const side = ops.cornerNotchSide(piece, c.anchorId);
+  const nrow = h('div.cg-notch', {}, h('span.cg-notch-t', {}, 'Notch on the corner'));
+  for (const it of [{ v: 'none', l: 'None' }, { v: 'prev', l: 'One side' }, { v: 'next', l: 'Other side' }, { v: 'both', l: 'Both sides' }] as const) {
+    nrow.append(h('button.btn.sm' + (side === it.v ? '.on' : ''), { 'data-corner-notch': it.v, title: CORNER_SIDES.find(o => o.value === it.v)!.label, onclick: () => {
+      close();
+      try { ops.setCornerNotches(app.doc, app.doc.piece(c.pieceId), c.anchorId, it.v, { contourId: piece.sew.id, type: notchType, on: notchOn }); app.status(it.v === 'none' ? 'Corner notch removed' : `Corner notch: ${it.l.toLowerCase()}`); } catch (err) { toast((err as Error).message, 'error'); }
+    } }, it.l));
+  }
   const pos = at ?? (() => {
     const q = app.resolveRef(c); const r = q ? resolveFor(app.doc, q.piece, app.sizeOf(q.piece)) : null;
     const w = q && r ? toWorld(q.piece, r.sew.anchorPos[q.index]) : { x: 0, y: 0 };
     const s = app.view.toScreen(w); const box = document.querySelector('#canvas svg.sheet')?.getBoundingClientRect();
     return { x: (box?.left ?? 0) + s.x + 12, y: (box?.top ?? 0) + s.y + 12 };
   })();
-  close = popover(pos.x, pos.y, h('div', {}, h('div.pop-title', {}, `Corner — ${piece.name}`), grid, h('div.btnrow', {}, revert)));
+  close = popover(pos.x, pos.y, h('div', {}, h('div.pop-title', {}, `Corner — ${piece.name}`), grid, nrow, h('div.btnrow', {}, revert)));
 }
 
 export function registerSeamNotch(app: App) {
@@ -173,11 +185,13 @@ export function registerSeamNotch(app: App) {
   }) });
   registerCommand({ id: 'notch.corner', title: 'Corner notch…', menu: 'Notch', group: 1, run: async () => {
     const c = await anchorOrPick(app, 'Click a corner (grade point)', { gradeOnly: true });
+    const cur = ops.cornerNotchSide(app.doc.piece(c.pieceId), c.anchorId);
     const r = await rememberedDialog('notch.corner', { title: 'Corner notch', fields: [
-      { kind: 'radio', key: 'dir', label: 'Along', value: 'prev', options: [{ value: 'prev', label: 'Previous segment (continued)' }, { value: 'next', label: 'Next segment (extended back)' }] },
+      { kind: 'radio', key: 'dir', label: 'Side', value: cur === 'none' ? 'prev' : cur, options: CORNER_SIDES.filter(o => o.value !== 'none') },
       { kind: 'select', key: 'type', label: 'Type', value: notchType, options: (['slit', 'T', 'V', 'U', 'castle'] as NotchType[]).map(t => ({ value: t, label: t })) },
+      { kind: 'radio', key: 'on', label: 'Mark on', value: notchOn, options: NOTCH_ON },
     ] });
-    if (r) ops.addCornerNotch(app.doc, app.doc.piece(c.pieceId), c.anchorId, r.dir as 'prev' | 'next', { contourId: c.contourId, type: r.type as NotchType });
+    if (r) { setNotchOn(r.on as typeof notchOn); ops.setCornerNotches(app.doc, app.doc.piece(c.pieceId), c.anchorId, r.dir as 'prev' | 'next' | 'both', { contourId: c.contourId, type: r.type as NotchType, on: notchOn }); }
   } });
   registerCommand({ id: 'notch.cross', title: 'Cross notch (from internal end)…', menu: 'Notch', group: 1, run: async () => {
     const res = await must(app, { kind: 'anchor', prompt: 'Click the END point of an internal line', contour: 'internal' }, 'anchor');
