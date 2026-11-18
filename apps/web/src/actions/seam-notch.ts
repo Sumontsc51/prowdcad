@@ -21,7 +21,8 @@ import { pick } from '../tools/pick';
 import { runWorld, screenPath } from '../hitkit';
 import { toWorld, toLocal, resolveFor } from '../geometry';
 import { pickFiles } from './file';
-import { fmt, unitLabel } from '../units-ui';
+import { fmt, unitLabel, parseLen } from '../units-ui';
+import { TURNBACK_MAX_FOLDS } from '@prowdcad/kernel';
 import { screenMarker } from '../tools/common';
 
 const CORNERS: { spec: CornerSpec | 'manual'; label: string; svg: string }[] = [
@@ -89,6 +90,29 @@ export function registerSeamNotch(app: App) {
     const p = app.doc.piece(run.pieceId);
     const v = await seamDialog(app, `Seam — ${p.name}`, p.sew.points.find(a => a.id === run.from)?.seamAfter ?? p.seamDefault);
     if (v != null) ops.setSeam(app.doc, run.pieceId, run.from, run.to, v);
+  } });
+  // Turn-back hem: the allowance of a line is made of folds, each with its own value; the edge mirrors the adjacent seams at every fold
+  registerCommand({ id: 'seam.turnback', title: 'Turn-back hem (folds)…', menu: 'Seam', group: 0, run: async () => {
+    const run = await runOrPick(app, 'Turn-back: click the hem line (a sew-line segment)', 'sew');
+    const p = app.doc.piece(run.pieceId);
+    const cur = ops.turnbackOf(p, run.from);
+    const seam = p.sew.points.find(a => a.id === run.from)?.seamAfter ?? p.seamDefault;
+    const parse = (t: string): number[] => String(t).split(/[,;+]/).map(x => x.trim()).filter(Boolean).map(x => parseLen(x));
+    const r = await showDialog({
+      title: `Turn-back hem — ${p.name}`,
+      message: `Type the width of every fold, from the sew line outwards, separated by commas (${unitLabel()}).\nOne value = a single turn-back. Two or more = a hem turned in several times, each fold with its own value.\nThe seam allowance of the line becomes their sum, and the ends mirror the seams next to it at every fold.\nLeave it empty to remove the turn-back.`,
+      fields: [{ kind: 'text', key: 'folds', label: 'Fold values', value: (cur.length ? cur : seam > 0 ? [seam] : []).map(w => fmt(w)).join(', '), placeholder: 'e.g. 30, 10' }],
+      validate: v => {
+        let w: number[]; try { w = parse(String(v.folds)); } catch { return 'Type numbers separated by commas, e.g. 30, 10'; }
+        if (w.some(x => !Number.isFinite(x) || x <= 0)) return 'Every value must be a number above 0';
+        if (w.length > TURNBACK_MAX_FOLDS) return `At most ${TURNBACK_MAX_FOLDS} folds`;
+        return null;
+      },
+    });
+    if (!r) return;
+    const w = parse(String(r.folds));
+    ops.setTurnback(app.doc, run.pieceId, run.from, run.to, w);
+    app.status(w.length ? `Turn-back: ${w.length} fold${w.length > 1 ? 's' : ''} (${w.map(x => fmt(x)).join(' + ')}) = ${fmt(w.reduce((a, b) => a + b, 0))} ${unitLabel()} seam` : 'Turn-back removed (the seam value stays)');
   } });
   registerCommand({ id: 'seam.piece', title: 'Whole-piece seam…', menu: 'Seam', group: 0, enabled: hasPiece, run: async () => {
     const p = onePiece(app);
