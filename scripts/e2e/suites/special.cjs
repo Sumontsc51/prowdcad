@@ -128,6 +128,21 @@ async function nested(h, fixtures) {
   await T('Alt+N toggles nested view and draws every size', async () => { await h.selectPiece('FRONT'); const n0 = await h.page.locator('svg.sheet .g-world path').count(); await h.key('Alt+n'); const n1 = await h.page.locator('svg.sheet .g-world path').count(); const on = await h.ev(() => window.__e2e.app.nested); return { got: `paths ${n0} → ${n1}, nested=${on}`, pass: on && n1 > n0 }; });
   await T('Sizes panel checkbox toggles nested', async () => { await h.page.locator('.sz-top input[type=checkbox]').check(); const on = await h.ev(() => window.__e2e.app.nested); return { got: String(on), pass: on }; });
   await T('Status-bar size → L: inspector shows "X (L)" and resolved L position', async () => { await h.selectA('FRONT', 'UA'); await h.page.locator('select.sb-size').selectOption({ label: 'L' }); await h.settle(); const lab = await h.page.locator('section[data-panel="inspector"] .plabel').filter({ hasText: /^X/ }).first().textContent(); const v = await inspInput(h, /^X/).inputValue(); return { got: `${lab} = ${v}`, pass: /\(L\)/.test(lab) && near(+v, 270, 0.01) }; });
+  await T('Side panel: every piece has its picture beside its name; Properties groups collapse and stay that way; Sizes ▸ More lists the size actions', async () => {
+    await h.selectPiece('FRONT'); await h.settle();
+    const P = h.page;
+    const thumbs = await P.locator('section[data-panel="pieces"] .pitem svg.pthumb').count(), items = await P.locator('section[data-panel="pieces"] .pitem').count();
+    const groups = await P.locator('section[data-panel="inspector"] .pgroup').evaluateAll(els => els.map(e => e.dataset.group + (e.classList.contains('collapsed') ? '-' : '+')).join(' '));
+    await P.locator('[data-group="pc.info"] .pg-head').click(); await h.settle();
+    await h.selectPiece('BACK'); await h.settle();
+    const kept = await P.locator('[data-group="pc.info"]').evaluate(e => !e.classList.contains('collapsed'));
+    const rows = await P.locator('[data-group="pc.info"] .prow:visible').count();
+    await P.locator('[data-group="pc.info"] .pg-head').click(); await h.settle();
+    await P.locator('[data-act="size-more"]').click(); await h.settle();
+    const menu = (await P.locator('.ctx-menu .menu-item').allTextContents()).join(' | ');
+    await h.escapeAll();
+    return { got: `${thumbs}/${items} pictures; groups ${groups}; info kept open ${kept} (${rows} rows); More: ${menu.slice(0, 120)}`, pass: thumbs === items && items >= 2 && /pc\.piece\+/.test(groups) && /pc\.info-/.test(groups) && kept && rows >= 3 && /Insert a size/.test(menu) && /Append a size/.test(menu) };
+  });
   await T('Size chip click switches active size; selection kept', async () => { await h.selectA('FRONT', 'UA'); await h.page.locator('.sz-chip', { hasText: 'XL' }).click(); await h.settle(); const s = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); const sel = await h.sel(); return { got: `${s}, sel ${sel.anchors}`, pass: s === 'XL' && sel.anchors[0] === 'FRONT/UA' }; });
   await T('Ctrl+] / Ctrl+[ step sizes', async () => { await h.key('Control+]'); await h.key('Control+]'); const a = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); await h.key('Control+['); const b = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); return { got: `${a} then ${b}`, pass: a === 'XL' && b === 'L' }; });
   await T('Nested view: drag the L instance of UA → only L grading of UA changes', async () => {
