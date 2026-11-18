@@ -37,6 +37,7 @@ export function unfoldPieces(app: App, ids: string[]): number {
 export const foldedIds = (app: App) => app.doc.style.pieces.filter(p => p.fold).map(p => p.id);
 
 export const foldTool: Tool = {
+  foldAware: true,
   id: 'fold', title: 'Fold piece', group: 'position', hotkey: 'O', icon: ICON.fold, cursor: 'crosshair',
   activate() { FD.a = null; FD.hov = null; },
   deactivate(app) { FD.a = null; FD.hov = null; app.invalidate('canvas'); },

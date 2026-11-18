@@ -66,6 +66,7 @@ function apply(app: App) {
 }
 
 export const matchTool: Tool = {
+  foldAware: true,
   id: 'match', title: 'Match Line', group: 'modify', hotkey: 'J', icon: ICON.match, cursor: 'crosshair',
   activate(app) { MT.step = 1; MT.master = []; MT.target = []; MT.err = ''; MT.res = null; app.invalidate(); },
   deactivate(app) { MT.step = 1; MT.master = []; MT.target = []; MT.err = ''; MT.res = null; app.cancelPreview(); app.invalidate('canvas'); },

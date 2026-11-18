@@ -1506,6 +1506,7 @@ async function cvInput(app: App, typed?: string) {
   commitWith(app, [pk.ref.pieceId], 'Edit handle', apply(res.v));
 }
 export const curveTool: Tool = {
+  foldAware: true,
   id: 'curve', title: 'Curve / Handle', group: 'modify', hotkey: 'Shift+C', icon: ICON.curve, cursor: 'default',
   activate(app) { CV.op = null; CV.frozen = false; CV.seg = null; CV.segOp = null; CV.run = null; CV.runOp = null; CV.runErr = ''; cvAdopt(app); },
   deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); CV.op = null; CV.seg = null; CV.segOp = null; CV.run = null; CV.runOp = null; app.cancelPreview(); },

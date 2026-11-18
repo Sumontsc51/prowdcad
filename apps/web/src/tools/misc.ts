@@ -29,6 +29,7 @@ export const zoomTool: Tool = {
 
 /** Hand: panning itself is implemented by the canvas controller when this tool is active. */
 export const handTool: Tool = {
+  foldAware: true,
   id: 'hand', title: 'Hand (pan)', group: 'view', hotkey: 'H', icon: ICON.hand, cursor: 'grab',
   hint: () => 'Hand: drag to pan · Space+drag pans from any tool · middle-drag pans',
 };

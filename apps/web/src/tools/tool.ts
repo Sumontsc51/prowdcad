@@ -52,6 +52,8 @@ export interface Tool {
   hint?(app: App): string;
   /** true while a multi-click construction is in progress (blocks guide grabbing etc.) */
   busy?(app: App): boolean;
+  /** the tool handles folded pieces itself (or moves whole pieces): its pointer is never mapped through a fold */
+  foldAware?: boolean;
   /** mouse wheel; return true when consumed (suppresses wheel zoom) */
   wheel?(app: App, e: WheelEvent): boolean;
   /** not shown in the palette (transient pick sessions) */
