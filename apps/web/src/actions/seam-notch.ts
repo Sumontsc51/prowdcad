@@ -11,7 +11,7 @@ import { ops, type AnchorRef } from '../ops-bridge';
 import { settings, saveSettings } from '../settings';
 import { showDialog, rememberedDialog, popover, alertDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
-import { h } from '../ui/dom';
+import { h, clear } from '../ui/dom';
 import { runOrPick, anchorOrPick, internalOrPick, pieceOrPick, Cancelled } from '../selection';
 import { hasPiece, hasAnchor, onePiece, selPieces, must, pickPointLocal } from './cmd-util';
 import { seamDialog } from '../tools/seam';
@@ -25,15 +25,49 @@ import { fmt, unitLabel, parseLen } from '../units-ui';
 import { TURNBACK_MAX_FOLDS } from '@prowdcad/kernel';
 import { screenMarker } from '../tools/common';
 
-const CORNERS: { spec: CornerSpec | 'manual'; label: string; svg: string }[] = [
-  { spec: { type: 'miter' }, label: 'Miter', svg: '<path d="M4 20V4h16" /><path d="M8 20V8h12" stroke-dasharray="2 2"/>' },
-  { spec: { type: 'boxed', extend: 'both' }, label: 'Boxed (both)', svg: '<path d="M4 20V4h16"/><path d="M8 20V4M4 8h16" stroke-dasharray="2 2"/>' },
-  { spec: { type: 'boxed', extend: 'prev' }, label: 'Boxed (extend prev)', svg: '<path d="M4 20V4h16"/><path d="M8 20V4h4V8h8" stroke-dasharray="2 2"/>' },
-  { spec: { type: 'boxed', extend: 'next' }, label: 'Boxed (extend next)', svg: '<path d="M4 20V4h16"/><path d="M8 20v-8H4V8h16" stroke-dasharray="2 2"/>' },
-  { spec: { type: 'turnback' }, label: 'Turn-back (hem)', svg: '<path d="M4 20V4h16"/><path d="M8 20V10l-4-4M10 8h10" stroke-dasharray="2 2"/>' },
-  { spec: { type: 'angled' }, label: 'Angled (bevel)', svg: '<path d="M4 20V4h16"/><path d="M8 20V12l4-4h8" stroke-dasharray="2 2"/>' },
-  { spec: 'manual', label: 'Manual (2 clicks)…', svg: '<path d="M4 20V4h16"/><path d="M8 20V13l6-5h6" stroke-dasharray="2 2"/><circle cx="8" cy="13" r="1.4"/><circle cx="14" cy="8" r="1.4"/>' },
+/** The corner types of the corner box. `hint` says what the type is for. */
+const CORNERS: { spec: CornerSpec | 'manual'; label: string; hint: string }[] = [
+  { spec: { type: 'miter' }, label: 'Miter', hint: 'The two cut lines run on until they meet. The usual corner.' },
+  { spec: { type: 'truncated' }, label: 'Mitered at distance', hint: 'The miter, cut off square at a set distance from the sew corner. For sharp points (collar tips, lapels).' },
+  { spec: { type: 'angled' }, label: 'Angled (bevel)', hint: 'Straight across from one cut line to the other.' },
+  { spec: { type: 'boxed', extend: 'both' }, label: 'Boxed (both)', hint: 'Each allowance runs past the corner and ends square. Pressed-open seams.' },
+  { spec: { type: 'boxed', extend: 'prev' }, label: 'Boxed (extend prev)', hint: 'The line before the corner runs straight on, then squares across.' },
+  { spec: { type: 'boxed', extend: 'next' }, label: 'Boxed (extend next)', hint: 'The line after the corner is extended back, then squares across.' },
+  { spec: { type: 'turnback', extend: 'prev' }, label: 'Turn-back (line before)', hint: 'The line before the corner is a hem that folds back: its end mirrors the seam after the corner.' },
+  { spec: { type: 'turnback', extend: 'next' }, label: 'Turn-back (line after)', hint: 'The line after the corner is a hem that folds back: its end mirrors the seam before the corner.' },
+  { spec: { type: 'cutout' }, label: 'Cut-out', hint: 'The allowance is cut away square to the sew corner: each seam ends at the corner.' },
+  { spec: 'manual', label: 'Manual (2 clicks)…', hint: 'Draw the corner yourself with two clicks near the cut lines.' },
 ];
+const sameCorner = (cur: CornerSpec | undefined, it: CornerSpec | 'manual'): boolean => {
+  if (it === 'manual') return cur?.type === 'manual';
+  if (!cur) return it.type === 'miter';
+  if (cur.type !== it.type) return false;
+  if (it.type === 'boxed') return (cur.extend ?? 'both') === it.extend;
+  if (it.type === 'turnback') return cur.extend === it.extend || (!cur.extend && it.extend === 'next');
+  return true;
+};
+/** Picture of a corner type, drawn from the real geometry of this corner (its angle and its two allowances). */
+function cornerPicture(spec: CornerSpec | undefined, f: { angleDeg: number; dPrev: number; dNext: number }, manual: boolean, px = 62): string {
+  const dP = Math.abs(f.dPrev) > 1e-6 ? Math.abs(f.dPrev) : 0, dN = Math.abs(f.dNext) > 1e-6 ? Math.abs(f.dNext) : 0;
+  const m = Math.max(dP, dN) || 10;
+  let g: { sew: Vec[]; cut: Vec[]; corner: Vec[] };
+  try { g = ops.cornerPreview(manual ? { type: 'angled' } : spec, f.angleDeg, dP || (dN ? 0 : m), dN || (dP ? 0 : m)); } catch { return ''; }
+  // window around the corner, a little towards the piece; y is up in the drawing
+  const R = 1.95 * Math.max(m, spec?.type === 'truncated' && spec.dist ? spec.dist * 0.9 : 0);
+  const th = Math.max(25, Math.min(165, f.angleDeg)) * Math.PI / 360;
+  const cx = -Math.cos(th) * R * 0.3, cy = Math.sin(th) * R * 0.3;
+  const d = (pts: Vec[], closed: boolean) => pts.map((q, i) => `${i ? 'L' : 'M'}${(q.x - cx).toFixed(2)} ${(-(q.y - cy)).toFixed(2)}`).join('') + (closed ? 'Z' : '');
+  const sw = R / 30;
+  const corner = g.corner.length > 1 ? `<path d="${d(g.corner, false)}" fill="none" stroke="#ff8a1f" stroke-width="${(sw * 2.4).toFixed(3)}" stroke-linecap="round" stroke-linejoin="round"/>`
+    : g.corner.length ? `<circle cx="${(g.corner[0].x - cx).toFixed(2)}" cy="${(-(g.corner[0].y - cy)).toFixed(2)}" r="${(sw * 2.2).toFixed(3)}" fill="#ff8a1f"/>` : '';
+  const dots = manual ? g.corner.map(q => `<circle cx="${(q.x - cx).toFixed(2)}" cy="${(-(q.y - cy)).toFixed(2)}" r="${(sw * 2.6).toFixed(3)}" fill="#fff" stroke="#ff8a1f" stroke-width="${sw.toFixed(3)}"/>`).join('') : '';
+  return `<svg class="cg-pic" viewBox="${-R} ${-R} ${2 * R} ${2 * R}" width="${px}" height="${px}">`
+    + `<path d="${d(g.cut, true)}" fill="#f2c94c" fill-opacity="0.55" stroke="none"/>`
+    + `<path d="${d(g.sew, true)}" fill="#4ea1ff" fill-opacity="1" stroke="none" class="cg-body"/>`
+    + `<path d="${d(g.cut, true)}" fill="none" stroke="currentColor" stroke-width="${sw.toFixed(3)}" stroke-linejoin="round" opacity="0.9"/>`
+    + `<path d="${d(g.sew, true)}" fill="none" stroke="#1456b8" stroke-width="${(sw * 1.3).toFixed(3)}" stroke-linejoin="round"/>`
+    + corner + dots + '</svg>';
+}
 
 async function sewCorner(app: App): Promise<AnchorRef> {
   return anchorOrPick(app, 'Click a sew-line corner (grade point)', { gradeOnly: true, contour: 'sew' });
@@ -55,41 +89,96 @@ export async function trimCornerFlow(app: App, ref?: AnchorRef) {
 /** corner notch sides: the previous line continued past the corner, the next line extended back, both, none */
 const CORNER_SIDES = [{ value: 'none', label: 'None' }, { value: 'prev', label: 'One side (line before, continued)' }, { value: 'next', label: 'Other side (line after, extended back)' }, { value: 'both', label: 'Both sides' }];
 
+/**
+ * The corner box: the corner types as pictures of THIS corner (its real angle and allowances), the two seam
+ * values, the distance of a mitered-at-distance corner and the notches on the corner. It stays open while you
+ * try things; every change is one undo step. With several corners selected, the type is set on all of them.
+ */
 export async function cornerGallery(app: App, ref?: AnchorRef, at?: { x: number; y: number }) {
   const c = ref ?? await sewCorner(app);
-  const piece = app.doc.piece(c.pieceId);
-  const cur = piece.sew.points.find(a => a.id === c.anchorId)?.corner;
+  const pieceId = c.pieceId;
+  // every selected grade corner of the sew line of this piece takes the change, when the clicked one is among them
+  const targets = (): Id[] => {
+    const p = app.doc.piece(pieceId);
+    const sel = app.sel.anchors.filter(a => a.pieceId === pieceId && a.contourId === p.sew.id && p.sew.points.find(q => q.id === a.anchorId)?.kind === 'grade').map(a => a.anchorId);
+    return sel.includes(c.anchorId) && sel.length > 1 ? sel : [c.anchorId];
+  };
+  const body = h('div.cornerbox');
   let close = () => {};
-  const grid = h('div.corner-gallery');
-  for (const it of CORNERS) {
-    const on = it.spec === 'manual' ? cur?.type === 'manual' : cur ? cur.type === it.spec.type && (it.spec.type !== 'boxed' || (cur.extend ?? 'both') === it.spec.extend) : it.spec.type === 'miter';
-    const b = h('button.cg-item' + (on ? '.on' : ''), { title: it.label });
-    b.innerHTML = `<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5">${it.svg}</svg>`;
-    b.append(h('span', {}, it.label));
-    b.onclick = () => {
-      close();
-      if (it.spec === 'manual') { void trimCornerFlow(app, c).catch(err => { if (!(err instanceof Cancelled)) toast((err as Error).message, 'error'); }); return; }
-      try { ops.setCorner(app.doc, c.pieceId, c.anchorId, it.spec.type === 'miter' ? undefined : it.spec); } catch (err) { toast((err as Error).message, 'error'); }
-    };
-    grid.append(b);
+  const safe = (fn: () => void) => { try { fn(); } catch (err) { toast((err as Error).message, 'error'); } app.invalidate(); draw(); };
+  const lenInput = (value: number, title: string, onSet: (v: number) => void, attrs: Record<string, string> = {}) => {
+    const el = h('input.cb-num', { type: 'text', value: fmt(value), title, spellcheck: 'false', ...attrs }) as HTMLInputElement;
+    const commit = () => { let v: number; try { v = parseLen(el.value); } catch { el.value = fmt(value); return; } if (!Number.isFinite(v) || v < 0) { el.value = fmt(value); return; } if (Math.abs(v - value) > 1e-9) onSet(v); };
+    el.addEventListener('change', commit);
+    el.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); el.blur(); } });
+    return el;
+  };
+  function draw() {
+    const piece = app.doc.piece(pieceId), line = app.doc.sizeLine(piece);
+    if (!piece.sew.points.some(a => a.id === c.anchorId)) { close(); return; }
+    let f: ReturnType<typeof ops.cornerFacts>;
+    try { f = ops.cornerFacts(piece, line, line.baseSizeId, c.anchorId); } catch (err) { clear(body); body.append(h('div.cb-note', {}, (err as Error).message)); return; }
+    const cur = piece.sew.points.find(a => a.id === c.anchorId)?.corner;
+    const ids = targets();
+    clear(body);
+    body.append(h('div.pop-title', {}, `Corner — ${piece.name}${ids.length > 1 ? ` · ${ids.length} corners` : ''}`,
+      h('span.cb-angle', { title: 'Inside angle of the corner on the base size' }, `${f.angleDeg.toFixed(1)}°`)));
+    // the two seam values that meet here
+    body.append(h('div.cb-row', {},
+      h('label', {}, 'Seam before', lenInput(f.dPrev, 'Seam allowance of the line before the corner', v => safe(() => ops.setSeam(app.doc, pieceId, f.prevId, c.anchorId, v)), { 'data-cb': 'before' })),
+      h('label', {}, 'Seam after', lenInput(f.dNext, 'Seam allowance of the line after the corner', v => safe(() => ops.setSeam(app.doc, pieceId, c.anchorId, f.nextId, v)), { 'data-cb': 'after' })),
+      h('span.cb-unit', {}, unitLabel())));
+    if (!f.convex) body.append(h('div.cb-note', {}, 'This is an inside corner: the two cut lines cross, so every type gives the same corner here.'));
+    else if (Math.abs(f.dPrev) < 1e-9 && Math.abs(f.dNext) < 1e-9) body.append(h('div.cb-note', {}, 'Both lines have no seam allowance here: give them a value to see the corner types.'));
+    const grid = h('div.corner-gallery');
+    for (const it of CORNERS) {
+      const on = sameCorner(cur, it.spec);
+      const spec: CornerSpec | undefined = it.spec === 'manual' ? undefined : it.spec.type === 'miter' ? undefined
+        : { ...it.spec, ...(it.spec.type === 'truncated' && cur?.type === 'truncated' && cur.dist ? { dist: cur.dist } : {}), ...(it.spec.type === 'turnback' && cur?.type === 'turnback' && on && cur.folds ? { folds: cur.folds } : {}) };
+      const b = h('button.cg-item' + (on ? '.on' : ''), { title: `${it.label}\n${it.hint}`, 'data-corner': it.spec === 'manual' ? 'manual' : it.spec.type + (it.spec.extend ? '-' + it.spec.extend : '') });
+      b.innerHTML = cornerPicture(spec, f, it.spec === 'manual');
+      b.append(h('span', {}, it.label));
+      b.onclick = () => {
+        if (it.spec === 'manual') { close(); void trimCornerFlow(app, c).catch(err => { if (!(err instanceof Cancelled)) toast((err as Error).message, 'error'); }); return; }
+        safe(() => app.doc.transact('Seam corner', () => { for (const id of targets()) ops.setCorner(app.doc, pieceId, id, spec); }));
+        app.status(`Corner: ${it.label}${ids.length > 1 ? ` on ${ids.length} corners` : ''} · ${it.hint}`);
+      };
+      grid.append(b);
+    }
+    body.append(grid);
+    // mitered at distance: its distance
+    if (cur?.type === 'truncated') {
+      const dflt = Math.max(Math.abs(f.dPrev), Math.abs(f.dNext));
+      body.append(h('div.cb-row', {}, h('label', {}, 'Mitered distance', lenInput(cur.dist ?? dflt, 'How far from the sew corner the miter is cut off',
+        v => safe(() => app.doc.transact('Mitered distance', () => { for (const id of targets()) { const q = app.doc.piece(pieceId).sew.points.find(a => a.id === id)?.corner; if (q?.type === 'truncated') ops.setCorner(app.doc, pieceId, id, { ...q, dist: v > 0 ? v : undefined }); } })), { 'data-cb': 'dist' })),
+        h('span.cb-unit', {}, `${unitLabel()} from the sew corner`)));
+    }
+    if (cur?.type === 'turnback' && (cur.folds?.length ?? 0) > 1) body.append(h('div.cb-note', {}, `Turn-back with ${cur.folds!.length} folds: ${cur.folds!.map(w => fmt(w)).join(' + ')} ${unitLabel()} (Seam ▸ Turn-back hem changes them)`));
+    // notch on the corner: one side, the other side, both or none (kept with any corner type)
+    const side = ops.cornerNotchSide(piece, c.anchorId);
+    const nrow = h('div.cg-notch', {}, h('span.cg-notch-t', {}, 'Notch on the corner'));
+    for (const it of [{ v: 'none', l: 'None' }, { v: 'prev', l: 'One side' }, { v: 'next', l: 'Other side' }, { v: 'both', l: 'Both sides' }] as const) {
+      nrow.append(h('button.btn.sm' + (side === it.v ? '.on' : ''), { 'data-corner-notch': it.v, title: CORNER_SIDES.find(o => o.value === it.v)!.label, onclick: () => {
+        safe(() => app.doc.transact(it.v === 'none' ? 'Remove corner notch' : 'Corner notch', () => { for (const id of targets()) ops.setCornerNotches(app.doc, app.doc.piece(pieceId), id, it.v, { contourId: piece.sew.id, type: notchType, on: notchOn }); }));
+        app.status(it.v === 'none' ? 'Corner notch removed' : `Corner notch: ${it.l.toLowerCase()}`);
+      } }, it.l));
+    }
+    body.append(nrow);
+    body.append(h('div.btnrow', {},
+      h('button.btn.sm', { 'data-cb': 'revert', title: 'Back to the plain miter', onclick: () => safe(() => app.doc.transact('Revert corner', () => { for (const id of targets()) ops.revertCorner(app.doc, pieceId, id); })) }, 'Revert to miter'),
+      h('button.btn.sm.primary', { 'data-cb': 'close', onclick: () => close() }, 'Done')));
+    // the box may have grown: keep it on the screen
+    const el = body.parentElement;
+    if (el) { const r = el.getBoundingClientRect(); if (r.bottom > window.innerHeight - 4) el.style.top = Math.max(4, window.innerHeight - r.height - 4) + 'px'; if (r.right > window.innerWidth - 4) el.style.left = Math.max(4, window.innerWidth - r.width - 4) + 'px'; }
   }
-  const revert = h('button.btn.sm', { onclick: () => { close(); ops.revertCorner(app.doc, c.pieceId, c.anchorId); } }, 'Revert to miter');
-  // notch on the corner: one side, the other side, both or none (kept with any corner type)
-  const side = ops.cornerNotchSide(piece, c.anchorId);
-  const nrow = h('div.cg-notch', {}, h('span.cg-notch-t', {}, 'Notch on the corner'));
-  for (const it of [{ v: 'none', l: 'None' }, { v: 'prev', l: 'One side' }, { v: 'next', l: 'Other side' }, { v: 'both', l: 'Both sides' }] as const) {
-    nrow.append(h('button.btn.sm' + (side === it.v ? '.on' : ''), { 'data-corner-notch': it.v, title: CORNER_SIDES.find(o => o.value === it.v)!.label, onclick: () => {
-      close();
-      try { ops.setCornerNotches(app.doc, app.doc.piece(c.pieceId), c.anchorId, it.v, { contourId: piece.sew.id, type: notchType, on: notchOn }); app.status(it.v === 'none' ? 'Corner notch removed' : `Corner notch: ${it.l.toLowerCase()}`); } catch (err) { toast((err as Error).message, 'error'); }
-    } }, it.l));
-  }
+  draw();
   const pos = at ?? (() => {
     const q = app.resolveRef(c); const r = q ? resolveFor(app.doc, q.piece, app.sizeOf(q.piece)) : null;
     const w = q && r ? toWorld(q.piece, r.sew.anchorPos[q.index]) : { x: 0, y: 0 };
     const s = app.view.toScreen(w); const box = document.querySelector('#canvas svg.sheet')?.getBoundingClientRect();
-    return { x: (box?.left ?? 0) + s.x + 12, y: (box?.top ?? 0) + s.y + 12 };
+    return { x: (box?.left ?? 0) + s.x + 16, y: (box?.top ?? 0) + s.y + 16 };
   })();
-  close = popover(pos.x, pos.y, h('div', {}, h('div.pop-title', {}, `Corner — ${piece.name}`), grid, nrow, h('div.btnrow', {}, revert)));
+  close = popover(pos.x, pos.y, body);
 }
 
 export function registerSeamNotch(app: App) {
