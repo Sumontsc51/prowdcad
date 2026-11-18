@@ -123,6 +123,11 @@ const cases = [
   T('seam', { invoke: palette('seam'), drive: seq(at('FRONT', 'SS_HEM'), at('FRONT', 'UA'), DLG({ v: '12' })), expect: (h, c) => req(an(c.after, 'FRONT', 'SS_HEM').seamAfter === 12, 'seam not 12') }),
   T('seam#dbl', { title: 'seam: double-click a piece = whole-piece seam', invoke: hotkey('s', 'seam'), drive: async h => { await h.dblW(await h.local2world('BACK', { x: 500, y: 300 })); await DLG({ v: '7' })(h); }, expect: (h, c) => req(pc(c.after, 'BACK').seamDefault === 7 || pc(c.after, 'BACK').sew.points.every(a => a.seamAfter === 7), 'BACK seam not 7') }),
   T('notch', { invoke: palette('notch'), drive: seq(seg('FRONT', 'CF_HEM', 'SS_HEM', 0.4), OK()), expect: (h, c) => req(count(c.after, 'FRONT', 'notches') === 2, 'no notch') }),
+  T('notch#onSew', { title: 'Notch tool, option "On sew line": the new notch is marked on the sewing line; "Both" marks the cut line and the sewing line', invoke: palette('notch'),
+    drive: async h => { await h.page.locator('[data-mode="both"]').click(); await h.settle(); await seg('FRONT', 'CF_HEM', 'SS_HEM', 0.4)(h); await OK()(h); await h.settle(60);
+      h._m = await h.ev(() => { const E = window.__e2e, p = E.P('FRONT'); const n = p.notches[p.notches.length - 1]; return { on: n.on, marks: E.ops.resolveNotches(E.app.doc, p).find(x => x.notchId === n.id).cutGeometry.length }; }); },
+    after: async h => { await h.page.locator('[data-mode="cut"]').click(); await h.settle(); },
+    expect: (h, c) => [req(count(c.after, 'FRONT', 'notches') === 2, 'no notch'), req(h._m.on === 'both', 'on: ' + h._m.on), req(h._m.marks === 2, 'marks: ' + h._m.marks)] }),
   T('notch#existing', { title: 'notch: click an existing notch → notch grid', invoke: hotkey('n', 'notch'), change: false,
     drive: async h => { const w = await h.ev(() => { const E = window.__e2e; const p = E.P('FRONT'); const n = E.ops.resolveNotches(E.app.doc, p, E.app.sizeOf(p))[0]; return E.localToWorld('FRONT', n.pos); }); await h.clickW(w); },
     expect: async h => req(await h.ev(() => !!document.querySelector('.fwin[data-win="notchgrid"]')), 'grid not opened') }),
