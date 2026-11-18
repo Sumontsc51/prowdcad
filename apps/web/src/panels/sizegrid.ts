@@ -200,6 +200,7 @@ export function sizeGrid(o: SGOpts): SizeGrid {
   }
   if (sheet) {
     wrap.classList.add('sheet');
+    wrap.addEventListener('dragstart', e => e.preventDefault());
     const cellAt = (e: MouseEvent) => { const el = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)?.closest('td')?.querySelector('input.sg-in') as HTMLInputElement | null; return el && wrap.contains(el) ? { r: +el.dataset.r!, c: +el.dataset.c! } : null; };
     wrap.addEventListener('mousemove', e => {
       if (!(e.buttons & 1)) { dragging = false; if (filling) endFill(false); return; }
@@ -334,6 +335,8 @@ export function sizeGrid(o: SGOpts): SizeGrid {
         selectOne(r, c); dragging = true; setTimeout(paintSel, 0);
       });
       inp.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); cellMenu(e, r, c); });
+      // dragging over cells selects them: the browser must not drag the cell's text into the next cell instead
+      inp.draggable = false; inp.addEventListener('dragstart', e => e.preventDefault()); inp.addEventListener('drop', e => e.preventDefault());
     }
     inp.addEventListener('keydown', e => {
       e.stopPropagation();

@@ -70,7 +70,7 @@ export function renderGrading(app: App, host: HTMLElement) {
   const bar = h('div.gr-bar');
   // the view is a drop-down; the one chosen stays the default (first time: Small → large)
   const mode = h('select.gr-view', { title: VIEW_TIP[view] }) as HTMLSelectElement;
-  for (const [id, label] of [['inc', 'Small → large  ·  size to the next size (XS-S, S-M, …)'], ['step', 'Step into this size  ·  incremental from the base'], ['total', 'Total from base size  ·  cumulative']] as const) mode.append(h('option', { value: id, 'data-view': id }, label));
+  for (const [id, label] of [['inc', 'Small → large (XS-S, S-M …)'], ['step', 'Step into this size (from base)'], ['total', 'Total from base size']] as const) mode.append(h('option', { value: id, 'data-view': id }, label));
   mode.value = view;
   mode.onchange = () => { const v = mode.value as GView; mode.blur(); const ae = document.activeElement as HTMLElement | null; if (ae && host.contains(ae)) ae.blur(); app.setGradeView(v); };
   mode.addEventListener('keydown', e => e.stopPropagation());
