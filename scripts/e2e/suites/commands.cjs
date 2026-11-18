@@ -365,6 +365,18 @@ const cases = [
   { id: 'piece.mirror', sel: PC('FRONT'), expect: (h, c) => { const m = c.after.pieces.find(p => p.name === 'FRONT MIRROR'), f = pc(c.after, 'FRONT'); return [req(c.after.pieces.length === 3 && !!m, 'no FRONT MIRROR'), req(!!m && !!m.layout?.flipX !== !!f.layout?.flipX, 'the copy is not mirrored'), req(c.afterSel.pieces[0] === 'FRONT MIRROR', 'mirror copy not selected')]; } },
   { id: 'piece.mirrorLine', sel: PC('FRONT'), drive: seq(at('FRONT', 'CF_HEM'), at('FRONT', 'CF_NECK'), OK()), expect: (h, c) => req(!!pc(c.after, 'FRONT').half, 'half not set') },
   { id: 'piece.unfoldMirror', pre: P((app, ops, doc, E) => ops.setHalf(doc, E.P('FRONT').id, { a: { x: 0, y: 0 }, b: { x: 0, y: 622 } }, { openAtOutput: true })), sel: PC('FRONT'), expect: (h, c) => req(!pc(c.after, 'FRONT').half && npts(c.after, 'FRONT') > 12, 'not opened') },
+  { id: 'size.table', undo: false, title: 'Size table window: rename a size, add a size, untick a size for a piece, import a list (renames in order, adds the rest, sets the base), export CSV',
+    drive: async h => {
+      const w = h.page.locator('.fwin[data-win="sizetable"]'); await w.waitFor();
+      const nm = w.locator('tr[data-size="XL"] input.szt-name'); await nm.click({ clickCount: 3 }); await nm.fill('XLarge'); await nm.press('Enter'); await h.settle(100);
+      await w.locator('[data-act="new-name"]').fill('2XL'); await w.locator('[data-act="add"]').click(); await h.settle(120);
+      h._a = await h.ev(() => window.__e2e.app.doc.sizeLine().sizes.map(s => s.name).join());
+      await w.locator('.szt-pc[data-piece="BACK"] input[data-size="S"]').uncheck(); await h.settle(100);
+      h._b = await h.ev(() => { const E = window.__e2e, p = E.P('BACK'), l = E.app.doc.sizeLine(); return (p.sizes || []).map(id => l.sizes.find(s => s.id === id).name).join(); });
+      h._c = await h.ev(async () => { const m = await import('/src/panels/sizetable.ts'); const E = window.__e2e; const list = m.parseSizeList('Size,Base\n36\n38,base\n40\n42\n44\n46\n'); const r = m.applySizeList(E.app, list, false); const l = E.app.doc.sizeLine(); return { r, names: l.sizes.map(s => s.name).join(), base: l.sizes.find(s => s.id === l.baseSizeId).name, csv: m.sizeListCSV(E.app), one: m.parseSizeList('XS, S, M*, L').names.join() + '|' + m.parseSizeList('XS, S, M*, L').base }; });
+      await h.page.locator('.fwin[data-win="sizetable"] .fw-x').click(); },
+    expect: h => [req(h._a === 'S,M,L,XLarge,2XL', 'rename + add: ' + h._a), req(h._b === 'M,L,XLarge,2XL', 'BACK without S: ' + h._b),
+      req(h._c.names === '36,38,40,42,44,46' && h._c.base === '38' && h._c.r.renamed === 5 && h._c.r.added === 1, 'import: ' + JSON.stringify(h._c)), req(/^Size,Base\n36,\n38,base\n/.test(h._c.csv), 'export csv: ' + h._c.csv), req(h._c.one === 'XS,S,M,L|M', 'one-line list: ' + h._c.one)] },
   { id: 'cut.halfSet', sel: PC('FRONT'), drive: seq(at('FRONT', 'CF_HEM'), at('FRONT', 'CF_NECK'), OK()), expect: (h, c) => req(!!pc(c.after, 'FRONT').half, 'half not set') },
   { id: 'cut.halfOpen', pre: P((app, ops, doc, E) => ops.setHalf(doc, E.P('FRONT').id, { a: { x: 0, y: 0 }, b: { x: 0, y: 622 } }, { openAtOutput: true })), sel: PC('FRONT'), expect: (h, c) => req(!pc(c.after, 'FRONT').half && npts(c.after, 'FRONT') > 12, 'not opened') },
   { id: 'cut.halfDelete', pre: P((app, ops, doc, E) => ops.setHalf(doc, E.P('FRONT').id, { a: { x: 0, y: 0 }, b: { x: 0, y: 622 } }, { openAtOutput: true })), sel: PC('FRONT'), expect: (h, c) => req(!pc(c.after, 'FRONT').half, 'half not deleted') },
