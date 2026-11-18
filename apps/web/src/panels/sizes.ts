@@ -35,6 +35,7 @@ export function renderSizes(app: App, host: HTMLElement) {
   host.append(strip);
   const safe = (label: string, fn: () => unknown) => async () => { try { await fn(); } catch (err) { reportError(err, label); } };
   host.append(h('div.btnrow', {},
+    h('button.btn.sm.primary', { title: 'Size table: rename sizes, base, colours, import / export, sizes per piece', 'data-act': 'size-table', onclick: () => void runCommand('size.table') }, 'Size table…'),
     h('button.btn.sm', { title: 'Insert a size before / after the active size', onclick: safe('Insert size', () => insertSize(app)) }, '+ Insert'),
     h('button.btn.sm', { title: 'Append a size at the end of the line', onclick: safe('Append size', async () => {
       const r = await showDialog({ title: 'Append size', fields: [{ kind: 'text', key: 'n', label: 'Name', value: '' }, { kind: 'checkbox', key: 'ext', label: 'Extrapolate the last increment', value: true }], validate: v => String(v.n).trim() ? null : 'Name required' });

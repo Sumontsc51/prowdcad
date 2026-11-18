@@ -8,6 +8,7 @@ import { renderSizes } from './sizes';
 import { renderGrading } from './grading';
 import { settings, saveSettings } from '../settings';
 import { floatingWindow, type FloatWin } from '../ui/window';
+import { sizeTableOpen, refreshSizeTable } from './sizetable';
 import { ruleWindowOpen, refreshRuleWindow } from './rules';
 import { specWindowOpen, refreshSpecWindow } from './spec';
 
@@ -50,6 +51,7 @@ export function mountDocks(app: App, right: HTMLElement, bottom: HTMLElement, zo
     rPieces(); rSizes(); rInsp();
     if (settings.panels.grading) rGrad();
     if (ruleWindowOpen()) refreshRuleWindow();
+    if (sizeTableOpen()) refreshSizeTable(app);
     refreshSpecWindow(app); // Measure spec + its Rules window (no-op when both are closed)
   };
   app.setRenderer('panels', render);

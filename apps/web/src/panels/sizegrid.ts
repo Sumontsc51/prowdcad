@@ -332,6 +332,13 @@ export function sizeGrid(o: SGOpts): SizeGrid {
         if (e.button !== 0) return;
         if (e.ctrlKey || e.metaKey) { const k2 = K(r, c); if (sel.has(k2) && sel.size > 1) sel.delete(k2); else sel.add(k2); anchor = { r, c }; selEnd = { r, c }; setTimeout(paintSel, 0); return; }
         if (e.shiftKey && anchor) { e.preventDefault(); setRange(anchor, { r, c }); paintSel(); return; }
+        // a plain press selects the cell (and starts a drag-selection): the browser must neither select part of the
+        // text nor pick the value up and drag it. Double-click still puts the caret inside the text to edit it.
+        if (e.detail < 2) {
+          e.preventDefault();
+          const was = document.activeElement === inp;
+          if (!was) inp.focus({ preventScroll: true }); else { try { inp.select(); } catch { /* */ } }
+        }
         selectOne(r, c); dragging = true; setTimeout(paintSel, 0);
       });
       inp.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); cellMenu(e, r, c); });
