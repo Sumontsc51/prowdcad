@@ -4,7 +4,7 @@
  * to the piece's size line by size name) and records anchor.ruleId = rule.id.
  */
 import type { Document } from '../model/doc';
-import type { GradeInc, GradeRule, Id, RuleLibrary, SizeId, SizeLine, SizeTable } from '../model/types';
+import type { GradeInc, GradeRule, Id, Piece, RuleLibrary, SizeId, SizeLine, SizeTable } from '../model/types';
 import { newId } from '../model/factory';
 import { type GradeRec, findRef, refWorldAbs, incFromWorldAbs, deepClone, gi, piecesOfTable, gradedRefs } from './grading/util';
 import { absoluteOffset } from '../model/contour';
@@ -167,6 +167,49 @@ export function ruleName(doc: Document, pieceId: Id, anchorId: Id): string {
 }
 
 /**
+ * Re-point one piece from the size line `old` to `newLine` (of table `tableId`): every graded record is
+ * remapped by size NAME. Sizes absent from the old line get zero increments; absolute offsets of matched
+ * sizes are preserved when the base size has the same name in both lines. Call inside a transaction.
+ */
+export function repointPieceSizes(piece: Piece, old: SizeLine, newLine: SizeLine, tableId: Id): void {
+  const oldBaseName = old.sizes.find(s => s.id === old.baseSizeId)?.name;
+  const newBaseName = newLine.sizes.find(s => s.id === newLine.baseSizeId)?.name;
+  const sameBase = oldBaseName === newBaseName;
+  for (const ref of gradedRefs(piece, 1)) {
+    if (ref.implicit) continue;
+    const rec = ref.get() ?? {};
+    if (sameBase) {
+      // preserve absolute offsets by name; unmatched sizes interpolate as zero increment
+      const abs: Record<SizeId, { x: number; y: number }> = {};
+      for (const s of newLine.sizes) {
+        const o = old.sizes.find(x => x.name === s.name);
+        abs[s.id] = o ? absoluteOffset(rec, old, o.id) : { x: NaN, y: NaN };
+      }
+      // fill unmatched with previous matched (toward base) to give zero increments
+      const ids = newLine.sizes.map(s => s.id), bi = ids.indexOf(newLine.baseSizeId);
+      for (let i = bi + 1; i < ids.length; i++) if (Number.isNaN(abs[ids[i]].x)) abs[ids[i]] = { ...abs[ids[i - 1]] };
+      for (let i = bi - 1; i >= 0; i--) if (Number.isNaN(abs[ids[i]].x)) abs[ids[i]] = { ...abs[ids[i + 1]] };
+      ref.set(incFromWorldAbs(abs, newLine));
+    } else ref.set(remapByName(rec, old, newLine));
+  }
+  for (const n of piece.notches) {
+    const p = n.placement;
+    if (p.kind === 'fromPrev' || p.kind === 'fromNext') {
+      const d: Record<SizeId, number> = {};
+      const fb = p.dist[old.baseSizeId];
+      for (const s of newLine.sizes) { const o = old.sizes.find(x => x.name === s.name); const v = o && p.dist[o.id] !== undefined ? p.dist[o.id] : fb; if (v !== undefined) d[s.id] = v; }
+      p.dist = d;
+    }
+  }
+  if (piece.sizes) {
+    const names = new Set(piece.sizes.map(id => old.sizes.find(s => s.id === id)?.name));
+    piece.sizes = newLine.sizes.filter(s => names.has(s.name)).map(s => s.id);
+    if (!piece.sizes.includes(newLine.baseSizeId) || piece.sizes.length === newLine.sizes.length) delete piece.sizes;
+  }
+  piece.sizeTableId = tableId;
+}
+
+/**
  * Load Sizes from Library: create a new size table whose axis1 is a copy of the library's size line
  * (fresh ids), re-point the given pieces (default: all pieces of the active table) to it and remap
  * every graded record by size NAME. Sizes absent from the source line get zero increments; the
@@ -182,42 +225,7 @@ export function loadSizesFromLibrary(doc: Document, libraryId: Id, opt: { pieceI
     newLine.baseSizeId = idMap[lib.sizeLine.baseSizeId];
     const table: SizeTable = { id: newId('st'), name: opt.name ?? lib.name, axis1: newLine };
     const pieces = opt.pieceIds ? opt.pieceIds.map(id => doc.piece(id)) : piecesOfTable(style, srcTable.id, false);
-    for (const piece of pieces) {
-      const old = doc.sizeLine(piece);
-      const oldBaseName = old.sizes.find(s => s.id === old.baseSizeId)?.name;
-      const newBaseName = newLine.sizes.find(s => s.id === newLine.baseSizeId)?.name;
-      const sameBase = oldBaseName === newBaseName;
-      for (const ref of gradedRefs(piece, 1)) {
-        if (ref.implicit) continue;
-        const rec = ref.get() ?? {};
-        if (sameBase) {
-          // preserve absolute offsets by name; unmatched sizes interpolate as zero increment
-          const abs: Record<SizeId, { x: number; y: number }> = {};
-          for (const s of newLine.sizes) {
-            const o = old.sizes.find(x => x.name === s.name);
-            abs[s.id] = o ? absoluteOffset(rec, old, o.id) : { x: NaN, y: NaN };
-          }
-          // fill unmatched with previous matched (toward base) to give zero increments
-          const ids = newLine.sizes.map(s => s.id), bi = ids.indexOf(newLine.baseSizeId);
-          for (let i = bi + 1; i < ids.length; i++) if (Number.isNaN(abs[ids[i]].x)) abs[ids[i]] = { ...abs[ids[i - 1]] };
-          for (let i = bi - 1; i >= 0; i--) if (Number.isNaN(abs[ids[i]].x)) abs[ids[i]] = { ...abs[ids[i + 1]] };
-          ref.set(incFromWorldAbs(abs, newLine));
-        } else ref.set(remapByName(rec, old, newLine));
-      }
-      for (const n of piece.notches) {
-        const p = n.placement;
-        if (p.kind === 'fromPrev' || p.kind === 'fromNext') {
-          const d: Record<SizeId, number> = {};
-          for (const s of newLine.sizes) { const o = old.sizes.find(x => x.name === s.name); if (o && p.dist[o.id] !== undefined) d[s.id] = p.dist[o.id]; }
-          p.dist = d;
-        }
-      }
-      if (piece.sizes) {
-        const names = new Set(piece.sizes.map(id => old.sizes.find(s => s.id === id)?.name));
-        piece.sizes = newLine.sizes.filter(s => names.has(s.name)).map(s => s.id);
-      }
-      piece.sizeTableId = table.id;
-    }
+    for (const piece of pieces) repointPieceSizes(piece, doc.sizeLine(piece), newLine, table.id);
     style.sizeTables.push(table);
     if (opt.activate !== false) style.activeSizeTableId = table.id;
     return table.id;
