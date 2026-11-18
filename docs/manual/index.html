@@ -450,10 +450,19 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <p>Buttons on the same strip: <em>Nested view</em>, <em>Totals</em> (total from base, or step), <em>Rules…</em>, <em>By measure…</em>, <em>Proportional…</em> and <em>Angle…</em>. <kbd>Esc</kbd> goes back to Edit Grade, <kbd>Esc</kbd> again to Select.</p>
       <p><strong>Calculate.</strong> Select cells in the table and right-click: <em>Double</em>, <em>Half</em>, <em>Multiply by…</em>, <em>Add constant…</em>, <em>Subtract constant…</em>. See <a href="#gradesheet">The cells work like a spreadsheet</a>. <kbd>Ctrl+Z</kbd> undoes a calculation.</p>
       <p>The grading table (<kbd>Ctrl+G</kbd>) is a pop-up window with <strong>one row per size</strong>, so it works the same for 4 sizes or 80: the header stays put while you scroll, the base size is marked ★ and the active size is highlighted (click a size name to make it active). The columns are the selected points, a dX / dY pair for each. With nothing selected you get every grade point of the selected piece. With one point you also get its X / Y position in every size and the total from base. The table holds only the dX / dY entry: copy, paste, flip, rules and stack are in the <span class="menu">Grade</span> menu and on the Edit Grade tool.</p>
+      <h3 id="sizetable">Size table: names, base, import and export, sizes per piece</h3>
+      <p><span class="menu">Grade ▸ Size table…</span> (or <em>Size table…</em> in the Sizes panel) opens one window for the sizes of the style:</p>
+      <ul>
+        <li><strong>Edit the names:</strong> type a new name in a row and press <kbd>Enter</kbd> (it moves to the next row). Pick the colour used in the nested view, choose the <strong>base</strong> size with the round button, remove a size with ✕, and add one at the end with <em>+ Add size</em> (its grading continues the last step).</li>
+        <li><strong>Import…</strong> reads a CSV or text file with one size per line (or one line such as <code>XS, S, M*, L, XL</code>). A <code>*</code> after a name, or <code>base</code> in a second column, marks the base. The sizes of the style are renamed in order and extra ones are added; if the file has fewer sizes you are asked whether to remove the rest. One undo step.</li>
+        <li><strong>Export</strong> saves the size names as a CSV file you can open in Excel, edit and import again.</li>
+        <li><strong>Sizes per piece:</strong> tick the sizes a piece is made in; an unticked size is left out for that piece (the base always stays). Select pieces first to see only those.</li>
+      </ul>
       <h3 id="gradesheet">The cells work like a spreadsheet</h3>
       <div class="tbl"><table>
         <thead><tr><th>Do this</th><th>Result</th></tr></thead>
         <tbody>
+          <tr><td>Click a cell</td><td>Selects it, ready to type over. A click or drag never picks the value up or moves it; double-click to put the caret inside the number and edit part of it</td></tr>
           <tr><td>Drag over cells</td><td>Selects a block, for example several sizes of one dY column</td></tr>
           <tr><td><kbd>Ctrl</kbd>+click · <kbd>Shift</kbd>+click · <kbd>Shift</kbd>+<kbd>↑</kbd> <kbd>↓</kbd></td><td>Adds or removes single cells · selects up to the clicked cell · extends the selection</td></tr>
           <tr><td>Type a value, <kbd>Enter</kbd></td><td>With several cells selected the value goes into every one of them (one undo step)</td></tr>
