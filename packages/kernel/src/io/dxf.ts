@@ -15,7 +15,8 @@ import { area, pointInPolygon } from '../geom/poly';
 import { absoluteToIncremental, resolveContour } from '../model/contour';
 import { makeSizeLine, makeSizeTable, newId } from '../model/factory';
 import type { Document } from '../model/doc';
-import type { GradeInc, Id, Piece, RuleLibrary, SizeId, SizeLine } from '../model/types';
+import type { GradeInc, Id, Piece, RuleLibrary, SizeId, SizeLine, SizeTable } from '../model/types';
+import { repointPieceSizes } from '../ops/rules';
 import type { Unit } from '../units';
 import {
   type ImportReport, type RawGroup, type RawPoly, type RawVertex, type RawNotch, type BuildOptions, type PieceDrawing,
@@ -680,9 +681,17 @@ function mergeNested(list: { g: RawGroup; size?: string }[], bopt: BuildOptions,
 }
 
 /** Remap the grading keys of imported pieces onto a target size line (by size name) and add them to a document. */
-export function addImportToDocument(doc: Document, report: ImportReport): Piece[] {
+/**
+ * Add the imported pieces to the document. `sizes` decides what happens when the file's sizes are not the style's:
+ *   'keep'  — the pieces keep their own size table beside the style's (the style's sizes stay the active ones);
+ *   'file'  — the file's size table becomes the style's: pieces already in the style are re-pointed to it by size name;
+ *   'style' — the imported pieces are re-pointed to the style's sizes by size name (sizes the file lacks get no step).
+ */
+export function addImportToDocument(doc: Document, report: ImportReport, opt: { sizes?: 'keep' | 'file' | 'style' } = {}): Piece[] {
   return doc.transact('Import', s => {
-    let table = s.sizeTables.find(t => t.axis1.sizes.length === report.sizeLine.sizes.length && t.axis1.sizes.every((z, i) => z.name === report.sizeLine.sizes[i].name));
+    const same = (t: SizeTable) => t.axis1.sizes.length === report.sizeLine.sizes.length && t.axis1.sizes.every((z, i) => z.name === report.sizeLine.sizes[i].name);
+    const active = doc.sizeTable();
+    let table = same(active) ? active : s.sizeTables.find(same);
     if (!table) { table = JSON.parse(JSON.stringify(report.sizeTable)); s.sizeTables.push(table!); }
     const idMap = new Map(report.sizeLine.sizes.map((z, i) => [z.id, table!.axis1.sizes[i].id]));
     const remap = <T>(r: Record<SizeId, T>) => Object.fromEntries(Object.entries(r).map(([k2, v]) => [idMap.get(k2) ?? k2, v]));
@@ -694,8 +703,17 @@ export function addImportToDocument(doc: Document, report: ImportReport): Piece[
       for (const d of p.drills) d.grade = remap(d.grade);
       for (const t of p.texts) t.grade = remap(t.grade);
       for (const n of p.notches) if (n.placement.kind === 'fromPrev' || n.placement.kind === 'fromNext') n.placement.dist = remap(n.placement.dist);
-      s.pieces.push(p);
     }
+    const mode = opt.sizes ?? 'keep';
+    if (table !== active && mode === 'file') {
+      for (const q of s.pieces) if ((q.sizeTableId ?? active.id) === active.id) repointPieceSizes(q, active.axis1, table!.axis1, table!.id);
+      s.activeSizeTableId = table!.id;
+    } else if (table !== active && mode === 'style') {
+      for (const p of out) repointPieceSizes(p, table!.axis1, active.axis1, active.id);
+    }
+    s.pieces.push(...out);
+    // a size table no piece uses any more is dropped (never the active one)
+    s.sizeTables = s.sizeTables.filter(t => t.id === s.activeSizeTableId || s.pieces.some(q => q.sizeTableId === t.id));
     return out;
   });
 }
