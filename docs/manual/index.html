@@ -596,7 +596,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
         <thead><tr><th>Format</th><th>Menu</th><th>Notes</th></tr></thead>
         <tbody>
           <tr><td>ProwdCAD style <code>.prowd.json</code></td><td>File ▸ Save / Open</td><td>Everything in one file. Older ProwdCAD files are converted when opened.</td></tr>
-          <tr><td>DXF AAMA / ASTM + <code>.rul</code></td><td>File ▸ Import / Export</td><td>For Gerber, Lectra, Optitex, TUKAcad and others. Grading travels in the <code>.rul</code> file; import both together. An import report lists anything that needed attention.</td></tr>
+          <tr><td>DXF AAMA / ASTM + <code>.rul</code></td><td>File ▸ Import / Export</td><td>For Gerber, Lectra, Optitex, TUKAcad and others. Grading travels in the <code>.rul</code> file; select the DXF and its <code>.rul</code> together in the file chooser, because the sizes and the grading are in the <code>.rul</code>. The import report shows the sizes it found; when they differ from the style's, choose there whether the style takes the file's sizes or the pieces take the style's (matched by size name). A DXF on its own has one size: its pieces join the style's sizes ungraded.</td></tr>
           <tr><td>Tiled PDF</td><td>File ▸ Export ▸ PDF · <kbd>Ctrl+P</kbd></td><td>A4, Letter, A0 and more at exactly 1:1, with registration crosses, glue overlap, page labels and a 100 mm check square.</td></tr>
           <tr><td>SVG</td><td>File ▸ Import / Export</td><td>1:1 in millimetres. Import asks for the DPI when the file has none.</td></tr>
           <tr><td>PLT / HPGL</td><td>File ▸ Import / Export</td><td>For plotters and cutters, with a device profile (units, frame width, notch style).</td></tr>
