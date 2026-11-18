@@ -259,6 +259,8 @@ export interface Notch {
   angleDeg: number;
   /** corner notch direction */
   cornerDir?: 'prev' | 'next';
+  /** where the mark is made, for a notch of the sew line of a piece with seam: on the cut line (default), on the sew line, or on both */
+  on?: 'cut' | 'sew' | 'both';
   mode?: 'draw' | 'cut';
   /** walk-support / pleat auto notch etc. */
   source?: 'manual' | 'walk' | 'pleat' | 'dart' | 'slit' | 'cross';
