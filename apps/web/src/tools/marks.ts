@@ -29,6 +29,10 @@ import type { ContourHit } from '../hitkit';
 
 export let notchType: NotchType = 'slit';
 export function setNotchType(t: NotchType) { notchType = t; }
+/** where new notches of a sew line are marked: on the cut line, on the sew line, or on both */
+export let notchOn: 'cut' | 'sew' | 'both' = 'cut';
+export function setNotchOn(v: 'cut' | 'sew' | 'both') { notchOn = v; }
+export const NOTCH_ON = [{ value: 'cut', label: 'Cut line (seam edge)' }, { value: 'sew', label: 'Sewing line' }, { value: 'both', label: 'Both lines' }];
 export let drillDiameter = 3;
 export function setDrillDiameter(d: number) { drillDiameter = d; }
 
@@ -67,7 +71,7 @@ async function notchPlace(app: App, typed?: string) {
     doc.transact(res.ds.length > 1 ? 'Notches' : 'Notch', () => {
       for (const d of res.ds) {
         const placement = ops.placementAt(doc, p, v.hit.contour.id, sb.sA + d * (sb.L / L), kind);
-        ops.addNotch(doc, p, { contourId: v.hit.contour.id, placement, type: notchType, depth: setup.depth, width: setup.width, angleDeg: 0, mode: setup.mode, source: 'manual' });
+        ops.addNotch(doc, p, { contourId: v.hit.contour.id, placement, type: notchType, depth: setup.depth, width: setup.width, angleDeg: 0, mode: setup.mode, source: 'manual', on: notchOn });
       }
     });
     app.status(`${res.ds.length} notch${res.ds.length > 1 ? 'es' : ''} (${notchType}) added to ${p.name} · click a notch = grid editor · Ctrl+Z undoes`);
@@ -125,6 +129,7 @@ async function notchAt(app: App, w: Vec) {
       { kind: 'length', key: 'width', label: 'Width', value: setup[notchType].width, min: 0 },
       { kind: 'number', key: 'angle', label: 'Angle to normal', value: 0, suffix: '°' },
       { kind: 'radio', key: 'mode', label: 'Mode', value: setup[notchType].mode, options: [{ value: 'cut', label: 'Cut' }, { value: 'draw', label: 'Draw' }] },
+      { kind: 'radio', key: 'on', label: 'Mark on', value: notchOn, options: NOTCH_ON },
     ],
   });
   if (!r) return;
@@ -137,15 +142,22 @@ async function notchAt(app: App, w: Vec) {
     const typed = (kind === 'fromNext' ? r._dn : r._dp) as number;
     placement = Math.abs(typed - baseOf(pl)) > 1e-9 ? { ...pl, dist: Object.fromEntries(Object.keys(pl.dist).map(k => [k, typed])) } : pl;
   }
-  setNotchType(r.type as NotchType);
+  setNotchType(r.type as NotchType); setNotchOn(r.on as typeof notchOn);
   try {
-    ops.addNotch(doc, p, { contourId: hit.contour.id, placement, type: r.type as NotchType, depth: r.depth as number, width: r.width as number, angleDeg: r.angle as number, mode: r.mode as 'draw' | 'cut', source: 'manual' });
+    ops.addNotch(doc, p, { contourId: hit.contour.id, placement, type: r.type as NotchType, depth: r.depth as number, width: r.width as number, angleDeg: r.angle as number, mode: r.mode as 'draw' | 'cut', source: 'manual', on: notchOn });
     app.status(`Notch (${r.type}, ${kind}) added to ${p.name}`);
   } catch (err) { reportError(err, 'Notch'); }
 }
 
 export const notchTool: Tool = {
   id: 'notch', title: 'Notch', group: 'marks', hotkey: 'N', icon: ICON.notch, cursor: 'crosshair',
+  modes: () => [
+    { id: 'cut', label: 'On cut line', title: 'New notches are marked on the cut line (the seam edge)' },
+    { id: 'sew', label: 'On sew line', title: 'New notches are marked on the sewing line' },
+    { id: 'both', label: 'Both', title: 'New notches are marked on the cut line and on the sewing line' },
+  ],
+  mode: () => notchOn,
+  setMode(app, id) { setNotchOn(id as typeof notchOn); app.status(`Notch: new notches are marked ${id === 'both' ? 'on the cut line and the sewing line' : id === 'sew' ? 'on the sewing line' : 'on the cut line'}`); app.invalidate(); },
   hint: () => NH ? `Notch (${notchType}) · ${fmt(NH.d)} from the start of the line, ${fmt(NH.seg.L - NH.d)} from its end · click = notch dialog · type a number or right-click = exact place (From start / From end / Ratio % / Divide / Every)`
     : `Notch (${notchType}): click a sew / internal line · on a line: type a number or right-click = exact place · click an existing notch = grid editor`,
   deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); hover = null; NH = null; notchPreview = []; app.invalidate('canvas'); },
