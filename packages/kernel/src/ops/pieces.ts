@@ -357,7 +357,11 @@ export function setHalf(doc: Document, pieceId: Id, axis: { a: Vec; b: Vec }, o:
     const i = findFoldEdge(piece, axis);
     const P = piece.sew.points;
     piece.sew.points = [...P.slice(i + 1), ...P.slice(0, i + 1)];
-    piece.half = { a: { ...axis.a }, b: { ...axis.b }, openAtOutput: o.openAtOutput ?? true };
+    // the stored mirror line is the fold edge itself, end to end (in the direction the axis was given)
+    const e0 = P[i], e1 = P[(i + 1) % P.length];
+    const fwd = (e1.x - e0.x) * (axis.b.x - axis.a.x) + (e1.y - e0.y) * (axis.b.y - axis.a.y) >= 0;
+    const [ha, hb] = fwd ? [e0, e1] : [e1, e0];
+    piece.half = { a: { x: ha.x, y: ha.y }, b: { x: hb.x, y: hb.y }, openAtOutput: o.openAtOutput ?? true };
   });
 }
 
