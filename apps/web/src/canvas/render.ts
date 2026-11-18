@@ -199,7 +199,7 @@ export function renderWorld(app: App): string {
       g.push(`<path d="M${f(fd.a.x)} ${f(fd.a.y)}L${f(fd.b.x)} ${f(fd.b.y)}" class="ns" stroke="#e8590c" stroke-width="1.4" stroke-dasharray="10 3 2 3" data-fold="line"/>`);
     }
     // half piece axis
-    if (p.half) g.push(`<path d="M${f(p.half.a.x)} ${f(p.half.a.y)}L${f(p.half.b.x)} ${f(p.half.b.y)}" class="ns" stroke="#16a085" stroke-width="1.2" stroke-dasharray="8 3 2 3"/>`);
+    if (p.half) g.push(`<path d="M${f(p.half.a.x)} ${f(p.half.a.y)}L${f(p.half.b.x)} ${f(p.half.b.y)}" class="ns" stroke="#16a085" stroke-width="${p.half.openAtOutput === false ? 2.6 : 1.4}" stroke-dasharray="10 3 2 3" data-mirror="line"/>`);
     g.push('</g>');
     out.push(g.join(''));
   }
