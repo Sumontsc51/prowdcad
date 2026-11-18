@@ -572,12 +572,12 @@ export interface PieceDrawing {
 }
 
 /** Notch drawing segment: starts on the cut line (ray along the outward normal from the sew point), runs `depth` inward. */
-export function notchSegment(piece: Piece, notch: Notch, line: SizeLine, sizeId: SizeId, cut: Vec[], r?: ResolvedContour): DrawnNotch | null {
+export function notchSegment(piece: Piece, notch: Notch, line: SizeLine, sizeId: SizeId, cut: Vec[], r?: ResolvedContour, at?: 'cut' | 'sew'): DrawnNotch | null {
   const f = resolveNotch(piece, notch, line, sizeId, notch.contourId === piece.sew.id ? r : undefined);
   if (!f) return null;
   let a = f.p;
   const onSewPerimeter = notch.contourId === piece.sew.id;
-  if (onSewPerimeter && !piece.noSeam) {
+  if (onSewPerimeter && !piece.noSeam && (at ?? (notch.on === 'sew' ? 'sew' : 'cut')) === 'cut') {
     const hit = rayPolygon(f.p, f.nOut, cut, 200);
     if (hit) a = hit.pt;
   }
@@ -593,7 +593,11 @@ export function drawPiece(doc: Document, authored: Piece, sizeId?: SizeId): Piec
   const rp = doc.resolvePiece(piece.id, sid, { output: true });
   const off = (g: Record<SizeId, GradeInc> | undefined, p: Vec) => add(p, absoluteOffset(g, line, sid));
   const notches: DrawnNotch[] = [];
-  for (const n of piece.notches) { const s = notchSegment(piece, n, line, sid, rp.cut, rp.sew); if (s) notches.push(s); }
+  for (const n of piece.notches) {
+    const s = notchSegment(piece, n, line, sid, rp.cut, rp.sew); if (s) notches.push(s);
+    // a notch made on both lines: the mark on the sew line as well
+    if (n.on === 'both' && n.contourId === piece.sew.id && !piece.noSeam) { const s2 = notchSegment(piece, n, line, sid, rp.cut, rp.sew, 'sew'); if (s2 && s && Math.hypot(s2.a.x - s.a.x, s2.a.y - s.a.y) > 1e-9) notches.push(s2); }
+  }
   return {
     piece, pieceId: piece.id, name: piece.name, sizeId: sid, sizeName: line.sizes.find(s => s.id === sid)?.name ?? sid,
     cut: rp.cut, sew: rp.sew.pts, hasSeam: !piece.noSeam, sewResolved: rp.sew,
