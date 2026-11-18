@@ -230,7 +230,7 @@ const cases = [
       await typeInto(h, gcell(h, 'L', 'dx'), '12');
       h._st = await status(h); h._ae = await ae(h);
       h._g1 = abs(await h.state(), 'FRONT', 'UA');
-      await h.page.locator('.gr-bar button[data-view="total"]').click(); await h.settle(80);
+      await h.page.locator('.gr-bar select.gr-view').selectOption('total'); await h.settle(80);
       await typeInto(h, gcell(h, 'L', 'dx'), '15');
     },
     expect: async (h, c) => {
@@ -248,7 +248,7 @@ const cases = [
   C('table-paste', {
     title: 'Grading table: paste an Excel block (dX, dY columns) into consecutive size rows (base skipped), one undo step',
     sel: A('FRONT', 'UA'),
-    invoke: async h => { await h.key('Control+g'); await h.settle(100); await h.page.locator('.gr-bar button[data-view="total"]').click(); await h.settle(80); },
+    invoke: async h => { await h.key('Control+g'); await h.settle(100); await h.page.locator('.gr-bar select.gr-view').selectOption('total'); await h.settle(80); },
     drive: async h => { await pasteInto(h, '.sg-wrap.gr input[data-size="S"][data-axis="dx"]', '-8\t-1\n0\t0\n9\t2\n19\t3\n'); },
     expect: (h, c) => { const g = abs(c.after, 'FRONT', 'UA'); return req(near(g.S.dx, -8) && near(g.S.dy, -1) && near(g.L.dx, 9) && near(g.L.dy, 2) && near(g.XL.dx, 19) && near(g.XL.dy, 3) && near(g.M.dx, 0), 'pasted ' + JSON.stringify(g)); },
   }),
@@ -297,17 +297,19 @@ const cases = [
       req(h._k3?.size === 'XL' && h._k3?.axis === 'dx', 'Tab ' + JSON.stringify(h._k3)),
     ] }),
   C('table-small-large', {
-    title: 'Grading table ▸ Small → large: each size shows the change from the next smaller size; the smallest size has no entry; an entry above the base moves that size and the larger ones, the base stays',
+    title: 'Grading table ▸ Small → large: one row per step between two sizes (S-M, M-L, L-XL); an entry above the base moves that size and the larger ones, the base stays',
     sel: A('FRONT', 'UA'),
-    invoke: async h => { await h.key('Control+g'); await h.settle(100); await h.page.locator('.gr-bar button[data-view="inc"]').click(); await h.settle(100); },
+    invoke: async h => { await h.key('Control+g'); await h.settle(100); await h.page.locator('.gr-bar select.gr-view').selectOption('inc'); await h.settle(100); },
     drive: async h => {
+      h._saved = await h.ev(() => window.__e2e.settings.gradeView);
       h._vals = await h.ev(() => [...document.querySelectorAll('.sg-wrap.gr tbody tr[data-r]')].map(tr => { const i = tr.querySelector('input[data-axis="dx"]'); return tr.dataset.size + ':' + (i ? i.value : 'ro'); }));
-      await typeInto(h, gcell(h, 'XL', 'dx'), '15');
-      await typeInto(h, gcell(h, 'M', 'dx'), '4');
+      await typeInto(h, gcell(h, 'L-XL', 'dx'), '15');
+      await typeInto(h, gcell(h, 'S-M', 'dx'), '4');
       h._t = await h.ev(() => { const E = window.__e2e, p = E.P('FRONT'), a = p.sew.points.find(q => q.name === 'UA'); const t = n => Math.round((E.ops.gradedPosition(E.app.doc, p.id, a.id, E.sizeId(n)).x - a.x) * 100) / 100; return { S: t('S'), M: t('M'), L: t('L'), XL: t('XL') }; });
-      await h.page.locator('.gr-bar button[data-view="step"]').click(); await h.settle(60);
+      await h.page.locator('.gr-bar select.gr-view').selectOption('step'); await h.settle(60);
+      h._saved2 = await h.ev(() => window.__e2e.settings.gradeView);
     },
-    expect: h => [req(h._vals.join() === 'S:ro,M:10,L:10,XL:10', 'small → large values: ' + h._vals),
+    expect: h => [req(h._vals.join() === 'S-M:10,M-L:10,L-XL:10', 'small → large rows: ' + h._vals), req(h._saved === 'inc' && h._saved2 === 'step', 'the chosen view should be saved as the default: ' + h._saved + ' → ' + h._saved2),
       req(h._t.M === 0 && h._t.L === 10 && h._t.XL === 25 && h._t.S === -4, 'XL entry 15 → XL total 25; M entry 4 → S total −4; base stays: ' + JSON.stringify(h._t))] }),
   C('table-columns', {
     title: 'Grading table: several selected points = one dX/dY column pair each; one point adds X / Y / other-view columns',
@@ -364,7 +366,7 @@ const cases = [
       await typeInto(h, w.locator('input[data-size="L"][data-axis="dx"]'), '6');
       h._g2 = abs(await h.state(), 'FRONT', 'SS_HEM');
       await h.key('Control+g'); await h.settle(80);
-      await h.page.locator('.gr-bar button[data-view="total"]').click(); await h.settle(60);
+      await h.page.locator('.gr-bar select.gr-view').selectOption('total'); await h.settle(60);
       await typeInto(h, gcell(h, 'XL', 'dx'), '13'); await h.blur(); await h.settle(80);
       h._b2 = await h.ev(() => { const id = window.__e2e.findA('FRONT', 'SS_HEM').a.id; return document.querySelector(`.rbadge[data-anchor="${id}"]`)?.dataset.status; });
     },

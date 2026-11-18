@@ -110,7 +110,7 @@ async function units(h, fixtures) {
     return { got: `UA abs L dx ${g.L.dx} mm, XL dx ${g.XL.dx} mm`, pass: near(g.L.dx, 12.7, 1e-3), note: 'incremental edit of L shifts XL too (incremental convention)' };
   });
   await T('Grading table absolute view cell "1/2" (in16, L dY of UA)', async () => {
-    await unit('in16'); await h.selectA('FRONT', 'UA'); await h.key('Control+g'); await h.page.locator('.gr-bar button[data-view="total"]').click(); await h.settle(80);
+    await unit('in16'); await h.selectA('FRONT', 'UA'); await h.key('Control+g'); await h.page.locator('.gr-bar select.gr-view').selectOption('total'); await h.settle(80);
     const cell = h.page.locator('.sg-wrap.gr input[data-size="L"][data-axis="dy"]');
     await typeInto(h, cell, '1/2'); const st = await h.state(); const g = abs(st, 'FRONT', 'UA');
     return { got: `UA abs L dy ${g.L.dy}, XL dy ${g.XL.dy}`, pass: near(g.L.dy, 12.7, 1e-3) && near(g.XL.dy, 10, 1e-3) };
@@ -630,7 +630,7 @@ async function fixes(h, fixtures) {
     await h.selectA('FRONT', 'UA'); await h.key('Control+g'); await h.settle(80);
     const note = await h.page.locator('.gr-note').textContent();
     await typeInto(h, h.page.locator('.sg-wrap.gr input[data-size="L"][data-axis="dx"]'), '12'); const st1 = await h.ev(() => window.__e2e.app.statusMsg);
-    await h.page.locator('.gr-bar button[data-view="total"]').click(); await h.settle(60);
+    await h.page.locator('.gr-bar select.gr-view').selectOption('total'); await h.settle(60);
     const note2 = await h.page.locator('.gr-note').textContent();
     const xl0 = abs(await h.state(), 'FRONT', 'UA').XL.dx;
     await typeInto(h, h.page.locator('.sg-wrap.gr input[data-size="L"][data-axis="dx"]'), '15'); const g = abs(await h.state(), 'FRONT', 'UA');
