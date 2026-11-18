@@ -41,6 +41,8 @@ export interface Settings {
   /** shape tools: draw the shape as an internal line of the piece under it */
   shapeInternal?: boolean;
   panels: { pieces: boolean; sizes: boolean; inspector: boolean; grading: boolean };
+  /** grading table view; the last one chosen is the default next time (first time: small → large) */
+  gradeView: 'inc' | 'step' | 'total';
   guides: Guide[];
   /** cut-line corner markers (cutLineForSize corner indices) on selected pieces */
   showCutCorners: boolean;
@@ -92,6 +94,7 @@ export const DEFAULT_SETTINGS: Settings = {
   snapGrid: false, snapGuides: true, snapPoints: true,
   gridMm: 10, nudgeMm: 1, polygonSides: 6, roundRadiusMm: 20,
   panels: { pieces: true, sizes: true, inspector: true, grading: false },
+  gradeView: 'inc',
   guides: [],
   showCutCorners: false, showRuleNames: false, ruleBadges: false, showReference: true,
   selFilter: 'all', selectDragMove: false, pickRadiusPx: 8, movePointMode: 'single', moveLineMode: 'translate', pieceToolMode: 'move', rotateMode: 'point', rotateKeepGrain: false, moveLineCopy: false,

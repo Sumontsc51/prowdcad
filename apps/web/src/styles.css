@@ -156,6 +156,7 @@ table.gtbl tr.cur td:first-child { color: var(--accent); }
 .gr-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .gr-note { font-size: 11px; color: var(--dim); margin: -2px 0 6px; min-height: 34px; max-height: 34px; overflow: hidden; line-height: 16px; } /* a steady height: the table must not jump when a cell gets focus */
 .gr-tip { font-size: 10.5px; margin-left: 8px; }
+select.gr-view { padding: 3px 6px; font-weight: 600; max-width: 330px; }
 .gr-note.warn { color: #b26b00; }
 .seg { display: inline-flex; border: 1px solid var(--line2); border-radius: 4px; overflow: hidden; }
 .seg button { padding: 2px 10px; font-size: 11px; }

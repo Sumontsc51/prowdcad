@@ -85,9 +85,12 @@ export class App {
   statusMsg = '';
   /** grading table point-tracking mode (arrow keys step through grade anchors) */
   pointTracking = false;
-  gradeAbsolute = false;
-  /** grading table view “Small → large”: each size shows the change from the next smaller size (overrides gradeAbsolute while on) */
-  gradeSmallLarge = false;
+  gradeAbsolute = settings.gradeView === 'total';
+  /** grading table view “Small → large”: each row is the change from one size to the next larger one (overrides gradeAbsolute while on) */
+  gradeSmallLarge = settings.gradeView === 'inc';
+  /** choose the grading table view; it becomes the default for next time */
+  setGradeView(v: 'inc' | 'step' | 'total') { this.gradeSmallLarge = v === 'inc'; this.gradeAbsolute = v === 'total'; settings.gradeView = v; saveSettings(); this.invalidate('panels'); }
+  get gradeView(): 'inc' | 'step' | 'total' { return this.gradeSmallLarge ? 'inc' : this.gradeAbsolute ? 'total' : 'step'; }
   space = false;
   fileName = 'untitled.prowd.json';
   fileHandle: unknown = null;
