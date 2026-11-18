@@ -313,6 +313,7 @@ table.sg tr.cur td { background: rgba(78,161,255,.10); }
 .sg-wrap.sheet table.sg td.sel { background: rgba(59,124,255,.24); box-shadow: inset 0 0 0 1px #3b7cff; }
 .sg-wrap.sheet table.sg td.fill { background: rgba(232,89,12,.16); box-shadow: inset 0 0 0 1px #e8590c; }
 .sg-wrap.sheet input.sg-in { cursor: cell; }
+.sg-wrap.sheet input.sg-in::selection { background: transparent; color: inherit; }
 .sg-fillh { position: absolute; width: 8px; height: 8px; background: #3b7cff; border: 1px solid #fff; border-radius: 1px; cursor: crosshair; z-index: 5; display: none; }
 table.sg tr.cur td.sg-rh { color: var(--accent); background: #26313f; }
 table.sg tr.aff td { background: rgba(255,180,84,.13); }
@@ -485,3 +486,14 @@ table.sp-list tr.sp-det td.pass { color: var(--ok); } table.sp-list tr.sp-det td
 table.sg tr.out { display: none; }
 .gr-calc .gr-k, .gr-calc .gr-f { width: 64px; }
 .gr-calc .btn.sm { min-width: 26px; }
+
+/* Size table window */
+.sztab table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.sztab th { text-align: left; color: var(--dim); font-weight: 500; padding: 2px 4px; }
+.sztab td { padding: 2px 4px; vertical-align: middle; }
+.sztab input.szt-name { width: 110px; }
+.sztab input[type="color"] { width: 30px; height: 20px; padding: 0; border: 1px solid var(--line); background: none; }
+.sztab .szt-sec { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.sztab .szt-pc { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; margin: 4px 0; }
+.sztab .szt-pc b { min-width: 90px; }
+.sztab .szt-add { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
