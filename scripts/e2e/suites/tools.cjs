@@ -175,6 +175,16 @@ const cases = [
     expect: (h, c) => req(count(c.after, 'FRONT', 'notches') === 2 && count(c.after, 'BACK', 'notches') === 1, 'walk notches not dropped on both pieces') }),
   T('movePoint', { tool: 'movePoint', invoke: palette('movePoint'), drive: async h => { const w = await h.W('FRONT', 'UA'); await h.dragW(w, { x: w.x + 15, y: w.y }, { steps: 10 }); }, expect: (h, c) => [req(an(c.after, 'FRONT', 'UA').x > 268, 'UA not moved'), req(!Q.otherChanged(c.before, c.after, 'FRONT', ['UA']).length, 'others changed')] }),
   T('movePoint#clickclick', { tool: 'movePoint', title: 'Move Point: click the point, click the new spot (AccuMark click-click)', invoke: hotkey('g', 'movePoint'), drive: async h => { const w = await h.W('FRONT', 'UA'); await h.clickW(w); await h.page.waitForTimeout(500); await h.clickW({ x: w.x + 20, y: w.y + 10 }); }, expect: (h, c) => req(an(c.after, 'FRONT', 'UA').x > 270, 'UA.x ' + an(c.after, 'FRONT', 'UA').x) }),
+  T('movePoint#foldedSide', { tool: 'movePoint', undo: false, title: 'Folded piece: a point of the folded-over part is dragged where the fold shows it (CF_HEM is shown at x = 170); the real point moves the mirrored way, a point of the part that stays moves as usual',
+    pre: async h => { await h.ev(() => { const E = window.__e2e, p = E.P('FRONT'); E.ops.setFold(E.app.doc, p.id, { x: 85, y: 0 }, { x: 85, y: 622 }); E.app.sel = { pieces: [p.id], anchors: [] }; E.app.invalidate(); }); await h.settle(80); },
+    invoke: palette('movePoint'),
+    drive: async h => {
+      h._fs = await h.ev(() => window.__e2e.ops.onFoldedPart(window.__e2e.P('FRONT'), { x: 0, y: 0 }));
+      const a = await h.local2world('FRONT', { x: 170, y: 0 }), b = await h.local2world('FRONT', { x: 150, y: -10 });
+      await h.dragW(a, b, { steps: 10 }); await h.settle(80);
+      const w = await h.W('FRONT', 'UA'); await h.dragW(w, { x: w.x + 15, y: w.y }, { steps: 10 }); },
+    after: h => h.ev(() => window.__e2e.C.runCommand('piece.unfoldAll')),
+    expect: (h, c) => { const p = an(c.after, 'FRONT', 'CF_HEM'), u = an(c.after, 'FRONT', 'UA'), u0 = an(c.before, 'FRONT', 'UA'); return [req(h._fs === true, 'CF_HEM should be on the folded part'), req(Math.abs(p.x - 20) < 1.5 && Math.abs(p.y + 10) < 1.5, 'CF_HEM should be at 20,-10: ' + p.x.toFixed(1) + ',' + p.y.toFixed(1)), req(Math.abs(u.x - u0.x - 15) < 1.5, 'UA should move +15: ' + (u.x - u0.x).toFixed(1))]; } }),
   T('movePoint#input', { tool: 'movePoint', title: 'Move Point: pick, type "1 1/8" (in16) in the input box, Enter', invoke: seq(h => h.page.locator('select.sb-unit').selectOption('in16'), hotkey('g', 'movePoint')),
     drive: async h => { const w = await h.W('FRONT', 'UA'); await h.clickW(w); await h.page.keyboard.type('1'); await h.page.waitForSelector('.ibox'); const ins = h.page.locator('.ibox input'); await ins.nth(0).fill('1 1/8'); await ins.nth(1).fill('0'); await ins.nth(1).press('Enter'); await h.settle(); },
     expect: (h, c) => req(near(an(c.after, 'FRONT', 'UA').x, 288.575, 1e-3) && near(an(c.after, 'FRONT', 'UA').y, 465, 1e-3), `UA (${an(c.after, 'FRONT', 'UA').x},${an(c.after, 'FRONT', 'UA').y}) want (288.575,465)`) }),
