@@ -143,6 +143,16 @@ async function nested(h, fixtures) {
     await h.escapeAll();
     return { got: `${thumbs}/${items} pictures; groups ${groups}; info kept open ${kept} (${rows} rows); More: ${menu.slice(0, 120)}`, pass: thumbs === items && items >= 2 && /pc\.piece\+/.test(groups) && /pc\.info-/.test(groups) && kept && rows >= 3 && /Insert a size/.test(menu) && /Append a size/.test(menu) };
   });
+  await T('Side panel arrows: ▶ hides the panel (the sheet gets its width), ◀ brings it back and then makes it wide; the choice is remembered', async () => {
+    const P = h.page; const wd = () => P.evaluate(() => [Math.round(document.getElementById('right-dock').getBoundingClientRect().width), Math.round(document.querySelector('svg.sheet').getBoundingClientRect().width)]);
+    const a = await wd();
+    await P.locator('.side-arrows [data-side="less"]').click(); await h.settle(120); const b = await wd();
+    await P.locator('.side-arrows [data-side="more"]').click(); await h.settle(120); const c = await wd();
+    await P.locator('.side-arrows [data-side="more"]').click(); await h.settle(120); const d = await wd();
+    const saved = await h.ev(() => window.__e2e.settings.sideWidth);
+    await P.locator('.side-arrows [data-side="less"]').click(); await h.settle(120); const e = await wd();
+    return { got: `panel/sheet ${a} → hidden ${b} → ${c} → wide ${d} (saved ${saved}) → ${e}`, pass: b[0] === 0 && b[1] > a[1] + 150 && c[0] === a[0] && d[0] > c[0] + 40 && saved === 'wide' && e[0] === a[0] };
+  });
   await T('Size chip click switches active size; selection kept', async () => { await h.selectA('FRONT', 'UA'); await h.page.locator('.sz-chip', { hasText: 'XL' }).click(); await h.settle(); const s = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); const sel = await h.sel(); return { got: `${s}, sel ${sel.anchors}`, pass: s === 'XL' && sel.anchors[0] === 'FRONT/UA' }; });
   await T('Ctrl+] / Ctrl+[ step sizes', async () => { await h.key('Control+]'); await h.key('Control+]'); const a = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); await h.key('Control+['); const b = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); return { got: `${a} then ${b}`, pass: a === 'XL' && b === 'L' }; });
   await T('Nested view: drag the L instance of UA → only L grading of UA changes', async () => {
