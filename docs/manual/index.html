@@ -464,11 +464,11 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
           <tr><td><kbd>Enter</kbd> · arrows · <kbd>Tab</kbd></td><td>Next size down in the same column (<kbd>Shift+Enter</kbd> up) · move between cells · next cell</td></tr>
         </tbody>
       </table></div>
-      <p>Three views, named for what a cell means:</p>
+      <p>Three views, chosen in the drop-down at the top of the table. The one you pick stays the default the next time you open ProwdCAD:</p>
       <ul>
         <li><strong>Step into this size</strong> (incremental): the change from the size next to it toward the base. Sizes smaller than the base carry their own step, usually negative, the way an AccuMark rule table shows them.</li>
         <li><strong>Total from base size</strong> (cumulative): how far the size is from the base ★.</li>
-        <li><strong>Small → large</strong> (incremental from the smallest size): every size shows the change from the next smaller size, running from the smallest size up; the smallest size has no entry. The base ★ stays where it is: an entry above the base moves that size and the larger ones, an entry at or below the base moves the smaller ones.</li>
+        <li><strong>Small → large</strong> (the default): one row per step between two sizes, named for the pair (<code>XS-S</code>, <code>S-M</code>, <code>M-L</code> …), from the smallest size up. Each cell is the change from the first size of the pair to the second. The base size stays where it is: an entry above the base moves that size and the larger ones, an entry at or below the base moves the smaller ones.</li>
       </ul>
       <div class="tbl"><table>
         <thead><tr><th>Size</th><th class="num">Step into this size, dX</th><th class="num">Total from base size, dX</th></tr></thead>
