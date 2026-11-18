@@ -207,9 +207,9 @@ function miterCorner(c: CornerCtx): Vec[] {
  * Every cap point is ≥ R from the sew corner, so the tip keeps the full allowance (was: the short
  * bevel A→B, which leaves 0.25 mm on a 5° spike with a 10 mm seam).
  */
-function squareCapCorner(c: CornerCtx, M: Vec): Vec[] {
+function squareCapCorner(c: CornerCtx, M: Vec, at?: number): Vec[] {
   const u = norm(sub(M, c.C));
-  const R = Math.max(Math.abs(c.dPrev), Math.abs(c.dNext));
+  const R = at ?? Math.max(Math.abs(c.dPrev), Math.abs(c.dNext));
   const K = add(c.C, mul(u, R)), kd = perp(u);
   let P0 = lineIntersect(c.A, c.tIn, K, kd) ?? c.A;
   let P1 = lineIntersect(c.B, c.tOut, K, kd) ?? c.B;
@@ -289,6 +289,21 @@ function angledCorner(c: CornerCtx): Vec[] {
   return dist(c.A, c.B) < 1e-9 ? [c.A] : [c.A, c.B];
 }
 
+/** Mitered at a distance: the miter, cut off square at `d` from the sew corner when its point lies further out. */
+function truncatedCorner(c: CornerCtx, d?: number): Vec[] {
+  if (!isConvex(c)) return miterCorner(c);
+  const M = lineIntersect(c.A, c.tIn, c.B, c.tOut);
+  if (!M) return miterCorner(c);
+  const R = d !== undefined && Number.isFinite(d) && d > 0 ? d : Math.max(Math.abs(c.dPrev), Math.abs(c.dNext));
+  // never inside the allowance itself: the cut needs at least the perpendicular distance of the nearer cut line
+  return dist(M, c.C) <= R + 1e-9 ? [M] : squareCapCorner(c, M, R);
+}
+/** Cut-out corner: both allowances end square at the sew corner (A → sew corner → B). */
+function cutoutCorner(c: CornerCtx): Vec[] {
+  if (!isConvex(c) || dist(c.A, c.C) < 1e-9 || dist(c.B, c.C) < 1e-9) return miterCorner(c);
+  return [{ ...c.A }, { ...c.C }, { ...c.B }];
+}
+
 /**
  * Turn-back (mirrored) corner. The hem side is `extend` ('prev' | 'next'); default: the side
  * with the larger allowance (tie → next). The other side's cut line is run to the hem's fold
@@ -349,6 +364,8 @@ function cornerGeometry(spec: CornerSpec | undefined, c: CornerCtx, piece: Piece
     case 'boxed': return boxedCorner(c, spec.extend ?? 'both');
     case 'turnback': return turnbackCorner(c, spec.extend, spec.folds);
     case 'angled': return angledCorner(c);
+    case 'truncated': return truncatedCorner(c, spec.dist);
+    case 'cutout': return cutoutCorner(c);
     case 'manual': {
       const mp = spec.manualPoints;
       if (!mp || mp.length === 0) return miterCorner(c);
@@ -522,6 +539,39 @@ export function setSeam(doc: Document, pieceId: Id, fromAnchorId: Id, toAnchorId
     p.noSeam = false;
     afterSeamEdit(doc, p);
   });
+}
+
+/** What a grade corner of the sew line looks like in a size: its inside angle, the allowances before / after it and the grade points next to it. */
+export interface CornerFacts { angleDeg: number; convex: boolean; dPrev: number; dNext: number; prevId: Id; nextId: Id; spec?: CornerSpec }
+export function cornerFacts(piece: Piece, line: SizeLine, sizeId: SizeId, anchorId: Id): CornerFacts {
+  const b = build(piece, line, sizeId);
+  const g = b.r.gradeIdx, G = g.length;
+  const k = g.indexOf(gradeIndexOf(piece, anchorId));
+  if (k < 0) throw new Error('Not a grade corner of the sew line');
+  const c = b.corners[k].ctx;
+  const turn = cross(c.tIn, c.tOut) * (isCCW(b.r.pts) ? 1 : -1); // > 0: the outline turns inwards = an outside (convex) corner
+  const between = Math.acos(Math.max(-1, Math.min(1, dot(mul(c.tIn, -1), c.tOut)))) * 180 / Math.PI;
+  return {
+    angleDeg: turn >= 0 ? between : 360 - between, convex: turn > 1e-9, dPrev: c.dPrev, dNext: c.dNext,
+    prevId: piece.sew.points[g[(k - 1 + G) % G]].id, nextId: piece.sew.points[g[(k + 1) % G]].id, spec: b.spec[k],
+  };
+}
+/**
+ * A corner drawn on its own, for pictures of the corner types: a corner of `angleDeg` (inside angle) with the
+ * allowances `dPrev` before and `dNext` after it, made with `spec`. The line before the corner arrives along
+ * +x at the origin, the piece lies above it. Returns the sew outline, the cut line and the corner's own points.
+ */
+export function cornerPreview(spec: CornerSpec | undefined, angleDeg: number, dPrev: number, dNext: number): { sew: Vec[]; cut: Vec[]; corner: Vec[] } {
+  const th = Math.max(25, Math.min(165, angleDeg)) * Math.PI / 180;
+  const L = 40 * Math.max(Math.abs(dPrev), Math.abs(dNext), spec?.dist ?? 0, 1);
+  const mk = (x: number, y: number, seamAfter: number, corner?: CornerSpec): Anchor => ({ id: newId('a'), x, y, kind: 'grade', smooth: false, grade: {}, seamAfter, flags: {}, ...(corner ? { corner: JSON.parse(JSON.stringify(corner)) } : {}) } as Anchor);
+  const pts = [mk(-L, 0, dPrev), mk(0, 0, dNext, spec), mk(-Math.cos(th) * L, Math.sin(th) * L, 0)];
+  const sizeId = newId('s');
+  const line: SizeLine = { id: newId('sl'), name: 'p', sizes: [{ id: sizeId, name: 'B' }], baseSizeId: sizeId };
+  const piece = { id: newId('p'), name: 'corner', sew: { id: newId('c'), type: 'perimeter', closed: true, points: pts }, internals: [], notches: [], darts: [], drills: [], texts: [], artwork: [], seamDefault: 0, cutMode: 'auto' } as unknown as Piece;
+  const cut = cutLineForSize(piece, line, sizeId).pts;
+  const corner = cornerPointsForSize(piece, line, sizeId).find(c => c.anchorId === pts[1].id)?.pts ?? [];
+  return { sew: pts.map(a => ({ x: a.x, y: a.y })), cut, corner };
 }
 
 /** Most folds a turn-back hem can have. */
@@ -828,7 +878,8 @@ function repairPiece(p: Piece, line: SizeLine): RepairReport {
     if (a.seamAfter !== undefined && !Number.isFinite(a.seamAfter)) { delete a.seamAfter; rep.clampedValues++; }
     const c = a.corner;
     if (!c) continue;
-    const okType = ['miter', 'boxed', 'turnback', 'angled', 'manual'].includes(c.type);
+    const okType = ['miter', 'boxed', 'turnback', 'angled', 'truncated', 'cutout', 'manual'].includes(c.type);
+    if (c.dist !== undefined && (c.type !== 'truncated' || !Number.isFinite(c.dist) || c.dist <= 0)) delete c.dist;
     const badManual = c.type === 'manual' && (!c.manualPoints || c.manualPoints.length < 1 || c.manualPoints.length > MANUAL_CORNER_MAX_POINTS
       || c.manualPoints.some(q => !Number.isFinite(q?.x) || !Number.isFinite(q?.y)));
     if (!okType || badManual) { delete a.corner; rep.droppedCorners++; continue; }
