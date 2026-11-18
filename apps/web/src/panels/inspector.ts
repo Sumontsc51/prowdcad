@@ -6,7 +6,8 @@
 import { absoluteOffset, type CornerType, type Anchor } from '@prowdcad/kernel';
 import type { App } from '../app';
 import { h, clear } from '../ui/dom';
-import { lengthInput, numberInput, textInput, selectInput, checkbox, row, unitTag } from './widgets';
+import { lengthInput, numberInput, textInput, selectInput, checkbox, row, unitTag, group } from './widgets';
+import { pieceThumb } from './pieces';
 import { resolveFor, contourById, layoutOf, setAbsGradeRaw } from '../geometry';
 import { ops } from '../ops-bridge';
 import { reportError } from '../commands';
@@ -94,29 +95,39 @@ function pieceInspector(app: App, host: HTMLElement, id: string) {
   const r = resolveFor(app.doc, p, app.sizeOf(p));
   const L = layoutOf(p);
   const set = (label: string, fn: (pc: typeof p) => void) => tx(app, label, () => fn(app.doc.piece(id)));
+  const pic = h('span.ph-pic'); pic.innerHTML = pieceThumb(app, p, 44);
+  const nG = p.sew.points.filter(a => a.kind === 'grade').length;
   host.append(
-    h('div.insp-title', {}, 'Piece'),
-    row('Name', textInput(p.name, v => set('Rename piece', pc => { pc.name = v.trim() || pc.name; }))),
-    row('Description', textInput(p.description ?? '', v => set('Piece description', pc => { pc.description = v; }))),
-    row('Colour', (() => { const inp = h('input', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(p.color ?? '') ? p.color : '#8fa3bf', title: 'Colour of this piece on the sheet', 'data-k': 'color' }) as HTMLInputElement; inp.onchange = () => set('Piece colour', pc => { pc.color = inp.value; }); return inp; })(), h('button.mini', { title: 'Back to the default colour', onclick: () => set('Piece colour', pc => { delete pc.color; }) }, '×')),
-    row('Seam default', lengthInput(p.seamDefault, v => set('Seam default', pc => { pc.seamDefault = v; }), { min: 0 }), unitTag()),
-    row('No seam', checkbox(p.noSeam, v => set('No seam', pc => { pc.noSeam = v; }))),
-    row('Lock grading', checkbox(p.lockGrading, v => { try { ops.setLockGrading(app.doc, id, v); } catch (err) { reportError(err, 'Lock grading'); } })),
-    row('Cut line', h('span.val', {}, p.cutMode === 'manual' ? 'manual' : 'auto')),
-    row('Locked', checkbox(p.locked, v => { try { ops.lockPiece(app.doc, id, v); } catch (err) { reportError(err, 'Lock'); } })),
-    row('Position X', lengthInput(L.x, v => set('Move piece', pc => { pc.layout = { ...layoutOf(pc), x: v }; })), unitTag()),
-    row('Position Y', lengthInput(L.y, v => set('Move piece', pc => { pc.layout = { ...layoutOf(pc), y: v }; })), unitTag()),
-    row('Rotation', numberInput(L.angleDeg, v => set('Rotate piece', pc => { pc.layout = { ...layoutOf(pc), angleDeg: v }; })), h('span.u', {}, '°')),
-    h('div.insp-title', {}, 'Order'),
-    row('Material', textInput(p.order.material, v => set('Material', pc => { pc.order.material = v; }))),
-    row('Qty / bundle', numberInput(p.order.qtyPerBundle, v => set('Quantity', pc => { pc.order.qtyPerBundle = Math.max(1, Math.round(v)); }), { min: 1, decimals: 0 })),
-    row('Side', selectInput(p.order.side, [['none', 'none'], ['L', 'L'], ['R', 'R'], ['LR', 'L + R']], v => set('Side', pc => { pc.order.side = v as typeof pc.order.side; }))),
-    row('Rotation', selectInput(p.order.rotation, [['1way', '1-way'], ['2way', '2-way'], ['4way', '4-way'], ['free', 'free']], v => set('Rotation allow', pc => { pc.order.rotation = v as typeof pc.order.rotation; }))),
-    h('div.insp-title', {}, 'Info'),
-    row('Points', h('span.val', {}, `${p.sew.points.length} (${p.sew.points.filter(a => a.kind === 'grade').length} grade)`)),
-    row('Sew perimeter', h('span.val', {}, `${fmt(totalLength(r.sew))} ${unitLabel()}`)),
-    row('Internals', h('span.val', {}, String(p.internals.length))),
-    row('Notches / drills', h('span.val', {}, `${p.notches.length} / ${p.drills.length}`)),
+    h('div.prop-head', {}, pic, h('div.ph-text', {}, h('div.ph-name', {}, p.name), h('div.ph-sub', {}, `Piece · ${fmt(totalLength(r.sew))} ${unitLabel()} around · ${p.sew.points.length} points`))),
+    group('pc.piece', 'Piece', [
+      row('Name', textInput(p.name, v => set('Rename piece', pc => { pc.name = v.trim() || pc.name; }))),
+      row('Description', textInput(p.description ?? '', v => set('Piece description', pc => { pc.description = v; }))),
+      row('Colour', (() => { const inp = h('input', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(p.color ?? '') ? p.color : '#8fa3bf', title: 'Colour of this piece on the sheet', 'data-k': 'color' }) as HTMLInputElement; inp.onchange = () => set('Piece colour', pc => { pc.color = inp.value; }); return inp; })(), h('button.mini', { title: 'Back to the default colour', onclick: () => set('Piece colour', pc => { delete pc.color; }) }, '×')),
+      row('Locked', checkbox(p.locked, v => { try { ops.lockPiece(app.doc, id, v); } catch (err) { reportError(err, 'Lock'); } })),
+    ]),
+    group('pc.seam', 'Seam', [
+      row('Seam default', lengthInput(p.seamDefault, v => set('Seam default', pc => { pc.seamDefault = v; }), { min: 0 }), unitTag()),
+      row('No seam', checkbox(p.noSeam, v => set('No seam', pc => { pc.noSeam = v; }))),
+      row('Lock grading', checkbox(p.lockGrading, v => { try { ops.setLockGrading(app.doc, id, v); } catch (err) { reportError(err, 'Lock grading'); } })),
+      p.cutMode === 'manual' ? row('Cut line', h('span.val', {}, 'manual (drawn by hand)')) : null,
+    ]),
+    group('pc.order', 'Order', [
+      row('Material', textInput(p.order.material, v => set('Material', pc => { pc.order.material = v; }))),
+      row('Qty / bundle', numberInput(p.order.qtyPerBundle, v => set('Quantity', pc => { pc.order.qtyPerBundle = Math.max(1, Math.round(v)); }), { min: 1, decimals: 0 })),
+      row('Side', selectInput(p.order.side, [['none', 'none'], ['L', 'L'], ['R', 'R'], ['LR', 'L + R']], v => set('Side', pc => { pc.order.side = v as typeof pc.order.side; }))),
+      row('Rotation', selectInput(p.order.rotation, [['1way', '1-way'], ['2way', '2-way'], ['4way', '4-way'], ['free', 'free']], v => set('Rotation allow', pc => { pc.order.rotation = v as typeof pc.order.rotation; }))),
+    ]),
+    group('pc.place', 'Position on the sheet', [
+      row('Position X', lengthInput(L.x, v => set('Move piece', pc => { pc.layout = { ...layoutOf(pc), x: v }; })), unitTag()),
+      row('Position Y', lengthInput(L.y, v => set('Move piece', pc => { pc.layout = { ...layoutOf(pc), y: v }; })), unitTag()),
+      row('Rotation', numberInput(L.angleDeg, v => set('Rotate piece', pc => { pc.layout = { ...layoutOf(pc), angleDeg: v }; })), h('span.u', {}, '°')),
+    ], false),
+    group('pc.info', 'Info', [
+      row('Points', h('span.val', {}, `${p.sew.points.length} (${nG} grade)`)),
+      row('Sew perimeter', h('span.val', {}, `${fmt(totalLength(r.sew))} ${unitLabel()}`)),
+      row('Internals', h('span.val', {}, String(p.internals.length))),
+      row('Notches / drills', h('span.val', {}, `${p.notches.length} / ${p.drills.length}`)),
+    ], false),
   );
 }
 
@@ -136,7 +147,7 @@ function anchorInspector(app: App, host: HTMLElement, pa: NonNullable<ReturnType
   const sizeName = line.sizes.find(s => s.id === active)?.name ?? '';
   const where = contour === piece.sew ? 'sew line' : `internal ${piece.internals.indexOf(contour) + 1}`;
   const multi = app.sel.anchors.length > 1 ? ` (+${app.sel.anchors.length - 1} more)` : '';
-  host.append(h('div.insp-title', {}, `Point ${index + 1} · ${piece.name} · ${where}${multi}`));
+  host.append(h('div.prop-head', {}, h('span.ph-dot' + (a.kind === 'grade' ? '.sq' : '')), h('div.ph-text', {}, h('div.ph-name', {}, `Point ${index + 1}${a.name ? ' · ' + a.name : ''}${multi}`), h('div.ph-sub', {}, `${a.kind === 'grade' ? 'Grade point' : 'Curve point'} · ${piece.name} · ${where}`))));
   if (piece.locked) host.append(h('div.warnline', {}, 'Piece is locked — values are read-only.'));
   const lockNote = contour !== piece.sew && contour.lock ? (() => { try { return ops.lockSummary(piece, contour); } catch { return 'locked'; } })() : '';
   const lockDriven = !!lockNote && (contour.lock?.kind === 'follow' || (() => { try { return ops.isLockDriven(piece, contour.id, a.id); } catch { return false; } })());
@@ -151,7 +162,7 @@ function anchorInspector(app: App, host: HTMLElement, pa: NonNullable<ReturnType
     if (Math.abs(d) < 1e-12) return;
     try { ops.movePoint(app.doc, ref.pieceId, ref.anchorId, axis === 'x' ? { dx: d, dy: 0 } : { dx: 0, dy: d }, { sizeId: isBase ? undefined : active }); } catch (err) { reportError(err, `Point ${axis.toUpperCase()}`); }
   };
-  host.append(
+  const gPoint: (HTMLElement | null)[] = [
     row(`X${isBase ? '' : ` (${sizeName})`}`, lengthInput(pos.x, v => setPos('x', v), { readOnly: ro }), unitTag()),
     row(`Y${isBase ? '' : ` (${sizeName})`}`, lengthInput(pos.y, v => setPos('y', v), { readOnly: ro }), unitTag()),
     row('Name', textInput(a.name ?? '', v => set('Point name', an => { an.name = v || undefined; }), 'e.g. 03 Hip/m')),
@@ -159,14 +170,15 @@ function anchorInspector(app: App, host: HTMLElement, pa: NonNullable<ReturnType
     row('Kind', selectInput(a.kind, [['grade', 'Grade point'], ['curve', 'Curve point']], v => { if (v === a.kind) return; try { ops.togglePointKind(app.doc, ref.pieceId, ref.anchorId); } catch (err) { reportError(err, 'Point kind'); } })),
     row('Smooth', checkbox(a.smooth, v => set('Smooth', an => { an.smooth = v; if (!v) { delete an.hIn; delete an.hOut; } }))),
     row('Locked', checkbox(!!a.flags.locked, v => set('Lock point', an => { an.flags.locked = v || undefined; }))),
-  );
+  ];
   if (a.kind === 'curve') {
     const pinned = Object.keys(a.grade ?? {}).length > 0;
-    host.append(row('Grading', h('span.val', { title: pinned ? 'Own grading: keeps its position in every size when a neighbouring grade point moves' : 'No own grading: in graded sizes it is placed between its neighbouring grade points, so it moves when they move' }, pinned ? 'Pinned (own) ' : 'Follows neighbours '),
+    gPoint.push(row('Grading', h('span.val', { title: pinned ? 'Own grading: keeps its position in every size when a neighbouring grade point moves' : 'No own grading: in graded sizes it is placed between its neighbouring grade points, so it moves when they move' }, pinned ? 'Pinned (own) ' : 'Follows neighbours '),
       ro ? '' : h('button.btn.sm', { title: pinned ? 'Unpin: follow the neighbouring grade points again' : 'Pin (keep position): give it its own grading', onclick: () => { try { ops.pinCurvePoints(app.doc, ref.pieceId, [ref.anchorId], !pinned); } catch (err) { reportError(err, 'Pin'); } } }, pinned ? 'Unpin' : 'Pin')));
   }
+  host.append(group('pt.point', 'Point', gPoint));
   // handles
-  host.append(h('div.insp-title', {}, 'Handles'));
+  const gHandles: HTMLElement[] = [];
   const hh = rc.handles[index];
   for (const which of ['hIn', 'hOut'] as const) {
     const explicit = a[which];
@@ -177,15 +189,16 @@ function anchorInspector(app: App, host: HTMLElement, pa: NonNullable<ReturnType
       const r = deg * Math.PI / 180; an[which] = { x: len * Math.cos(r), y: len * Math.sin(r) };
       if (len > 0) an.smooth = an.smooth || !!(an.hIn && an.hOut);
     });
-    host.append(row(`${which === 'hIn' ? 'In' : 'Out'}${explicit ? '' : ' (auto)'}`,
+    gHandles.push(row(`${which === 'hIn' ? 'In' : 'Out'}${explicit ? '' : ' (auto)'}`,
       lengthInput(L, v => setH(v, ang), { readOnly: ro, title: 'Handle length' }), unitTag(),
       numberInput(ang, v => setH(L, v), { decimals: 2, title: 'Handle angle (°)' }), h('span.u', {}, '°'),
       explicit ? h('button.mini', { title: 'Reset to automatic (Catmull-Rom)', onclick: () => set('Reset handle', an => { delete an[which]; }) }, '↺') : ''));
   }
 
+  host.append(group('pt.handles', 'Curve handles', gHandles, !!(a.hIn || a.hOut), a.hIn || a.hOut ? 'set by hand' : 'automatic'));
+
   // grading (grade anchors + curve points with explicit grade)
   if (a.kind === 'grade' || Object.keys(a.grade ?? {}).length) {
-    host.append(h('div.insp-title', {}, `Grade (absolute, ${unitLabel()})`));
     const tbl = h('table.gtbl');
     tbl.append(h('tr', {}, h('th', {}, 'Size'), h('th', {}, 'dX'), h('th', {}, 'dY')));
     for (const s of line.sizes) {
@@ -197,8 +210,10 @@ function anchorInspector(app: App, host: HTMLElement, pa: NonNullable<ReturnType
         h('td', {}, base ? h('span.val', {}, '0') : lengthInput(off.x, v => setG2('x', v), { readOnly: ro })),
         h('td', {}, base ? h('span.val', {}, '0') : lengthInput(off.y, v => setG2('y', v), { readOnly: ro }))));
     }
-    host.append(tbl);
-    host.append(row('Grade axis', numberInput(a.gradeAxisDeg ?? 0, v => set('Grade axis', an => { an.gradeAxisDeg = v || undefined; }), { decimals: 2 }), h('span.u', {}, '°')));
+    const graded = Object.values(a.grade ?? {}).some(g => Math.abs(g.dx) > 1e-9 || Math.abs(g.dy) > 1e-9);
+    host.append(group('pt.grade', `Grade · from the base size, ${unitLabel()}`, [tbl,
+      row('Grade axis', numberInput(a.gradeAxisDeg ?? 0, v => set('Grade axis', an => { an.gradeAxisDeg = v || undefined; }), { decimals: 2, title: 'Turns the dX / dY directions of this point (angle grading); 0 = along the sheet' }), h('span.u', {}, '°')),
+    ], true, graded ? '' : 'not graded'));
   }
 
   // seam & corner (sew-line grade anchors)
@@ -206,7 +221,7 @@ function anchorInspector(app: App, host: HTMLElement, pa: NonNullable<ReturnType
     const k = rc.gradeIdx.indexOf(index);
     let segInfo = '';
     if (k >= 0) { const [s0, s1] = gradeSegment(rc, k); segInfo = `${fmt(spanLength(rc, s0, s1))} ${unitLabel()}`; }
-    host.append(h('div.insp-title', {}, 'Seam'),
+    host.append(group('pt.seam', 'Seam and corner', [
       row('Segment length', h('span.val', {}, segInfo)),
       row('Seam after', lengthInput(a.seamAfter ?? piece.seamDefault, v => { try { ops.reseamSegment(app.doc, ref.pieceId, ref.anchorId, v); } catch (err) { reportError(err, 'Seam'); } }, { readOnly: ro, title: 'Seam of the segment leaving this point (negative = inward)' }), unitTag(),
         a.seamAfter != null ? h('button.mini', { title: 'Use piece default', onclick: () => set('Seam allowance', an => { delete an.seamAfter; }) }, '↺') : ''),
@@ -215,6 +230,6 @@ function anchorInspector(app: App, host: HTMLElement, pa: NonNullable<ReturnType
         a.corner ? h('button.mini', { title: 'Revert to miter', onclick: () => { try { ops.revertCorner(app.doc, ref.pieceId, ref.anchorId); } catch (err) { reportError(err, 'Revert corner'); } } }, '↺') : ''),
       row('Start point', checkbox(!!a.flags.startPoint, v => { if (v) { try { ops.setStartPoint(app.doc, ref.pieceId, ref.anchorId); } catch (err) { reportError(err, 'Start point'); } } })),
       ...(a.ruleId ? [row('Rule', h('span.val', {}, (() => { try { return ops.ruleName(app.doc, ref.pieceId, ref.anchorId); } catch { return a.ruleId!; } })()))] : []),
-    );
+    ]));
   }
 }

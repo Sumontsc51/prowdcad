@@ -10,6 +10,7 @@ import { sizeColor } from '../geometry';
 import { ops } from '../ops-bridge';
 import { reportError, runCommand } from '../commands';
 import { showDialog, confirmDialog } from '../ui/dialog';
+import { openContextMenu } from '../ui/menu';
 
 export function renderSizes(app: App, host: HTMLElement) {
   clear(host);
@@ -34,24 +35,28 @@ export function renderSizes(app: App, host: HTMLElement) {
   }
   host.append(strip);
   const safe = (label: string, fn: () => unknown) => async () => { try { await fn(); } catch (err) { reportError(err, label); } };
+  const act = line.sizes.find(s => s.id === app.activeSize);
+  const notBase = app.activeSize !== line.baseSizeId;
+  const more = (e: Event) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    openContextMenu(r.left, r.bottom + 2, ['size.axis2', 'size.deleteUngraded', 'size.deleteInvisible', 'file.export.standalone'], [
+      { label: `Insert a size next to ${act?.name ?? ''}…`, run: safe('Insert size', () => insertSize(app)) },
+      { label: 'Append a size at the end…', run: safe('Append size', async () => {
+        const r2 = await showDialog({ title: 'Append size', fields: [{ kind: 'text', key: 'n', label: 'Name', value: '' }, { kind: 'checkbox', key: 'ext', label: 'Extrapolate the last increment', value: true }], validate: v => String(v.n).trim() ? null : 'Name required' });
+        if (r2) app.activeSize = ops.appendSize(app.doc, String(r2.n).trim(), { extrapolate: !!r2.ext });
+      }) },
+      ...(notBase ? [
+        { label: `Make ${act?.name ?? ''} the base size`, run: safe('Set base size', () => ops.setBase(app.doc, app.activeSize)) },
+        { label: `Remove size ${act?.name ?? ''}…`, run: safe('Remove size', async () => {
+          if (await confirmDialog('Remove size', `Remove size ${act?.name}? Neighbouring sizes keep their geometry.`, 'Remove')) { ops.removeSize(app.doc, app.activeSize); app.activeSize = app.baseSize(); }
+        }) },
+      ] : []),
+    ]);
+  };
   host.append(h('div.btnrow', {},
     h('button.btn.sm.primary', { title: 'Size table: rename sizes, base, colours, import / export, sizes per piece', 'data-act': 'size-table', onclick: () => void runCommand('size.table') }, 'Size table…'),
-    h('button.btn.sm', { title: 'Insert a size before / after the active size', onclick: safe('Insert size', () => insertSize(app)) }, '+ Insert'),
-    h('button.btn.sm', { title: 'Append a size at the end of the line', onclick: safe('Append size', async () => {
-      const r = await showDialog({ title: 'Append size', fields: [{ kind: 'text', key: 'n', label: 'Name', value: '' }, { kind: 'checkbox', key: 'ext', label: 'Extrapolate the last increment', value: true }], validate: v => String(v.n).trim() ? null : 'Name required' });
-      if (r) app.activeSize = ops.appendSize(app.doc, String(r.n).trim(), { extrapolate: !!r.ext });
-    }) }, '+ Append'),
-    h('button.btn.sm', { onclick: safe('Set base size', () => ops.setBase(app.doc, app.activeSize)), disabled: app.activeSize === line.baseSizeId }, 'Set base'),
-    h('button.btn.sm', { disabled: app.activeSize === line.baseSizeId, onclick: safe('Remove size', async () => {
-      const nm = line.sizes.find(s => s.id === app.activeSize)?.name;
-      if (await confirmDialog('Remove size', `Remove size ${nm}? Neighbouring sizes keep their geometry.`, 'Remove')) { ops.removeSize(app.doc, app.activeSize); app.activeSize = app.baseSize(); }
-    }) }, 'Remove'),
-  ));
-  host.append(h('div.btnrow', {},
-    h('button.btn.sm', { onclick: () => void runCommand('size.axis2') }, table.axis2 ? `Axis 2: ${table.axis2.sizes.map(s => s.name).join(' ')}` : 'Axis 2 (variation)…'),
-    h('button.btn.sm', { onclick: () => void runCommand('size.deleteUngraded') }, 'Del ungraded'),
-    h('button.btn.sm', { onclick: () => void runCommand('size.deleteInvisible') }, 'Del invisible'),
-    h('button.btn.sm', { onclick: () => void runCommand('file.export.standalone') }, 'Size → style'),
+    h('button.btn.sm', { title: 'Insert / append / remove a size, set the base size, second size axis, clean-up, export a size as its own style', 'data-act': 'size-more', onclick: more }, 'More ▾'),
+    table.axis2 ? h('span.dim', { title: 'Second size axis' }, `Axis 2: ${table.axis2.sizes.map(s => s.name).join(' ')}`) : '',
   ));
 }
 

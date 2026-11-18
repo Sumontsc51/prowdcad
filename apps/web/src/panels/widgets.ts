@@ -6,7 +6,7 @@
 import { h } from '../ui/dom';
 import { fmt, parseLen, parseNum, unitLabel } from '../units-ui';
 import { toast } from '../ui/toast';
-import { settings } from '../settings';
+import { settings, saveSettings } from '../settings';
 import { formatLength } from '@prowdcad/kernel';
 
 export function lengthInput(mm: number, onCommit: (mm: number) => void, opt: { min?: number; readOnly?: boolean; title?: string; blankIfNaN?: boolean } = {}): HTMLInputElement {
@@ -120,4 +120,21 @@ export function focusSafe(host: HTMLElement, render: () => void): () => void {
     if (a && host.contains(a) && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) { pending = true; return; }
     pending = false; render();
   };
+}
+
+/**
+ * Collapsible group of property rows (the property editor of the side panel). Open / closed is remembered per
+ * group id; `open` is the default for a group the user has not touched.
+ */
+export function group(id: string, title: string, rows: (HTMLElement | string | null | undefined | false)[], open = true, note?: string): HTMLElement {
+  const isOpen = settings.propGroups?.[id] ?? open;
+  const body = h('div.pg-body', {}, ...rows.filter((r): r is HTMLElement | string => !!r));
+  const head = h('button.pg-head', { type: 'button', 'aria-expanded': String(isOpen), title: isOpen ? 'Collapse' : 'Expand' }, h('span.caret', {}, '▾'), h('span.pg-title', {}, title), note ? h('span.pg-note', {}, note) : '');
+  const el = h('div.pgroup' + (isOpen ? '' : '.collapsed'), { 'data-group': id }, head, body);
+  head.addEventListener('click', () => {
+    const now = el.classList.toggle('collapsed');
+    head.setAttribute('aria-expanded', String(!now));
+    settings.propGroups = { ...(settings.propGroups ?? {}), [id]: !now }; saveSettings();
+  });
+  return el;
 }
