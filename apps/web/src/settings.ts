@@ -41,6 +41,8 @@ export interface Settings {
   /** shape tools: draw the shape as an internal line of the piece under it */
   shapeInternal?: boolean;
   panels: { pieces: boolean; sizes: boolean; inspector: boolean; grading: boolean };
+  /** width of the side panel: hidden, normal or wide (the arrow buttons on its edge) */
+  sideWidth: 'hidden' | 'normal' | 'wide';
   /** property groups of the side panel the user opened / closed (absent = the group's default) */
   propGroups: Record<string, boolean>;
   /** grading table view; the last one chosen is the default next time (first time: small → large) */
@@ -96,6 +98,7 @@ export const DEFAULT_SETTINGS: Settings = {
   snapGrid: false, snapGuides: true, snapPoints: true,
   gridMm: 10, nudgeMm: 1, polygonSides: 6, roundRadiusMm: 20,
   panels: { pieces: true, sizes: true, inspector: true, grading: false },
+  sideWidth: 'normal',
   propGroups: {},
   gradeView: 'inc',
   guides: [],
