@@ -45,12 +45,17 @@ export const foldTool: Tool = {
     { id: 'other', label: 'Other side', title: 'Fold the other part of the last folded piece over instead', on: false },
     { id: 'unfold', label: 'Unfold', title: 'Unfold the selected pieces (or the last folded piece)', on: false },
     { id: 'unfoldAll', label: `Unfold all (${foldedIds(app).length})`, title: 'Unfold every folded piece', on: false },
-    { id: 'mirror', label: 'Mirror piece', title: 'Make a mirrored copy of the selected piece as a separate piece (Piece ▸ Mirror piece)', on: false },
-    { id: 'unfoldMirror', label: 'Unfold mirror', title: 'Open a half piece to the full mirrored piece (Piece ▸ Unfold mirror)', on: false },
+    { id: 'mirror', label: 'Mirror piece', title: 'Click the mirror line of a piece: the other half is generated and stays linked (Piece ▸ Mirror piece)', on: false },
+    ...(app.primaryPiece()?.half ? [
+      app.primaryPiece()!.half!.openAtOutput === false
+        ? { id: 'unfoldMirror', label: 'Unfold mirror', title: 'Show the full mirrored piece again (still linked)', on: false }
+        : { id: 'foldMirror', label: 'Fold mirror', title: 'Show only the working half of the mirrored piece', on: false },
+      { id: 'openMirror', label: 'Open mirror', title: 'Break the link: the piece becomes an ordinary full piece', on: false },
+    ] : []),
   ],
   toggle(app, id) {
-    if (id === 'mirror') { if (!app.sel.pieces.length && FD.last && app.piece(FD.last)) app.sel = { pieces: [FD.last], anchors: [] }; if (!app.sel.pieces.length) { app.status('Select a piece first (Select tool), then Mirror piece'); return; } void runCommand('piece.mirror'); return; }
-    if (id === 'unfoldMirror') { if (!app.primaryPiece()?.half) { app.status('Select a half piece first (one with a mirror line): Piece ▸ Mirror line sets one'); return; } void runCommand('piece.unfoldMirror'); return; }
+    if (id === 'mirror') { void runCommand('piece.mirror'); return; }
+    if (id === 'foldMirror' || id === 'unfoldMirror' || id === 'openMirror') { void runCommand('piece.' + id); return; }
     if (id === 'unfoldAll') { const n = unfoldPieces(app, foldedIds(app)); app.status(n ? `${n} piece${n > 1 ? 's' : ''} unfolded` : 'No piece is folded'); return; }
     const sel = app.sel.pieces.filter(pid => app.piece(pid)?.fold);
     const target = sel.length ? sel : FD.last && app.piece(FD.last)?.fold ? [FD.last] : foldedIds(app).slice(-1);
