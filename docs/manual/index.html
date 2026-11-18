@@ -141,6 +141,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <li><a href="#grading">Grading</a></li>
       <li><a href="#viewshow">See more, pick less</a></li>
       <li><a href="#measure">Measure and check</a></li>
+      <li><a href="#marker">Marker making and cut plan</a></li>
       <li><a href="#files">Files: save, import, export</a></li>
       <li><a href="#keys">Keyboard shortcuts</a></li>
       <li><a href="#trouble">Troubleshooting</a></li>
@@ -593,6 +594,34 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
           <tr><td>Scale &amp; shrink</td><td><span class="menu">Piece ▸ Scale &amp; shrink</span>. Use <em>proportional to 100%</em> for fabric shrinkage: a 10% shrink gives 11.111% growth so the washed piece hits spec.</td></tr>
         </tbody>
       </table></div>
+    </section>
+
+    <section id="marker">
+      <h2><small>Marker making</small>Marker making and cut plan</h2>
+      <p><span class="menu">Marker ▸ Marker making and cut plan…</span> opens the marker room over the pattern. It uses the pieces of the open style in every size, with their cut lines, grain, quantity per bundle, side (a piece cut as L + R gives a mirrored part) and the rotation the fabric allows (<span class="menu">Inspector ▸ Order</span>). Everything is saved with the style, and <kbd>Ctrl</kbd>+<kbd>Z</kbd> works in the room.</p>
+      <h3>Cut plan</h3>
+      <ol class="steps">
+        <li><div>Type the <strong>order</strong> per size, and set <em>Max plies</em> (the highest spread) and <em>Max bundles</em> (the most garments in one marker).</div></li>
+        <li><div>Press <strong>Auto plan</strong>. ProwdCAD works out the markers: for each one the ratio (bundles per size) and the plies, so that the order is cut exactly with as few spreads as the limits allow.</div></li>
+        <li><div>The plan is <strong>editable</strong>: change any ratio or ply count, add a marker with <em>+ Marker</em>, remove one with ✕. The <em>Cut</em> and <em>Over / short</em> rows show at once what the plan cuts against the order (green ✓ = exact, amber = too many, red = short). Changing a ratio empties that marker, because its parts change.</div></li>
+      </ol>
+      <h3>Markers</h3>
+      <p>Click a marker in the plan to show it. Set the <em>fabric width</em>, the <em>gap</em> between parts and the <em>material</em> at the top. Parts not laid yet wait above the fabric.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td>▶ Nest (<kbd>N</kbd>)</td><td>Lays the whole marker automatically. Choose the search time under the button (15 s to 10 min); longer usually gives a shorter marker. The layout improves on screen while it runs; ■ stops and keeps the best one so far.</td></tr>
+          <tr><td>Drag</td><td>Move a part by hand; drag it from the waiting row onto the fabric, or back above the fabric to take it off. Shift+click selects several. Arrow keys move by 1 mm (Shift: 10 mm).</td></tr>
+          <tr><td>⟳ Turn (<kbd>R</kbd>)</td><td>Turns the selected part to its next allowed direction (180° for 2-way fabric, 90° steps for 4-way; a 1-way piece does not turn).</td></tr>
+          <tr><td>⇤ ⤓ ⤒ Push</td><td>Pushes the selected part towards the start of the fabric or an edge until it touches (<kbd>Home</kbd>, <kbd>End</kbd>, <kbd>PageUp</kbd>).</td></tr>
+          <tr><td>⤴ Take off (<kbd>Del</kbd>), ⌫ Clear</td><td>Puts the selected part, or every part, back in the waiting row.</td></tr>
+          <tr><td>⤢ Fit (<kbd>F</kbd>)</td><td>Shows the whole marker. Wheel zooms; drag the background (or the right button) to pan.</td></tr>
+          <tr><td>DXF, PLT</td><td>Saves the marker for a cutter or plotter: every part as a closed outline with its name, size and grain.</td></tr>
+          <tr><td>Report</td><td>Every marker with its ratio, plies, length and efficiency, the garments cut against the order, and the fabric needed in total and per garment.</td></tr>
+        </tbody>
+      </table></div>
+      <p>A part that overlaps another or lies off the fabric turns red, and the status line counts them. The status line also shows the length, the efficiency and the fabric for the plies of this marker.</p>
+      <div class="note"><strong>Nester.</strong> The automatic nesting uses sparrow (Gardeyn, Vanden Berghe and Wauters, KU Leuven, MIT licence) with its geometry library jagua-rs (MPL-2.0), compiled to WebAssembly and built into ProwdCAD. It runs on your computer; nothing is sent anywhere.</div>
     </section>
 
     <section id="files">
