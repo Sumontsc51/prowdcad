@@ -35,3 +35,4 @@ export * from './io/svg';
 export * from './io/plt';
 export * from './io/pdf';
 export * from './io/native';
+export * from './marker/marker';
