@@ -51,7 +51,7 @@ export const KERNEL_GROUPS = {
     'snapshotReference', 'restoreReference', 'showReference', 'clearReference', 'globalCheckConnections', 'globalClearConnections', 'lockPiece',
     'saveLayout', 'restoreLayout', 'saveActiveAsNew', 'replaceOld', 'mergeFromStyle', 'recenterGrain', 'grainParallelToSegment', 'rotatePieceToGrain', 'transformPieceLayouts', 'fitGrain', 'setFold', 'clearFold', 'foldMirror', 'onFoldedPart', 'clipPolyBySide'],
   'ops/smooth': ['smoothRun'],
-  'ops/notches': ['resolveNotches', 'addNotch', 'addCornerNotch', 'placementAt', 'addNotchAtPoint', 'crossNotch', 'addPointsForNotches', 'globalNotchGrading',
+  'ops/notches': ['resolveNotches', 'addNotch', 'addCornerNotch', 'setCornerNotches', 'cornerNotchSide', 'placementAt', 'addNotchAtPoint', 'crossNotch', 'addPointsForNotches', 'globalNotchGrading',
     'notchDistanceGrid', 'setNotchDistance', 'fillAllNotchDistances', 'extrapolateNotchIncrement', 'pasteNotchGrid'],
   'ops/drills': ['drillPosition', 'addDrill', 'updateDrill', 'deleteDrill', 'duplicateWithOffset', 'multiButtons', 'slitContourSegment'],
   'ops/annotation': ['addText', 'textPosition', 'editText', 'deleteText', 'addArtwork', 'pixelsToMm', 'artworkPlacementRect', 'deleteArtwork'],

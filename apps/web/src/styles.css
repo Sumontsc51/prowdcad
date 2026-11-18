@@ -247,6 +247,9 @@ table.fw-table td input { width: 80px; }
 .cg-item { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; border-radius: 5px; font-size: 10px; text-align: center; border: 1px solid transparent; }
 .cg-item:hover { background: rgba(78,161,255,.14); }
 .cg-item.on { border-color: var(--accent); }
+.cg-notch { display: flex; align-items: center; gap: 4px; margin: 2px 0 8px; flex-wrap: wrap; }
+.cg-notch-t { font-size: 11px; opacity: .8; margin-right: 4px; }
+.cg-notch .btn.on { border-color: var(--accent); color: var(--accent); }
 .gr-tools { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; margin-left: 8px; }
 .gr-tools .btn.sm { padding: 1px 6px; }
 .gr-tools .disabled { opacity: .45; }
