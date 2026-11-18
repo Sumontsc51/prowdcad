@@ -14,6 +14,7 @@ import { registerMeasure } from './measure-cmds';
 import { registerPointSeg } from './point-seg';
 import { registerLockCmds } from './lock-cmds';
 import { registerViewExtras } from './view-cmds';
+import { openMarker } from '../marker/workspace';
 import { registerCutPiece } from './cut-piece';
 import { registerGrade } from './grade-cmds';
 import { registerLive, deleteLive } from './live-cmds';
@@ -205,6 +206,8 @@ export function registerAll(app: App, canvas: Canvas, rebuildUi: () => void) {
   registerPointSeg(app);
   registerLockCmds(app);
   registerViewExtras(app);
+  // Marker making: cut plan builder, nester and marker tools, in a room of its own over the sheet
+  registerCommand({ id: 'marker.open', title: 'Marker making and cut plan…', menu: 'Marker', group: 0, run: () => openMarker(app) });
   registerMoveCmds(app);
   registerCutPiece(app);
   registerGrade(app);
