@@ -101,7 +101,7 @@ canvas.onContext = p => {
     if (!app.isSelected(sub.item)) app.applySel(sub.item, 'replace');
     const k = sub.item.k;
     ctxMenu(e.clientX, e.clientY, k === 'segment'
-      ? ['move.line', 'move.lineParallel', 'move.curve', '-', 'seg.length', 'seg.rotate', 'point.add', 'point.cutTool', 'point.splineSupport', '-', 'seam.segment', 'seg.copy', 'seg.paste', '-', 'grade.pasteAround']
+      ? ['move.line', 'move.lineParallel', 'move.curve', '-', 'seg.length', 'seg.rotate', 'point.add', 'point.cutTool', 'point.splineSupport', '-', 'seam.segment', 'seam.turnback', 'seg.copy', 'seg.paste', '-', 'grade.pasteAround']
       : k === 'internal' ? ['move.line', 'move.lineParallel', 'move.lineRotatePoint', 'move.lineRotate', 'move.curve', 'point.cutTool', '-', 'internal.lock', 'internal.unlock', '-', 'seg.swap', 'seg.dashed', 'seg.trim', '-', 'edit.delete']
         : ['edit.delete']);
   } else if (h.kind === 'piece' && h.pieceId) {

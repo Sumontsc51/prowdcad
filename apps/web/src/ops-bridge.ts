@@ -30,7 +30,7 @@ export interface SegmentRef { pieceId: Id; contourId: Id; startAnchorId: Id }
 
 /** Kernel functions reachable from the UI, grouped by module (module name is shown in Help ▸ Kernel ops). */
 export const KERNEL_GROUPS = {
-  'ops/seam': ['segmentSeams', 'cutLineForSize', 'cornerPointsForSize', 'setSeam', 'setSeamWholePiece', 'setGlobalSeam', 'deleteSeamSegment',
+  'ops/seam': ['segmentSeams', 'cutLineForSize', 'cornerPointsForSize', 'setSeam', 'setTurnback', 'turnbackOf', 'turnbackFoldLines', 'setSeamWholePiece', 'setGlobalSeam', 'deleteSeamSegment',
     'removeSeamPiece', 'removeSeamAll', 'setCorner', 'setCornerManual', 'revertCorner', 'trimCorner', 'setLockGrading', 'updateSeamGrading',
     'reseamPiece', 'reseamAll', 'reseamSegment', 'repairSeam', 'seamToInternal', 'internalToSeam', 'setCutModeAuto'],
   'ops/walk': ['startWalk', 'refreshWalk', 'walkStep', 'walkTo', 'flipDirection', 'setWalkRatio', 'walkReport', 'pieceTransform', 'applyTransform', 'dropNotch'],
