@@ -68,10 +68,12 @@ export function renderGrading(app: App, host: HTMLElement) {
   const line = app.sizeLine();
   const view: GView = app.gradeSmallLarge ? 'inc' : app.gradeAbsolute ? 'total' : 'step';
   const bar = h('div.gr-bar');
-  const mode = h('div.seg');
-  for (const [id, label, sub] of [['step', 'Step into this size', 'Incremental'], ['total', 'Total from base size', 'Cumulative'], ['inc', 'Small → large', 'From the smallest']] as const) {
-    mode.append(h('button' + (view === id ? '.on' : ''), { title: VIEW_TIP[id], 'data-view': id, onclick: () => { app.gradeSmallLarge = id === 'inc'; if (id !== 'inc') app.gradeAbsolute = id === 'total'; app.invalidate('panels'); } }, label, h('span.seg-sub', {}, ' · ' + sub)));
-  }
+  // the view is a drop-down; the one chosen stays the default (first time: Small → large)
+  const mode = h('select.gr-view', { title: VIEW_TIP[view] }) as HTMLSelectElement;
+  for (const [id, label] of [['inc', 'Small → large  ·  size to the next size (XS-S, S-M, …)'], ['step', 'Step into this size  ·  incremental from the base'], ['total', 'Total from base size  ·  cumulative']] as const) mode.append(h('option', { value: id, 'data-view': id }, label));
+  mode.value = view;
+  mode.onchange = () => { const v = mode.value as GView; mode.blur(); const ae = document.activeElement as HTMLElement | null; if (ae && host.contains(ae)) ae.blur(); app.setGradeView(v); };
+  mode.addEventListener('keydown', e => e.stopPropagation());
   bar.append(mode, h('span.dim', {}, unitLabel()), h('span.dim.gr-tip', { title: 'Drag over cells, Ctrl+click or Shift+click = select several · type a value = it goes into every selected cell · a value can be a calculation (10/4, 5+2.5) · right-click = Double, Half, Multiply by…, Add / Subtract constant… · drag the corner square = fill down · Enter = next size · arrows move' }, 'Select cells · type · right-click = calculate · drag the corner = fill'));
   host.append(bar);
   if (!piece) { host.append(noteEl(app, view, null), h('div.empty', {}, 'Select a piece (or points) to see its grading. Rows = sizes, columns = points.')); return; }
@@ -110,6 +112,8 @@ export function renderGrading(app: App, host: HTMLElement) {
   };
   const readOnly = live.locked;
 
+  /** Small → large shows one row per step between two sizes (XS-S, S-M, …): grid row k is the step into size k + 1 */
+  const off = view === 'inc' ? 1 : 0;
   const valOf = (p: PtCol, axis: 'dx' | 'dy', v: GView): (number | null)[] => (v === 'total' ? p.total[axis] : v === 'inc' ? incOf(p.total[axis]) : ops.outwardSteps(p.total[axis], b));
   /** the row of a view that cannot be typed in: the base (step / total), the smallest size (small → large) */
   const fixedRow = view === 'inc' ? 0 : b;
@@ -123,26 +127,27 @@ export function renderGrading(app: App, host: HTMLElement) {
         head: axis === 'dx' ? 'dX' : 'dY', edit: !readOnly,
         title: VIEW_TIP[view],
         attrs: { 'data-pt': p.label.split(' (')[0], 'data-axis': axis, 'data-view': view },
-        get: r => valOf(p, axis, view)[r],
-        ro: r => r === fixedRow,
-        cls: r => (r === fixedRow ? 'basecell' : ''),
+        get: r => valOf(p, axis, view)[r + off],
+        ro: r => r + off === fixedRow,
+        cls: r => (r + off === fixedRow ? 'basecell' : ''),
       });
     }
     if (pts.length === 1) {
       const other: GView = view === 'total' ? 'step' : 'total';
       const pos = () => { let v = posCache.get(p.id); if (!v) posCache.set(p.id, v = posOf(p.id)); return v; };
       cols.push(
-        { key: p.id + ':x', group: 'Position', head: 'X', get: r => pos()[r].x, attrs: { 'data-axis': 'x' } },
-        { key: p.id + ':y', group: 'Position', head: 'Y', get: r => pos()[r].y, attrs: { 'data-axis': 'y' } },
-        { key: p.id + ':ox', group: other === 'total' ? 'Total from base' : 'Step', head: 'dX', get: r => valOf(p, 'dx', other)[r], attrs: { 'data-axis': 'o' + 'dx' } },
-        { key: p.id + ':oy', group: other === 'total' ? 'Total from base' : 'Step', head: 'dY', get: r => valOf(p, 'dy', other)[r], attrs: { 'data-axis': 'o' + 'dy' } },
+        { key: p.id + ':x', group: 'Position', head: 'X', get: r => pos()[r + off].x, attrs: { 'data-axis': 'x' } },
+        { key: p.id + ':y', group: 'Position', head: 'Y', get: r => pos()[r + off].y, attrs: { 'data-axis': 'y' } },
+        { key: p.id + ':ox', group: other === 'total' ? 'Total from base' : 'Step', head: 'dX', get: r => valOf(p, 'dx', other)[r + off], attrs: { 'data-axis': 'o' + 'dx' } },
+        { key: p.id + ':oy', group: other === 'total' ? 'Total from base' : 'Step', head: 'dY', get: r => valOf(p, 'dy', other)[r + off], attrs: { 'data-axis': 'o' + 'dy' } },
       );
     }
   });
 
   const commit = (cells: { r: number; c: number; v: number }[]) => {
     const touched = new Map<PtCol, { dx: number[]; dy: number[] }>();
-    for (const { r, c, v } of cells) {
+    for (const { r: gr, c, v } of cells) {
+      const r = gr + off;
       const col = cols[c]; const [pid, axis] = col.key.split(':') as [Id, 'dx' | 'dy'];
       const p = pts.find(q => q.id === pid)!; if (!p || r === fixedRow) continue;
       const t = touched.get(p) ?? { dx: p.total.dx.slice(), dy: p.total.dy.slice() };
@@ -156,7 +161,7 @@ export function renderGrading(app: App, host: HTMLElement) {
     reload();
     queueMicrotask(() => drawStrip(strip, app, pts, cols, b, view, sizes.map(s => s.id), live.id));
     if (view !== 'total' && cells.length === 1) {
-      const moved = affected(sizes.length, b, cells[0].r, view).map(i => sizes[i].name);
+      const moved = affected(sizes.length, b, cells[0].r + off, view).map(i => sizes[i].name);
       if (moved.length > 1) app.status(`${view === 'inc' ? 'The entry' : 'Step edit'} moved sizes ${moved.join(', ')} · “Total from base size” changes one size`);
     } else if (cells.length > 1) app.status(`${cells.length} cells changed · Ctrl+Z undoes`);
     GS.live = null;
@@ -165,15 +170,15 @@ export function renderGrading(app: App, host: HTMLElement) {
   let note = noteEl(app, view, null);
   const strip = h('div.gr-strip');
   const grid = sizeGrid({
-    rows: sizeRows(line, app.activeSize), cols, state: GS.scroll, cls: 'gr', sheet: { blankZero: true },
+    rows: view === 'inc' ? sizes.slice(1).map((z, k) => ({ id: z.id, name: `${sizes[k].name}-${z.name}`, active: z.id === app.activeSize })) : sizeRows(line, app.activeSize), cols, state: GS.scroll, cls: 'gr', sheet: { blankZero: true },
     onCommit: commit,
-    onRowClick: r => { app.activeSize = sizes[r].id; app.invalidate(); },
+    onRowClick: r => { app.activeSize = sizes[r + off].id; app.invalidate(); },
     rowClass: r => (GS.aff.has(r) ? 'aff' : ''),
     onFocus: (r, c) => {
       GS.focus = { r, c };
-      GS.aff = new Set(affected(sizes.length, b, r, view));
+      GS.aff = new Set(affected(sizes.length, b, r + off, view).map(x => x - off).filter(x => x >= 0));
       for (const tr of grid.table.querySelectorAll('tbody tr[data-r]')) tr.classList.toggle('aff', GS.aff.has(+(tr as HTMLElement).dataset.r!));
-      const nn = noteEl(app, view, { r, sizes: sizes.map(s => s.name), b }, () => { app.gradeSmallLarge = false; app.gradeAbsolute = true; GS.scroll.focus = { r, c }; app.invalidate('panels'); requestAnimationFrame(() => (host.querySelector(`input[data-r="${r}"][data-c="${c}"]`) as HTMLInputElement | null)?.focus()); });
+      const nn = noteEl(app, view, { r: r + off, sizes: sizes.map(s => s.name), b }, () => { app.setGradeView('total'); GS.scroll.focus = { r: r + off, c }; app.invalidate('panels'); requestAnimationFrame(() => (host.querySelector(`input[data-r="${r + off}"][data-c="${c}"]`) as HTMLInputElement | null)?.focus()); });
       note.replaceWith(nn); note = nn;
     },
     onInput: (r, c, v) => { GS.live = v === null ? null : { r, c, v }; drawStrip(strip, app, pts, cols, b, view, sizes.map(s => s.id), live.id); },
@@ -190,12 +195,12 @@ function noteEl(app: App, view: GView, f: { r: number; sizes: string[]; b: numbe
   if (!f || f.r === (view === 'inc' ? 0 : f.b)) {
     return h('div.gr-note' + (view === 'total' ? '' : '.warn'), { title: VIEW_TIP[view] }, view === 'step'
       ? 'Step view: a step edit also moves every size further from the base (XL follows L). Use “Total from base size” to change one size.'
-      : view === 'inc' ? 'Small → large: each size is the change from the next smaller size. The base ★ stays; an entry also moves the sizes beyond it.'
+      : view === 'inc' ? 'Small → large: each row is the step from one size to the next (XS-S, S-M, …). The base size stays; an entry also moves the sizes beyond it.'
         : 'Total view: offsets from the base size ★ — editing a size changes that size only.');
   }
   const moved = affected(f.sizes.length, f.b, f.r, view).map(i => f.sizes[i]);
   const el = h('div.gr-note' + (moved.length > 1 ? '.warn' : ''), {},
-    moved.length > 1 ? `Editing ${f.sizes[f.r]}'s ${view === 'inc' ? 'entry' : 'step'} moves ${moved.join(', ')} (${moved.length} sizes, tinted). ` : `Editing ${f.sizes[f.r]} changes ${moved[0] ?? f.sizes[f.r]} only. `);
+    moved.length > 1 ? `Editing ${view === 'inc' ? `${f.sizes[f.r - 1]}-${f.sizes[f.r]}` : `${f.sizes[f.r]}'s step`} moves ${moved.join(', ')} (${moved.length} sizes, tinted). ` : `Editing ${f.sizes[f.r]} changes ${moved[0] ?? f.sizes[f.r]} only. `);
   if (moved.length > 1 && onlyThis) el.append(h('button.btn.sm', { 'data-act': 'only', title: 'Switch to Total from base size for this cell: the edit changes this size only', onmousedown: (e: Event) => e.preventDefault(), onclick: onlyThis }, `Edit ${f.sizes[f.r]} only`));
   return el;
 }
