@@ -32,7 +32,7 @@ export interface Command {
   noop?: string;
 }
 
-export const MENUS = ['File', 'Edit', 'Piece', 'Point', 'Segment', 'Seam', 'Notch', 'Cut', 'Dart', 'Grade', 'Measure', 'View', 'Help'] as const;
+export const MENUS = ['File', 'Edit', 'Piece', 'Point', 'Segment', 'Seam', 'Notch', 'Cut', 'Dart', 'Grade', 'Measure', 'Marker', 'View', 'Help'] as const;
 
 const registry = new Map<string, Command>();
 let seq = 0;
