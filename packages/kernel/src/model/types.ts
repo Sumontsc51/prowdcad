@@ -22,6 +22,9 @@ export interface CornerSpec {
   type: CornerType;
   /** boxed: which side extends — 'prev' | 'next' | 'both' */
   extend?: 'prev' | 'next' | 'both';
+  /** turnback: widths of the folds of the hem, from the sew line outwards (e.g. [30, 10] = a 30 hem turned in 10).
+   *  The edge mirrors the adjacent seam at every fold. Absent / one value = a single turn-back. */
+  folds?: number[];
   /** manual: polyline from sew-corner-side to cut-line, base-size absolute coordinates */
   manualPoints?: Vec[];
   /** manual (per size), filled when Lock Grading stamps the base corner onto all sizes */
