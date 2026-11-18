@@ -18,6 +18,22 @@ export function mountDocks(app: App, right: HTMLElement, bottom: HTMLElement, zo
     section(id, title, body, { collapsed: !settings.panels[id], onToggle: open => { settings.panels[id] = open; saveSettings(); } });
   clear(right);
   right.append(mk('pieces', 'Pieces', piecesBody), mk('sizes', 'Sizes', sizesBody), mk('inspector', 'Inspector', inspBody));
+  // the side panel can be made shorter (hidden) or longer (wide) with the two arrows on its edge
+  const ORDER = ['hidden', 'normal', 'wide'] as const;
+  const less = h('button', { type: 'button', 'data-side': 'less', 'aria-label': 'Make the side panel shorter' }, '▶');
+  const more = h('button', { type: 'button', 'data-side': 'more', 'aria-label': 'Make the side panel longer' }, '◀');
+  const applySide = () => {
+    const w = ORDER.includes(settings.sideWidth) ? settings.sideWidth : 'normal';
+    document.documentElement.dataset.side = w;
+    (more as HTMLButtonElement).disabled = w === 'wide'; (less as HTMLButtonElement).disabled = w === 'hidden';
+    more.title = w === 'hidden' ? 'Show the side panel' : w === 'normal' ? 'Make the side panel wider' : 'The side panel is at its widest';
+    less.title = w === 'wide' ? 'Make the side panel narrower' : w === 'normal' ? 'Hide the side panel (more room for the sheet)' : 'The side panel is hidden';
+  };
+  const step = (d: 1 | -1) => { const i = Math.max(0, Math.min(2, ORDER.indexOf(settings.sideWidth ?? 'normal') + d)); settings.sideWidth = ORDER[i]; saveSettings(); applySide(); app.invalidate(); };
+  more.addEventListener('click', () => step(1)); less.addEventListener('click', () => step(-1));
+  document.querySelector('.side-arrows')?.remove();
+  document.body.append(h('div.side-arrows', {}, more, less));
+  applySide();
   clear(bottom); bottom.style.display = 'none'; // the grading table no longer takes sheet height
   // Grading table: a pop-up window (drag by its title, resize at its corner); it remembers where it was left
   let gwin: FloatWin | null = null;
