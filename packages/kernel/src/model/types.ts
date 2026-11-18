@@ -515,6 +515,8 @@ export interface StyleMeta {
   previewPng?: string;
   customer?: string;
   season?: string;
+  /** marker making: the cut plan and its markers (ops in marker/marker.ts) */
+  marker?: import('../marker/marker').MarkerDoc;
 }
 
 export interface Style {
