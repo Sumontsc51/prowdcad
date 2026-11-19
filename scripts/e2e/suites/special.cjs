@@ -387,6 +387,38 @@ async function nested(h, fixtures) {
         pass: g0 === 0 && /"stripe":130/.test(a.match) && /"plaid1":25/.test(a.match) && a.grid > 4 && a.first === 2 && a.mlines === 2 && a.codes === 'M1' && b.laid === 1 && b.off === 0 && c.laid === c.parts && c.off === 0 && c.bad === 0 && /match/.test(toasts) && d.grid === 0 && d.match === '{}' });
     } catch (err) { return done({ got: `after ${stage}: ${String(err.message || err).split('\n')[0]} · toasts ${JSON.stringify(await h.ev(() => window.__e2e.toasts.slice(-3)))}`, pass: false }); }
   });
+  await T('Marker making: shade zones by rows (the width divided by a number) and columns (bundle end or a length) with overlaps; ▶ lays the major pieces of every bundle within one zone; a major piece moved out of its zone is flagged; a column too short for a bundle is reported', async () => {
+    const P = h.page;
+    await h.ev(() => { const E = window.__e2e; void E.C.runCommand('marker.open'); }); await P.waitForSelector('.mk-root'); await h.settle(150);
+    const done = async r => { await h.ev(() => { document.querySelector('.mk-root')?.closeMarker?.(); const E = window.__e2e; E.app.doc.transact('clear marker', s => { delete s.meta.marker; }); }); return r; };
+    let stage = 'open';
+    try {
+      for (const [k, n] of Object.entries({ M: 10, L: 10 })) { const i = P.locator(`[data-mk-order="${k}"]`); await i.fill(String(n)); await i.press('Tab'); await h.settle(60); }
+      await P.locator('[data-mk="auto"]').click(); await h.settle(250);
+      const f = Number(await h.ev(() => document.querySelector('[data-mk-width]').value)) / 1500;
+      await P.locator('[data-mk="details"]').click(); await P.waitForSelector('.mk-dlg'); await h.settle(80);
+      for (const c of await P.locator('[data-pd^="major:"]').all()) await c.check();
+      await P.locator('[data-mk-dlg="ok"]').click(); await h.settle(250); stage = 'majors';
+      const setShade = async v => { await P.locator('[data-mk="shade"]').click(); await h.waitDialog(); await h.fields(v); await h.ok(); await h.settle(250); };
+      await setShade({ on: true, rows: 2, colBy: 'bundle', rowOverlap: 10, colOverlap: 5 }); stage = 'shade set';
+      const st = () => h.ev(() => { const m = window.__e2e.app.style.meta.marker, r = m.rows[0]; return { shade: JSON.stringify(m.shade || {}), laid: Object.keys(r.placements).length, parts: document.querySelectorAll('.mk-part').length, rowLines: document.querySelectorAll('.mk-shade line:not(.col)').length, cols: document.querySelectorAll('.mk-shade line.col').length, ov: document.querySelectorAll('.mk-shade rect.ov').length, boxes: document.querySelectorAll('.mk-shade rect.bz').length, badBoxes: document.querySelectorAll('.mk-shade rect.bz.bad').length, off: document.querySelectorAll('.mk-part.shadeoff').length, bad: document.querySelectorAll('.mk-part.bad').length }; });
+      const nest = async () => { await P.locator('[data-mk="nest"]').click(); await P.waitForTimeout(600); await P.waitForSelector('[data-mk="nest"]', { timeout: 60000 }); await h.settle(300); return h.ev(() => window.__e2e.toasts.slice(-2).map(t => t.text || t.msg || String(t)).join(' ⟂ ')); };
+      const a = await st();
+      const t1 = await nest(); const b = await st(); stage = 'nest';
+      // the rows of the two bundles
+      const rows = await h.ev(() => { const m = window.__e2e.app.style.meta.marker, r = m.rows[0], w = r.width, by = {}; for (const [id, q] of Object.entries(r.placements)) { const k = id.split('|').slice(1, 3).join('|'); (by[k] = by[k] || []).push(q.y); } return Object.values(by).map(ys => (Math.min(...ys) < w / 2 - 200 ? 'top' : 'bottom')).join(); });
+      // move one major piece into the other row
+      await h.ev(() => { const E = window.__e2e; E.app.doc.transact('move', s => { const r = s.meta.marker.rows[0], id = Object.keys(r.placements).find(k => r.placements[k].y < r.width / 2 - 200) || Object.keys(r.placements)[0]; r.placements[id].y += r.width / 2; r.placements[id].x += 3000; }); });
+      await P.locator('[data-mk="fit"]').click(); await h.settle(200);
+      const c = await st(); stage = 'moved';
+      await setShade({ colBy: 'length', colLength: (150 * f).toFixed(3) });
+      const d0 = await st(); const t2 = await nest(); stage = 'short column';
+      await setShade({ on: false }); const e = await st();
+      return done({ got: `set ${a.shade}: ${a.rowLines} row line, ${a.ov} overlap band; nest "${t1}": laid ${b.laid}/${b.parts}, bundle boxes ${b.boxes} (${b.badBoxes} bad), outside zone ${b.off}, overlapping ${b.bad}, bundles in rows ${rows}; one piece moved: ${c.off} flagged, ${c.badBoxes} bad box; columns by length: ${d0.cols} column lines, nest → "${t2}"; off: ${e.rowLines} lines`,
+        pass: /"rows":2/.test(a.shade) && /"colBy":"bundle"/.test(a.shade) && /"rowOverlap":10/.test(a.shade) && a.rowLines === 1 && a.ov === 1 && /shade row/.test(t1) && b.laid === b.parts && b.boxes === 2 && b.badBoxes === 0 && b.off === 0 && b.bad === 0 && rows.split(',').sort().join() === 'bottom,top'
+          && c.off >= 2 && c.badBoxes >= 1 && d0.cols > 2 && /longer than a shade column/.test(t2) && e.rowLines === 0 });
+    } catch (err) { return done({ got: `after ${stage}: ${String(err.message || err).split('\n')[0]} · toasts ${JSON.stringify(await h.ev(() => window.__e2e.toasts.slice(-3)))}`, pass: false }); }
+  });
   await T('Marker making: Piece details lists every panel with its picture (major, block, rotation, tilt, buffer); Nest lays the panels marked Block into fuse blocks within the max length and width and makes two blocks when one is not enough; a box drawn on the marker selects parts, Unblock and Block fuse work on the selection only; married parts stay married through a nest', async () => {
     const P = h.page;
     await h.ev(() => { const E = window.__e2e; E.downloads.length = 0; void E.C.runCommand('marker.open'); }); await P.waitForSelector('.mk-root'); await h.settle(150);
