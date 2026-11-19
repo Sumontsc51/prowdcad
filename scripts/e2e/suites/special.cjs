@@ -313,7 +313,7 @@ async function nested(h, fixtures) {
           && !!reopened && reopened.room && /\.pcd$/.test(reopened.file) && reopened.rows >= 1 });
     } catch (err) { return done({ got: `after ${stage}: ${String(err.message || err).split('\n')[0]}`, pass: false }); }
   });
-  await T('Marker making: Piece details lists every panel with its picture (major, block, rotation, tilt, buffer); Nest lays the panels marked Block into fuse blocks within the max length and width and makes two blocks when one is not enough; a box drawn on the marker selects parts, Unblock and Block fuse work on the selection only', async () => {
+  await T('Marker making: Piece details lists every panel with its picture (major, block, rotation, tilt, buffer); Nest lays the panels marked Block into fuse blocks within the max length and width and makes two blocks when one is not enough; a box drawn on the marker selects parts, Unblock and Block fuse work on the selection only; married parts stay married through a nest', async () => {
     const P = h.page;
     await h.ev(() => { const E = window.__e2e; E.downloads.length = 0; void E.C.runCommand('marker.open'); }); await P.waitForSelector('.mk-root'); await h.settle(150);
     const done = async r => { await h.ev(() => { document.querySelector('.mk-root')?.closeMarker?.(); const E = window.__e2e; E.app.doc.transact('clear marker', s => { delete s.meta.marker; }); }); return r; };
@@ -352,10 +352,19 @@ async function nested(h, fixtures) {
       await P.locator('[data-mk="dxf"]').click(); await h.settle(200);
       const dxf = (await h.downloads()).find(x => x.name.endsWith('.dxf')), dxfT = dxf ? Buffer.from(dxf.b64, 'base64').toString('latin1') : '';
       const blockLayers = (dxfT.match(/\nPOLYLINE\n8\nBLOCK/g) || []).length;
-      return done({ got: `details: ${rows} panels, ${pics} pictures, block limits off ${off0} → ${off1}; kept ${a.detail}, ${a.set}, buffer ${a.buffer}, major parts ${a.major}, block parts ${a.fuse}; nest 1: laid ${b.laid}/${b.parts}, blocks "${b.blocks}", bad ${b.bad}; limits ${Math.round(dims.L * 1.15 + 40)} × ${Math.round(dims.W * 1.15 + 40)} → nest 2: laid ${c.laid}/${c.parts}, blocks "${c.blocks}", bad ${c.bad}; box ${box}, selected ${d.sel}; unblock → "${e.blocks}"; block fuse → "${g.blocks}" (${g.outlines} outline); DXF block layers ${blockLayers}`,
+      // married parts stay married through a nest: same places to each other afterwards
+      await P.locator('[data-mk="unblock"]').click(); await h.settle(150);
+      const two = await P.locator('.mk-part:not(.fuse)').evaluateAll(els => els.slice(0, 2).map(e => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }));
+      await P.mouse.click(sb.x + 3, sb.y + 3); await h.settle(60);
+      await P.keyboard.down('Shift'); for (const q of two) await P.mouse.click(q.x, q.y); await P.keyboard.up('Shift'); await h.settle(60);
+      await P.locator('[data-mk="marry"]').click(); await h.settle(150);
+      const rel = () => h.ev(() => { const r = window.__e2e.app.style.meta.marker.rows[0], g = (r.marry || [])[0]; if (!g) return 'none'; const a = r.placements[g[0]], b = r.placements[g[1]]; return `${g.length}:${(b.x - a.x).toFixed(1)},${(b.y - a.y).toFixed(1)},${a.rot},${b.rot}@${a.x.toFixed(0)},${a.y.toFixed(0)}`; });
+      const m0 = await rel(); await nest(); const m1 = await rel(), w = await st(); stage = 'married nest';
+      return done({ got: `details: ${rows} panels, ${pics} pictures, block limits off ${off0} → ${off1}; kept ${a.detail}, ${a.set}, buffer ${a.buffer}, major parts ${a.major}, block parts ${a.fuse}; nest 1: laid ${b.laid}/${b.parts}, blocks "${b.blocks}", bad ${b.bad}; limits ${Math.round(dims.L * 1.15 + 40)} × ${Math.round(dims.W * 1.15 + 40)} → nest 2: laid ${c.laid}/${c.parts}, blocks "${c.blocks}", bad ${c.bad}; box ${box}, selected ${d.sel}; unblock → "${e.blocks}"; block fuse → "${g.blocks}" (${g.outlines} outline); DXF block layers ${blockLayers}; married ${m0} → after nest ${m1}, laid ${w.laid}/${w.parts}, bad ${w.bad}`,
         pass: rows === 2 && pics === 2 && off0 === 1 && off1 === 0 && /"block":true/.test(a.detail) && /"major":true/.test(a.detail) && /"tilt":2/.test(a.detail) && /"rotation":"1way"/.test(a.detail) && /"shape":"contour"/.test(a.set) && a.buffer === 1 && a.major > 0 && a.fuse === 2
           && b.laid === b.parts && b.blocks === '2ac' && b.bad === 0 && c.laid === c.parts && c.blocks === '1ar,1ar' && c.bad === 0
-          && box === 1 && d.sel === d.parts && e.blocks === '' && g.blocks === `${g.parts}r` && g.outlines === 1 && blockLayers === 1 });
+          && box === 1 && d.sel === d.parts && e.blocks === '' && g.blocks === `${g.parts}r` && g.outlines === 1 && blockLayers === 1
+          && m0 !== 'none' && m0.split('@')[0] === m1.split('@')[0] && w.laid === w.parts && w.bad === 0 });
     } catch (err) { return done({ got: `after ${stage}: ${String(err.message || err).split('\n')[0]} · toasts ${JSON.stringify(await h.ev(() => window.__e2e.toasts.slice(-3)))}`, pass: false }); }
   });
   await T('Size chip click switches active size; selection kept', async () => { await h.selectA('FRONT', 'UA'); await h.page.locator('.sz-chip', { hasText: 'XL' }).click(); await h.settle(); const s = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); const sel = await h.sel(); return { got: `${s}, sel ${sel.anchors}`, pass: s === 'XL' && sel.anchors[0] === 'FRONT/UA' }; });
