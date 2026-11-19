@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { Document } from '../src/model/doc';
 import { makeStyle, makePiece, rectangleContour, makeContour, gradePoint } from '../src/model/factory';
-import { switchMarkerMaterial, markerPerimeter, partLabel, borderText, borderLines, borderLayout, annotLength, cutOutline, DEFAULT_ANNOT, blockOutline, blockPart, blockBins, blockRoom, facing, type MarkerDoc, type MarkerBlock } from '../src/marker/marker';
+import { switchMarkerMaterial, markerPerimeter, partLabel, borderText, borderLines, borderLayout, annotLength, cutOutline, DEFAULT_ANNOT, blockOutline, blockPart, blockBins, contourAround, blockRoom, facing, type MarkerDoc, type MarkerBlock } from '../src/marker/marker';
 import { pointInPolygon, distToPolygon, signedArea } from '../src/geom/poly';
 import { directedParts, obeyDirection, groupMayTurn, directionGroup, throwParts, autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placeAt, placedPoly, polyBox, nestJob, nestResult, markerDXF, markerHPGL, simplifyClosed } from '../src/marker/marker';
 
@@ -218,6 +218,13 @@ describe('fuse blocks and piece details', () => {
     const dxf = markerDXF(parts, pl, 1000, 'M', { blocks: [rect] });
     expect((dxf.match(/\nPOLYLINE\n8\nBLOCK/g) ?? []).length).toBe(1); expect((dxf.match(/\nPOLYLINE\n8\nCUT/g) ?? []).length).toBe(3);
     expect(markerHPGL(parts, pl, 1000, { blocks: [rect] }).split('SP2;')[0].match(/^PD/gm)!.length).toBe(4);
+  });
+  it('a contour without buffer (married parts laid as one shape) never cuts into a part and stays close', () => {
+    const d = style(), I = ids(d), ps = markerParts(d, { [I.M]: 1 });
+    const pl = { [ps[0].id]: placeAt(ps[0], 0, 0, 0), [ps[2].id]: { ...placeAt(ps[2], 620, 30, 0), rot: 1 }, [ps[3].id]: placeAt(ps[3], 640, 400, 0) };
+    const mem = ps.filter(p => pl[p.id]), co = contourAround(mem.map(p => placedPoly(p, pl[p.id])), 0);
+    for (const p of mem) for (const q of placedPoly(p, pl[p.id])) { expect(pointInPolygon(q, co)).toBe(true); expect(distToPolygon(q, co)).toBeLessThan(45); }
+    expect(Math.abs(signedArea(co))).toBeLessThan(0.9 * 840 * 700); // it follows the parts: well under their common box
   });
   it('parts far apart get their common hull as contour', () => {
     const d = style(), I = ids(d), sl = markerParts(d, { [I.M]: 1 }).filter(p => p.name === 'SLEEVE');
