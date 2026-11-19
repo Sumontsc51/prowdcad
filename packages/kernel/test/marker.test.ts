@@ -4,6 +4,9 @@ import { Document } from '../src/model/doc';
 import { makeStyle, makePiece, rectangleContour, makeContour, gradePoint } from '../src/model/factory';
 import { switchMarkerMaterial, markerPerimeter, partLabel, borderText, borderLines, borderLayout, annotLength, cutOutline, DEFAULT_ANNOT, blockOutline, blockPart, blockBins, contourAround, blockRoom, facing, type MarkerDoc, type MarkerBlock } from '../src/marker/marker';
 import { pointInPolygon, distToPolygon, signedArea } from '../src/geom/poly';
+import { matchShifts, markerMismatch, matchPlan, sweptPart, settleMatch, sweepPoly, matchAt, lineWay } from '../src/marker/marker';
+import { setLineUse, setNotchProps, lineUseOf } from '../src/ops/props';
+import { addNotchAtPoint } from '../src/ops/notches';
 import { directedParts, obeyDirection, groupMayTurn, directionGroup, throwParts, autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placeAt, placedPoly, polyBox, nestJob, nestResult, markerDXF, markerHPGL, simplifyClosed } from '../src/marker/marker';
 
 describe('cut plan', () => {
@@ -382,5 +385,92 @@ describe('annotation, buffer and plot', () => {
     const plt = markerHPGL(parts, pl, 1000, { annot: { ...a, place: 'start' }, name: 'M1', ratio: 'M 1' });
     expect(plt).toContain('DI0,1;'); expect(plt).not.toMatch(/P[UD]-|,-/);
     expect(markerHPGL(parts, pl, 1000, { annot: { ...a, place: 'bottom' }, name: 'M1' })).not.toMatch(/P[UD]-|,-/);
+  });
+});
+
+describe('line use, global edits and stripe / plaid matching', () => {
+  const matched = () => {
+    const d = style();
+    d.transact('lines', st => {
+      const [body, slv] = st.pieces;
+      body.internals.push(makeContour([gradePoint(50, 300), gradePoint(350, 300)], { type: 'internal', closed: false }), makeContour([gradePoint(200, 100), gradePoint(200, 500)], { type: 'internal', closed: false }), makeContour([gradePoint(60, 60), gradePoint(120, 60)], { type: 'internal', closed: false }));
+      slv.internals.push(makeContour([gradePoint(150, 20), gradePoint(150, 180)], { type: 'internal', closed: false }));
+    });
+    return d;
+  };
+  it('a line is Draw, Cut, matched to the fabric (M1) or piece to piece (P1 … P15); Global sets every plain line', () => {
+    const d = matched(), [body, slv] = d.style.pieces;
+    expect(body.internals.map(lineUseOf)).toEqual(['draw', 'draw', 'draw']);
+    expect(setLineUse(d, [{ pieceId: body.id, contourId: body.internals[0].id }], 'M1')).toBe(1);
+    setLineUse(d, [{ pieceId: body.id, contourId: body.internals[1].id }, { pieceId: slv.id, contourId: slv.internals[0].id }], 'P3');
+    setLineUse(d, [{ pieceId: body.id, contourId: body.internals[2].id }], 'cut');
+    expect(d.style.pieces[0].internals.map(lineUseOf)).toEqual(['M1', 'P3', 'cut']); expect(lineUseOf(d.style.pieces[1].internals[0])).toBe('P3');
+    expect(() => setLineUse(d, 'all', 'P16')).toThrow();
+    const part = markerParts(d, { [ids(d).M]: 1 }).find(p => p.name === 'BODY')!;
+    expect(part.uses).toEqual(['M1', 'P3', 'cut']); expect(part.match!.map(m => m.code)).toEqual(['M1', 'P3']);
+    // on the marker: Cut is cut whatever the setting, a plain line follows the setting, a match line is drawn
+    expect([0, 1, 2].map(i => lineWay(part, i, DEFAULT_ANNOT))).toEqual(['match', 'match', 'cut']);
+    expect([0, 1, 2].map(i => lineWay(part, i, { ...DEFAULT_ANNOT, internals: 'none' }))).toEqual([null, null, 'cut']);
+    const pl = { [part.id]: placeAt(part, 0, 0, 0) };
+    expect(markerDXF([part], pl, 1000)).toContain('MATCH'); expect(markerHPGL([part], pl, 1000, { annot: { border: false, grain: false, piece: false, size: false, bundle: false } }).split('SP2;')[0].match(/^PD/gm)!.length).toBe(2);
+    expect(setLineUse(d, 'all', 'draw')).toBe(4);
+    expect(d.style.pieces.flatMap(p => p.internals.map(lineUseOf))).toEqual(['draw', 'draw', 'draw', 'draw']);
+    d.undo(); expect(lineUseOf(d.style.pieces[0].internals[0])).toBe('M1');
+  });
+  it('notches: the chosen ones, or every notch of the style', () => {
+    const d = matched(), [body, slv] = d.style.pieces;
+    const n1 = addNotchAtPoint(d, d.style.pieces[0], { x: 200, y: 0 }), n2 = addNotchAtPoint(d, d.style.pieces[0], { x: 400, y: 300 }), n3 = addNotchAtPoint(d, d.style.pieces[1], { x: 150, y: 0 });
+    expect(setNotchProps(d, [{ pieceId: body.id, notchId: n1.id }], { type: 'V', depth: 7 })).toBe(1);
+    expect(d.style.pieces[0].notches.map(n => n.type + n.depth)).toEqual(['V7', `${n2.type}${n2.depth}`]);
+    expect(setNotchProps(d, 'all', { type: 'T', depth: 5, width: 4, on: 'both' })).toBe(3);
+    expect(d.style.pieces.flatMap(p => p.notches.map(n => `${n.type}${n.depth}${n.width}${n.on}`))).toEqual(['T54both', 'T54both', 'T54both']);
+    expect(() => setNotchProps(d, 'all', { depth: 0 })).toThrow(); void slv; void n3;
+  });
+  const lined = () => { const d = matched(), [body, slv] = d.style.pieces; setLineUse(d, [{ pieceId: body.id, contourId: body.internals[0].id }], 'M1'); setLineUse(d, [{ pieceId: body.id, contourId: body.internals[1].id }, { pieceId: slv.id, contourId: slv.internals[0].id }], 'P1'); return d; };
+  it('a line across the grain goes onto a stripe, a line along the grain onto a plaid bar; P lines follow the first part of their bundle', () => {
+    const d = lined(), I = ids(d), parts = markerParts(d, { [I.M]: 1 });
+    const body = parts.find(p => p.name === 'BODY')!, s1 = parts.find(p => p.name === 'SLEEVE' && !p.mirror)!;
+    const at = matchAt(body, placeAt(body, 0, 0, 0));
+    expect(at.map(m => m.code + m.axis)).toEqual(['M1x', 'P1y']);     // across the grain → a place along the fabric; along the grain → a place across it
+    expect(at[0].v).toBeCloseTo(310, 6); expect(at[1].v).toBeCloseTo(210, 6);
+    const f = { stripe: 100, stripe1: 20, plaid: 80, plaid1: 0 };
+    const pl = { [body.id]: placeAt(body, 0, 0, 0), [s1.id]: placeAt(s1, 700, 0, 0) };
+    const sh = matchShifts(parts, pl, f);
+    expect(sh.get(body.id)!.x).toBeCloseTo(10, 6);                     // 310 → 320 (20 + 3 × 100)
+    expect(sh.get(body.id)!.y).toBeCloseTo(0, 6);                      // the body leads its P1 line: not moved for it
+    const sv = matchAt(s1, pl[s1.id])[0];
+    expect(sv.axis).toBe('y');
+    expect(((sv.v + sh.get(s1.id)!.y - 210) % 80 + 80) % 80).toBeCloseTo(0, 6); // the sleeve's P1 line goes to the same place of the plaid as the body's
+    expect(markerMismatch(parts, pl, f).size).toBe(2);
+    const moved = { [body.id]: { ...pl[body.id], x: pl[body.id].x + 10 }, [s1.id]: { ...pl[s1.id], y: pl[s1.id].y + sh.get(s1.id)!.y } };
+    expect(markerMismatch(parts, moved, f).size).toBe(0);
+    expect(matchShifts(parts, pl, f, { way: { x: -1 } }).get(body.id)!.x).toBeCloseTo(-90, 6); // only backward
+    expect(markerMismatch(parts, pl, undefined).size).toBe(0); expect(markerMismatch(parts, pl, { stripe: 0, plaid: 0 }).size).toBe(0);
+  });
+  it('a swept shape holds the part wherever it is slid within the repeat', () => {
+    const d = lined(), I = ids(d), s1 = markerParts(d, { [I.M]: 1 }).find(p => p.name === 'SLEEVE')!;
+    const sw = sweepPoly(s1.poly, 60, 40), g = contourAround([sw], 2);
+    for (const [a, b] of [[0, 0], [60, 0], [0, 40], [60, 40], [31, 17]]) for (const q of s1.poly) expect(pointInPolygon({ x: q.x + a, y: q.y + b }, g)).toBe(true);
+    expect(polyBox(sw).x1).toBeCloseTo(polyBox(s1.poly).x1 + 60, 6); expect(polyBox(sw).y1).toBeCloseTo(polyBox(s1.poly).y1 + 40, 6); expect(polyBox(sw).x0).toBeCloseTo(0, 6);
+  });
+  it('the nester leaves room and every part is slid onto its match: no overlap, nothing off the match (real engine)', () => {
+    const d = lined(), I = ids(d), parts = markerParts(d, { [I.M]: 2 });
+    const f = { stripe: 90, stripe1: 15, plaid: 70, plaid1: 10 };
+    const plan = matchPlan(parts, f);
+    const bodies = parts.filter(p => p.name === 'BODY'), sl = parts.filter(p => p.name === 'SLEEVE');
+    expect(plan.get(bodies[0].id)).toEqual({ sx: 90, sy: 0 });         // M1 across the grain; it leads P1
+    expect(plan.get(bodies[1].id)).toEqual({ sx: 90, sy: 70 });        // the second body of the bundle follows the first
+    expect(plan.get(sl[0].id)).toEqual({ sx: 0, sy: 70 });
+    const glue = readFileSync(new URL('../../../apps/web/src/marker/sparrow-glue.txt', import.meta.url), 'utf8');
+    const wasm = Buffer.from(readFileSync(new URL('../../../apps/web/src/marker/sparrow-wasm.b64.txt', import.meta.url), 'utf8').trim(), 'base64');
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const wb = new Function(glue + '; return wasm_bindgen;')(); wb.initSync({ module: wasm });
+    const job = nestJob(parts.map(p => (plan.has(p.id) ? sweptPart(p, plan.get(p.id)!) : p)), 1200);
+    const res = nestResult(wb.nest(job.json, 3, BigInt(11), 1, job.gap, JSON.stringify({ noimp: 100, strikes: 2, csamp: 100, fsamp: 50 }), '', () => {}), job);
+    expect(Object.keys(res.placements).length).toBe(parts.length);
+    expect(markerMismatch(parts, res.placements, f).size).toBeGreaterThan(0);
+    const pl = settleMatch(parts, res.placements, f, plan);
+    expect(markerMismatch(parts, pl, f, 0.01).size).toBe(0);
+    expect(markerProblems(parts, pl, 1200, 1).size).toBe(0);
   });
 });
