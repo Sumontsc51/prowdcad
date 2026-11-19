@@ -7,7 +7,7 @@
  */
 import {
   autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placedPoly, placedPoint, polyBox, placeAt, nestJob,
-  markerDXF, markerHPGL, partLabel, markerPerimeter, DEFAULT_ANNOT, type MarkerAnnot, blockOutline, blockPart, blockBins, contourAround, cutOutline, matchShifts, markerMismatch, matchPlan, sweptPart, settleMatch, matchActive, lineWay, type FabricMatch, blockRoom, facing, borderLines, borderLayout, partTemplate, markerTemplate, DEFAULT_BLOCKSET,
+  markerDXF, markerHPGL, partLabel, markerPerimeter, DEFAULT_ANNOT, type MarkerAnnot, blockOutline, blockPart, blockBins, contourAround, cutOutline, matchShifts, markerMismatch, matchPlan, sweptPart, settleMatch, matchActive, lineWay, type FabricMatch, shadeProblems, shadeBundles, columnHull, type ShadeSet, blockRoom, facing, borderLines, borderLayout, partTemplate, markerTemplate, DEFAULT_BLOCKSET,
   type MarkerBlock, type PieceDetail, type BlockSet, type AnnotUnit, type AnnotPlace, switchMarkerMaterial, directedParts, obeyDirection, directionGroup, groupMayTurn, throwParts, type MarkerDirection, type MarkerDoc, type MarkerRow, type MarkerPart, type Placements, type Placement, type Vec,
 } from '@prowdcad/kernel';
 import type { App } from '../app';
@@ -40,6 +40,7 @@ export function openMarker(app: App) {
   };
   const mp = (ratio: MarkerRow['ratio'], d: MarkerDoc = M()) => markerParts(app.doc, ratio, { material: d.material || undefined, block: d.block, buffer: d.buffer, detail: d.detail });
   const fab = (): FabricMatch | undefined => M().match;
+  const shade = (): ShadeSet | undefined => { const x = M().shade; return x && x.rows >= 1 ? x : undefined; };
   const bset = (): BlockSet => ({ ...DEFAULT_BLOCKSET, ...(M().blockSet ?? {}) });
   // ── view state (not saved)
   let cur = M().rows[0]?.id ?? '';
@@ -88,6 +89,7 @@ export function openMarker(app: App) {
   let liveBlocks: MarkerBlock[] | null = null;       // … and its fuse blocks
   let phase = '', aborted = false;                   // building the fuse blocks before the nest; Stop pressed
   const busy = () => !!run || !!phase;
+  let shadeOff = new Set<string>();                  // major parts outside their shade zone
   let trayShift = 0, off = new Set<string>();           // parts off their stripe / plaid match
   let mq: { a: Vec; b: Vec; add: boolean; px: { x: number; y: number } } | null = null; // box drawn to select parts
   let dlg: { close: () => void } | null = null;      // piece details / settings window
@@ -257,8 +259,8 @@ export function openMarker(app: App) {
   }
   // ── nesting
   /** one run of the engine, waited for (a part alone needs no engine) */
-  const nestOnce = (job: ReturnType<typeof nestJob>, ps: MarkerPart[], seconds: number, room: { length: number; width: number }): Promise<{ placements: Placements; length: number } | null> => {
-    if (ps.length === 1) {
+  const nestOnce = (job: ReturnType<typeof nestJob>, ps: MarkerPart[], seconds: number, room: { length: number; width: number }, onBest?: (pl: Placements) => void): Promise<{ placements: Placements; length: number } | null> => {
+    if (ps.length === 1 && !onBest) {
       const p = ps[0], a = p.angles.find(x => { const b = polyBox(placedPoly(p, { x: 0, y: 0, rot: x })); return b.x1 - b.x0 <= room.length && b.y1 - b.y0 <= room.width; }) ?? p.angles[0];
       const q = placeAt(p, 0, 0, a), b = polyBox(placedPoly(p, q));
       return Promise.resolve({ placements: { [p.id]: q }, length: b.x1 });
@@ -266,7 +268,7 @@ export function openMarker(app: App) {
     return new Promise(res => {
       let best: { placements: Placements; length: number } | null = null;
       try {
-        run = startNest(job, seconds, { onBest: (pl, len) => { best = { placements: pl, length: len }; }, onDone: info => { run = null; if (info.stopped) aborted = true; if (info.error) { aborted = true; toast('Nester stopped: ' + info.error, 'error'); } res(best); } });
+        run = startNest(job, seconds, { onBest: (pl, len) => { best = { placements: pl, length: len }; onBest?.(pl); }, onDone: info => { run = null; if (info.stopped) aborted = true; if (info.error) { aborted = true; toast('Nester stopped: ' + info.error, 'error'); } res(best); } });
       } catch (err) { run = null; aborted = true; toast('The nester could not start in this browser: ' + (err as Error).message, 'error'); res(null); }
     });
   };
@@ -334,6 +336,40 @@ export function openMarker(app: App) {
       if (aborted || !done) { if (!aborted) toast('The fuse blocks could not be filled within their limits', 'error'); draw(); return; }
       done.forEach((g, i) => { const block: MarkerBlock = { ids: g.bin.map(p => p.id), shape: set.shape, buffer: set.buffer, auto: true }; const bp = blockPart('#blk' + i, parts, g.pl, block); if (bp) stand.push({ ...bp, block }); });
     }
+    // shade zones: the major pieces of every bundle are laid together (once per size) and stay together as one shape, in their row
+    const sh = shade(), rowOf = new Map<string, number>(), bundleRow = new Map<string, number>();
+    const rowsN = sh ? Math.max(1, Math.floor(sh.rows)) : 1, bandH = w / rowsN;
+    if (sh) {
+      const inS = new Set(stand.filter(x => x.part).flatMap(x => x.ids)), co = Math.max(0, sh.colOverlap) / 100;
+      const groups = new Map<string, MarkerPart[]>();
+      for (const p of np) { if (!p.major || p.fuse || inS.has(p.id)) continue; const k = p.sizeId + '|' + p.bundle; groups.set(k, [...(groups.get(k) ?? []), p]); }
+      const innerH = bandH - 2; // a little less than the row, so that the shape of a bundle always goes into its row
+      const cache = new Map<string, { pl: Placements; ids: string[] }>(), each = Math.max(2, Math.min(6, m.nestSeconds * 0.15));
+      let i = 0, fail = '';
+      for (const [key, ps] of groups) {
+        const tall = ps.find(p => p.angles.every(a => { const b = polyBox(placedPoly(p, { x: 0, y: 0, rot: a })); return b.y1 - b.y0 > innerH; }));
+        if (tall) { fail = `${tall.name} (${tall.sizeName}) is wider than a shade row (${fmt(bandH)} ${unitLabel()}): use fewer rows`; break; }
+        const sig = ps.map(p => [p.pieceId, p.sizeId, p.mirror ? 1 : 0, p.angles.join(',')].join(':')).join(';');
+        if (!cache.has(sig)) {
+          phase = `shade zones: laying the major pieces of size ${ps[0].sizeName}`; drawTools(); drawStatus();
+          const res = await nestOnce(nestJob(ps, innerH, { gap, name: 'shade' }), ps, each, { length: Infinity, width: innerH });
+          if (aborted || !root) break;
+          if (!res || Object.keys(res.placements).length < ps.length) { fail = `The major pieces of size ${ps[0].sizeName} could not be laid within a shade row`; break; }
+          if (sh.colBy === 'length' && res.length > sh.colLength * (1 + 2 * co) + 0.5) { fail = `The major pieces of size ${ps[0].sizeName} need ${fmt(res.length)} ${unitLabel()}: longer than a shade column. Raise the column length or use fewer rows`; break; }
+          cache.set(sig, { pl: res.placements, ids: ps.map(p => p.id) });
+        }
+        const c = cache.get(sig)!, at = (k: number) => c.pl[c.ids[k]];
+        const polys = ps.map((p, k) => cutOutline(p).map(q => placedPoint(at(k), q))), bb = polyBox(polys.flat()), len = bb.x1 - bb.x0;
+        const hull = columnHull(polys, sh.colBy === 'bundle' ? { x0: bb.x0 + co * len, x1: bb.x1 - co * len, y0: 0, y1: innerH } : undefined), hb = polyBox(hull);
+        const local: Placements = {}; ps.forEach((p, k) => { local[p.id] = { x: at(k).x - hb.x0, y: at(k).y - hb.y0, rot: at(k).rot }; });
+        const id = '#shade' + i, f0 = ps[0];
+        stand.push({ part: { id, pieceId: id, name: 'Bundle ' + f0.code, sizeId: f0.sizeId, sizeName: f0.sizeName, bundle: f0.bundle, mirror: false, angles: [0], poly: hull.map(q => ({ x: q.x - hb.x0, y: q.y - hb.y0 })), grain: [{ x: 0, y: 0 }, { x: 1, y: 0 }], area: ps.reduce((a, p) => a + p.area, 0), material: f0.material, hold: 'block', code: '' }, local, ids: ps.map(p => p.id), block: null as unknown as MarkerBlock });
+        rowOf.set(id, i % rowsN); bundleRow.set(key, i % rowsN); i++;
+      }
+      phase = '';
+      if (!root) return;
+      if (aborted || fail) { if (fail) toast(fail, 'error'); draw(); return; }
+    }
     const solid = stand.filter(x => x.part);
     const by = new Map(solid.map(x => [x.part.id, x])), inStand = new Set(solid.flatMap(x => x.ids));
     // match lines: a part that must go onto a stripe / plaid bar is given room for a whole repeat, and slid onto its match afterwards
@@ -343,16 +379,50 @@ export function openMarker(app: App) {
     if (tooWide) { toast(`${tooWide.name} (${tooWide.sizeName}) with the room for its plaid match is wider than the fabric`, 'error'); draw(); return; }
     const expand = (pl: Placements): Placements => { const out: Placements = {}; for (const id in pl) { const x = by.get(id); if (!x) { out[id] = pl[id]; continue; } for (const q of x.ids) out[q] = { x: x.local[q].x + pl[id].x, y: x.local[q].y + pl[id].y, rot: x.local[q].rot }; } return plan.size ? settleMatch(np, out, f, plan) : out; };
     const newBlocks: MarkerBlock[] = stand.filter(x => x.block).map(x => (x.part ? { ...x.block, ids: x.ids } : x.block));
+    const finish = (got: Placements | null, info: { stopped: boolean; error?: string }) => {
+      clearInterval(runTimer); run = null; live = null; liveBlocks = null; phase = '';
+      if (info.error) toast('Nester stopped: ' + info.error, 'error');
+      if (!got) { draw(); return; }
+      const id = runRow, n = Object.keys(got).length;
+      edit('Nest marker', d => { const x = d.rows.find(q => q.id === id); if (x) { x.placements = got; if (keptMarry.length) x.marry = keptMarry.map(g => g.filter(q => got[q])).filter(g => g.length > 1); else delete x.marry; const nb = newBlocks.map(bk => ({ ...bk, ids: bk.ids.filter(q => got[q]) })).filter(bk => bk.ids.length); if (nb.length) x.blocks = nb; else delete x.blocks; } });
+      toast(`Nested: ${fmt(runBest)} ${unitLabel()} long${newBlocks.length ? ` · ${newBlocks.length} fuse block${newBlocks.length > 1 ? 's' : ''}` : ''}${plan.size ? ` · ${plan.size} part${plan.size > 1 ? 's' : ''} laid onto the stripe / plaid match` : ''}${sh ? ` · major pieces in ${rowsN} shade row${rowsN > 1 ? 's' : ''}` : ''}${info.stopped ? ` (stopped early${n < parts.length ? `: ${parts.length - n} parts wait` : ''})` : ''}`, 'ok');
+    };
+    if (sh) {
+      // every shade row is nested on its own, then what is too wide for a row goes behind the rows on the full width
+      const fits = (p: MarkerPart) => p.angles.some(a => { const bx = polyBox(placedPoly(p, { x: 0, y: 0, rot: a })); return bx.y1 - bx.y0 <= bandH - 0.5; });
+      const bands: MarkerPart[][] = Array.from({ length: rowsN }, () => []), load = bands.map(() => 0), tail: MarkerPart[] = [];
+      for (const p of items.filter(q => rowOf.has(q.id))) { bands[rowOf.get(p.id)!].push(p); load[rowOf.get(p.id)!] += p.area; }
+      for (const p of items.filter(q => !rowOf.has(q.id)).sort((a, c) => c.area - a.area)) {
+        if (!fits(p)) { tail.push(p); continue; }
+        // the small pieces of a bundle go to the row of its major pieces while that keeps the rows even
+        let k = bundleRow.get(p.sizeId + '|' + p.bundle) ?? -1; const least = load.indexOf(Math.min(...load));
+        if (k < 0 || p.id[0] === '#' || load[k] > load[least] * 1.15 + p.area) k = least;
+        bands[k].push(p); load[k] += p.area;
+      }
+      const runs = [...bands.map((its, k) => ({ its, k })).filter(x => x.its.length), ...(tail.length ? [{ its: tail, k: -1 }] : [])];
+      const total = items.length, acc: Placements = {};
+      let ends = 0, stopped = false;
+      const show = (extra: Placements) => { live = expand({ ...acc, ...extra }); liveBlocks = newBlocks; runBest = markerStats(parts, live, w, newBlocks).length; draw(); };
+      phase = 'shade rows';
+      for (let q = 0; q < runs.length && !stopped; q++) {
+        const { its, k } = runs[q], oy = k < 0 ? 0 : k * bandH, ox = k < 0 ? ends : 0;
+        phase = k < 0 ? 'the pieces too wide for a shade row' : `shade row ${k + 1} of ${rowsN}`; drawTools(); drawStatus();
+        const move = (pl: Placements): Placements => Object.fromEntries(Object.entries(pl).map(([id, v]) => [id, { ...v, x: v.x + ox, y: v.y + oy }]));
+        const res = await nestOnce(nestJob(its, k < 0 ? w : bandH, { gap, name: r.name }), its, Math.max(3, m.nestSeconds * its.length / total), { length: Infinity, width: k < 0 ? w : bandH }, its.length > 1 ? pl => show(move(pl)) : undefined);
+        if (!root) return;
+        if (res) { const mv = move(res.placements); Object.assign(acc, mv); if (k >= 0) ends = Math.max(ends, res.length); }
+        if (aborted) stopped = true;
+      }
+      const got = Object.keys(acc).length ? expand(acc) : null;
+      if (got) runBest = markerStats(parts, got, w, newBlocks).length;
+      finish(got, { stopped });
+      return;
+    }
     const job = nestJob(items, w, { gap, name: r.name });
     try {
       run = startNest(job, m.nestSeconds, {
         onBest: (pl, len) => { live = expand(pl); liveBlocks = newBlocks; runBest = len; draw(); },
-        onDone: info => {
-          clearInterval(runTimer); const got = live; run = null; live = null; liveBlocks = null;
-          if (info.error) toast('Nester stopped: ' + info.error, 'error');
-          if (got) { const id = runRow; edit('Nest marker', d => { const x = d.rows.find(q => q.id === id); if (x) { x.placements = got; if (keptMarry.length) x.marry = keptMarry; else delete x.marry; if (newBlocks.length) x.blocks = newBlocks; else delete x.blocks; } }); toast(`Nested: ${fmt(runBest)} ${unitLabel()} long${newBlocks.length ? ` · ${newBlocks.length} fuse block${newBlocks.length > 1 ? 's' : ''}` : ''}${plan.size ? ` · ${plan.size} part${plan.size > 1 ? 's' : ''} laid onto the stripe / plaid match` : ''}${info.stopped ? ' (stopped early)' : ''}`, 'ok'); }
-          else draw();
-        },
+        onDone: info => finish(live, info),
       });
       runTimer = window.setInterval(() => drawStatus(), 500);
     } catch (err) { run = null; toast('The nester could not start in this browser: ' + (err as Error).message, 'error'); }
@@ -473,6 +543,23 @@ export function openMarker(app: App) {
     const lines = parts.some(p => p.match?.length);
     toast(n.stripe || n.plaid ? `${n.stripe ? `Stripe every ${fmt(n.stripe)} ${unitLabel()}` : 'No stripe'} · ${n.plaid ? `plaid every ${fmt(n.plaid)} ${unitLabel()}` : 'no plaid'}${lines ? ' · press ▶ to nest onto the match' : ' · no piece has a match line yet (pattern ▸ select an internal line ▸ Line is)'}` : 'Stripe and plaid off', lines || !(n.stripe || n.plaid) ? 'ok' : 'warn');
   }
+  /** Shade zones: rows across the width, columns by a length or by bundle end, with an overlap on each. The major pieces of a bundle are laid within one zone. */
+  async function shadeSettings() {
+    if (busy()) return; if (carry) dropCarry(true);
+    const cur = M().shade, majors = parts.filter(p => p.major).length;
+    const r = await showDialog({ title: 'Shade zones', message: 'For fabric that shades from side to centre or along the roll: the major pieces of a bundle (Piece details ▸ Major) are laid within one zone, so the panels of a garment have the same shade.\nRows divide the fabric width into equal parts. Columns are a set length, or end where the bundle ends (bundles follow each other). The overlap lets a piece reach that much into the next row or column.',
+      fields: [{ kind: 'checkbox', key: 'on', label: 'Shade zones on', value: !!cur && cur.rows >= 1 },
+        { kind: 'number', key: 'rows', label: 'Rows (the width is divided by)', value: cur?.rows && cur.rows >= 1 ? cur.rows : 2, min: 1, max: 12, step: 1 },
+        { kind: 'select', key: 'colBy', label: 'Columns by', value: cur?.colBy ?? 'bundle', options: [{ value: 'bundle', label: 'Bundle end' }, { value: 'length', label: 'Length' }] },
+        { kind: 'length', key: 'colLength', label: 'Column length', value: cur?.colLength ?? 2000, min: 0, hint: 'Used with Columns by ▸ Length' },
+        { kind: 'number', key: 'rowOverlap', label: 'Row overlap', value: cur?.rowOverlap ?? 0, min: 0, max: 100, suffix: '%' },
+        { kind: 'number', key: 'colOverlap', label: 'Column overlap', value: cur?.colOverlap ?? 0, min: 0, max: 50, suffix: '%' }],
+      validate: v => (v.on && v.colBy === 'length' && !((v.colLength as number) > 50) ? 'Type the column length' : null) });
+    if (!r) return;
+    const n: ShadeSet = { rows: r.on ? Math.max(1, Math.min(12, Math.round(r.rows as number) || 1)) : 0, colBy: r.colBy === 'length' ? 'length' : 'bundle', colLength: Math.max(0, r.colLength as number), rowOverlap: Math.max(0, Math.min(100, (r.rowOverlap as number) || 0)), colOverlap: Math.max(0, Math.min(50, (r.colOverlap as number) || 0)) };
+    edit('Shade zones', d => { d.shade = n; });
+    toast(!n.rows ? 'Shade zones off' : `Shade zones: ${n.rows} row${n.rows > 1 ? 's' : ''} · columns by ${n.colBy === 'length' ? `length ${fmt(n.colLength)} ${unitLabel()}` : 'bundle end'}${majors ? ' · press ▶ to lay the major pieces in their zones' : ' · no piece is marked Major yet (Piece details)'}`, !n.rows || majors ? 'ok' : 'warn');
+  }
   /** the carried / thrown parts step onto their match: the first of them that has a match line decides, the rest go with it */
   function snapMatch(next: Placements, ids: string[], way?: { x?: number; y?: number }): Placements {
     const f = fab(); if (!f || !matchActive(parts, f)) return next;
@@ -576,7 +663,7 @@ export function openMarker(app: App) {
       ]) }, 'File ▾'),
       h('button.mk-menu', { type: 'button', 'data-mk': 'menu-marker', onclick: (e: Event) => menu(e, [
         { label: 'Piece details…', run: pieceDetails }, { label: 'Marry pieces', run: marry }, { label: 'Unmarry', run: unmarry },
-        { label: 'Block fuse (selected parts)…', run: () => void blockFuse() }, { label: 'Unblock', run: unblock }, { label: 'Buffer…', run: () => void buffer() }, { label: 'Stripe and plaid…', run: () => void matchSettings() },
+        { label: 'Block fuse (selected parts)…', run: () => void blockFuse() }, { label: 'Unblock', run: unblock }, { label: 'Buffer…', run: () => void buffer() }, { label: 'Stripe and plaid…', run: () => void matchSettings() }, { label: 'Shade zones…', run: () => void shadeSettings() },
       ]) }, 'Marker ▾'),
       h('span.mk-dim', {}, app.doc.style.name || ''),
       h('label', {}, 'Fabric width', num(fmt(wd()), 'Usable fabric width of the marker on screen (every marker has its own; new markers start with the last width typed)', t => { const v = parseLen(t), id = row()?.id; if (Number.isFinite(v) && v > 50) { edit('Fabric width', d => { d.width = v; const x = d.rows.find(q => q.id === id); if (x) x.width = v; }); draw(true); } else draw(); }, 70), h('span.mk-dim', {}, unitLabel())),
@@ -672,6 +759,7 @@ export function openMarker(app: App) {
       b('details', '☰', 'Piece details: every panel with its major mark, block fuse, rotation, tilt and buffer; the limits of the fuse blocks', pieceDetails),
       b('block', '▣', 'Block fuse: the selected laid parts become one fuse block, contour or rectangular, with a buffer (Shift+click or draw a box to select)', () => void blockFuse()),
       b('match', '▦', 'Stripe and plaid: the repeat of the fabric and its first bar; match lines of the pieces are laid onto the bars', () => void matchSettings()),
+      b('shade', '▤', 'Shade zones: rows across the width and columns along the length; the major pieces of a bundle are laid within one zone', () => void shadeSettings()),
       b('unblock', '▢', 'Unblock: take away the fuse block of the selected part', unblock),
       b('buffer', '◌', 'Buffer: the piece of the selected part keeps a clear margin all round, in every size', () => void buffer()),
       h('div.mk-sep'),
@@ -688,13 +776,14 @@ export function openMarker(app: App) {
     const st = markerStats(parts, pls(), wd(), blks());
     const el = run ? Math.min(run.seconds, (performance.now() - run.startedAt) / 1000) : 0;
     stat.textContent = [r.name, `${st.placed} of ${st.parts} parts laid`, `length ${fmt(st.length)} ${unitLabel()}`, `efficiency ${(st.efficiency * 100).toFixed(2)} %`,
-      `${r.plies} plies = ${(st.length * r.plies / 1000).toFixed(2)} m of fabric`, `perimeter ${(markerPerimeter(parts, pls(), blks()) / 1000).toFixed(2)} m`, blks().length ? `${blks().length} fuse block${blks().length > 1 ? 's' : ''}` : '', bad.size ? `⚠ ${bad.size} part${bad.size > 1 ? 's' : ''} overlapping, inside a block or off the fabric` : '', off.size ? `⚠ ${off.size} part${off.size > 1 ? 's' : ''} off the stripe / plaid match` : '',
-      phase ? `nesting… ${phase}` : run ? `nesting… ${el.toFixed(0)} / ${run.seconds} s on ${run.threads} thread${run.threads > 1 ? 's' : ''}` : carry ? 'Carrying: click = put down · press and pull = aim, let go = shoot · right-click = turn 180° · Esc = put back' : 'Click a part to pick it up · press and pull = aim, let go = shoot · right-click = turn 180° · Shift+click or draw a box = select · [ ] = tilt'].filter(Boolean).join('  ·  ');
+      `${r.plies} plies = ${(st.length * r.plies / 1000).toFixed(2)} m of fabric`, `perimeter ${(markerPerimeter(parts, pls(), blks()) / 1000).toFixed(2)} m`, blks().length ? `${blks().length} fuse block${blks().length > 1 ? 's' : ''}` : '', bad.size ? `⚠ ${bad.size} part${bad.size > 1 ? 's' : ''} overlapping, inside a block or off the fabric` : '', off.size ? `⚠ ${off.size} part${off.size > 1 ? 's' : ''} off the stripe / plaid match` : '', shadeOff.size ? `⚠ ${shadeOff.size} major part${shadeOff.size > 1 ? 's' : ''} outside one shade zone` : '',
+      phase ? `nesting… ${phase}${run ? ` · ${Math.min(run.seconds, (performance.now() - run.startedAt) / 1000).toFixed(0)} / ${run.seconds.toFixed(0)} s` : ''}` : run ? `nesting… ${el.toFixed(0)} / ${run.seconds} s on ${run.threads} thread${run.threads > 1 ? 's' : ''}` : carry ? 'Carrying: click = put down · press and pull = aim, let go = shoot · right-click = turn 180° · Esc = put back' : 'Click a part to pick it up · press and pull = aim, let go = shoot · right-click = turn 180° · Shift+click or draw a box = select · [ ] = tilt'].filter(Boolean).join('  ·  ');
   }
   function drawSvg() {
     const p0 = pls(), fw = wd(), bk = blks(), st = markerStats(parts, p0, fw, bk);
     bad = busy() ? new Set() : markerProblems(parts, p0, fw, 0.6, bk);
     const fm = fab(); off = busy() || !fm ? new Set() : markerMismatch(parts, p0, fm);
+    const sz = shade(); shadeOff = busy() || !sz ? new Set() : shadeProblems(parts, p0, fw, sz);
     const f = (n: number) => n.toFixed(1);
     const len = Math.max(st.length, 1000), a = S({ x: 0, y: 0 }), b2 = S({ x: len, y: fw });
     const sIdx = new Map(sizes().map((s, k) => [s.id, k]));
@@ -705,6 +794,15 @@ export function openMarker(app: App) {
       if ((fm.stripe ?? 0) > 0 && endX / fm.stripe! < 900 && fm.stripe! * view.k > 2.5) for (let x = fm.stripe1 ?? 0, k2 = 0; x <= endX; x += fm.stripe!, k2++) { const q = S({ x, y: 0 }); g2 += `<line${k2 ? '' : ' class="first"'} x1="${f(q.x)}" y1="${f(a.y)}" x2="${f(q.x)}" y2="${f(b2.y)}"/>`; }
       if ((fm.plaid ?? 0) > 0 && fw / fm.plaid! < 900 && fm.plaid! * view.k > 2.5) for (let y = fm.plaid1 ?? 0, k2 = 0; y <= fw; y += fm.plaid!, k2++) { const q = S({ x: 0, y }); g2 += `<line class="pl${k2 ? '' : ' first'}" x1="${f(a.x)}" y1="${f(q.y)}" x2="${f(b2.x + 4000 * view.k)}" y2="${f(q.y)}"/>`; }
       out += `<g class="mk-grid">${g2}</g>`;
+    }
+    if (sz) {
+      // shade zones: the rows (with the overlap shown as a band), the column lengths as a ruler, and the box of every bundle's major pieces
+      const R = Math.max(1, Math.floor(sz.rows)), hh = fw / R, ro = Math.max(0, sz.rowOverlap) / 100 * hh, x1 = b2.x + 4000 * view.k; let z = '';
+      for (let k2 = 1; k2 < R; k2++) { const y = S({ x: 0, y: k2 * hh }).y; if (ro > 0) z += `<rect class="ov" x="${f(a.x)}" y="${f(y - ro * view.k)}" width="${f(x1 - a.x)}" height="${f(2 * ro * view.k)}"/>`; z += `<line x1="${f(a.x)}" y1="${f(y)}" x2="${f(x1)}" y2="${f(y)}"/>`; }
+      for (let k2 = 0; k2 < R; k2++) { const t = S({ x: 0, y: k2 * hh }); z += `<text x="${f(a.x + 4)}" y="${f(t.y + 12)}">row ${k2 + 1}</text>`; }
+      if (sz.colBy === 'length' && sz.colLength > 0 && sz.colLength * view.k > 6) for (let x = sz.colLength; x <= len + 4000 && x / sz.colLength < 400; x += sz.colLength) { const q = S({ x, y: 0 }); z += `<line class="col" x1="${f(q.x)}" y1="${f(a.y)}" x2="${f(q.x)}" y2="${f(b2.y)}"/>`; }
+      for (const bz of shadeBundles(parts, p0, fw, sz)) { const p1 = S({ x: bz.box.x0, y: bz.box.y0 }), p2 = S({ x: bz.box.x1, y: bz.box.y1 }), badZ = bz.ids.some(id => shadeOff.has(id)); const first = parts.find(p => p.id === bz.ids[0]); z += `<rect class="bz${badZ ? ' bad' : ''}" x="${f(p1.x)}" y="${f(p1.y)}" width="${f(p2.x - p1.x)}" height="${f(p2.y - p1.y)}"/><text class="bzt${badZ ? ' bad' : ''}" x="${f(p1.x + 4)}" y="${f(p2.y - 4)}">${first ? first.code : ''}</text>`; }
+      out += `<g class="mk-shade">${z}</g>`;
     }
     if (st.length > 0) { const e = S({ x: st.length, y: 0 }); out += `<line x1="${f(e.x)}" y1="${f(a.y - 8)}" x2="${f(e.x)}" y2="${f(b2.y + 8)}" class="mk-end"/><text x="${f(e.x + 5)}" y="${f(a.y - 12)}" class="mk-lab">${fmt(st.length)} ${unitLabel()} · ${(st.efficiency * 100).toFixed(1)} %</text>`; }
     const wedSet = new Set((row()?.marry ?? []).flat());
@@ -727,7 +825,7 @@ export function openMarker(app: App) {
       const q = where(p); if (!q) continue;
       const pts = placedPoly(p, q).map(S), col = SIZE_COL[(sIdx.get(p.sizeId) ?? 0) % SIZE_COL.length];
       const held = !!carry?.base[p.id];
-      const cls = 'mk-part' + (sel.has(p.id) ? ' sel' : '') + (bad.has(p.id) && !held ? ' bad' : '') + (p0[p.id] || held ? '' : ' wait') + (held ? ' carry' : '') + (wedSet.has(p.id) ? ' wed' : '') + (p.inner ? ' block' : '') + (p.major ? ' major' : '') + (p.fuse ? ' fuse' : '') + (off.has(p.id) && !held ? ' off' : '');
+      const cls = 'mk-part' + (sel.has(p.id) ? ' sel' : '') + (bad.has(p.id) && !held ? ' bad' : '') + (p0[p.id] || held ? '' : ' wait') + (held ? ' carry' : '') + (wedSet.has(p.id) ? ' wed' : '') + (p.inner ? ' block' : '') + (p.major ? ' major' : '') + (p.fuse ? ' fuse' : '') + (off.has(p.id) && !held ? ' off' : '') + (shadeOff.has(p.id) && !held ? ' shadeoff' : '');
       const g0 = S(placedPoint(q, p.grain[0])), g1 = S(placedPoint(q, p.grain[1]));
       const bx = polyBox(pts), big = (bx.x1 - bx.x0) > 46 && (bx.y1 - bx.y0) > 16;
       const one = `<g class="${cls}" data-part="${p.id}"><path d="${pts.map((v, i) => `${i ? 'L' : 'M'}${f(v.x)} ${f(v.y)}`).join('')}Z" style="--c:${col}"/>`
