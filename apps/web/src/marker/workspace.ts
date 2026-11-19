@@ -7,7 +7,7 @@
  */
 import {
   autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placedPoly, placedPoint, polyBox, placeAt, nestJob,
-  markerDXF, markerHPGL, partLabel, markerPerimeter, DEFAULT_ANNOT, type MarkerAnnot, blockOutline, blockPart, blockBins, contourAround, cutOutline, blockRoom, facing, borderLines, borderLayout, partTemplate, markerTemplate, DEFAULT_BLOCKSET,
+  markerDXF, markerHPGL, partLabel, markerPerimeter, DEFAULT_ANNOT, type MarkerAnnot, blockOutline, blockPart, blockBins, contourAround, cutOutline, matchShifts, markerMismatch, matchPlan, sweptPart, settleMatch, matchActive, lineWay, type FabricMatch, blockRoom, facing, borderLines, borderLayout, partTemplate, markerTemplate, DEFAULT_BLOCKSET,
   type MarkerBlock, type PieceDetail, type BlockSet, type AnnotUnit, type AnnotPlace, switchMarkerMaterial, directedParts, obeyDirection, directionGroup, groupMayTurn, throwParts, type MarkerDirection, type MarkerDoc, type MarkerRow, type MarkerPart, type Placements, type Placement, type Vec,
 } from '@prowdcad/kernel';
 import type { App } from '../app';
@@ -39,6 +39,7 @@ export function openMarker(app: App) {
     partsKey = ''; draw();
   };
   const mp = (ratio: MarkerRow['ratio'], d: MarkerDoc = M()) => markerParts(app.doc, ratio, { material: d.material || undefined, block: d.block, buffer: d.buffer, detail: d.detail });
+  const fab = (): FabricMatch | undefined => M().match;
   const bset = (): BlockSet => ({ ...DEFAULT_BLOCKSET, ...(M().blockSet ?? {}) });
   // ── view state (not saved)
   let cur = M().rows[0]?.id ?? '';
@@ -87,7 +88,7 @@ export function openMarker(app: App) {
   let liveBlocks: MarkerBlock[] | null = null;       // … and its fuse blocks
   let phase = '', aborted = false;                   // building the fuse blocks before the nest; Stop pressed
   const busy = () => !!run || !!phase;
-  let trayShift = 0;
+  let trayShift = 0, off = new Set<string>();           // parts off their stripe / plaid match
   let mq: { a: Vec; b: Vec; add: boolean; px: { x: number; y: number } } | null = null; // box drawn to select parts
   let dlg: { close: () => void } | null = null;      // piece details / settings window
   const row = (): MarkerRow | undefined => M().rows.find(r => r.id === cur) ?? M().rows[0];
@@ -335,8 +336,12 @@ export function openMarker(app: App) {
     }
     const solid = stand.filter(x => x.part);
     const by = new Map(solid.map(x => [x.part.id, x])), inStand = new Set(solid.flatMap(x => x.ids));
-    const items = [...np.filter(p => !inStand.has(p.id)), ...solid.map(x => x.part)];
-    const expand = (pl: Placements): Placements => { const out: Placements = {}; for (const id in pl) { const x = by.get(id); if (!x) { out[id] = pl[id]; continue; } for (const q of x.ids) out[q] = { x: x.local[q].x + pl[id].x, y: x.local[q].y + pl[id].y, rot: x.local[q].rot }; } return out; };
+    // match lines: a part that must go onto a stripe / plaid bar is given room for a whole repeat, and slid onto its match afterwards
+    const f = fab(), plan = matchPlan(np, f, new Set(np.filter(p => !inStand.has(p.id)).map(p => p.id)));
+    const items = [...np.filter(p => !inStand.has(p.id)).map(p => (plan.has(p.id) ? sweptPart(p, plan.get(p.id)!) : p)), ...solid.map(x => x.part)];
+    const tooWide = items.find(p => p.angles.every(a => { const b = polyBox(placedPoly(p, { x: 0, y: 0, rot: a })); return b.y1 - b.y0 > w; }));
+    if (tooWide) { toast(`${tooWide.name} (${tooWide.sizeName}) with the room for its plaid match is wider than the fabric`, 'error'); draw(); return; }
+    const expand = (pl: Placements): Placements => { const out: Placements = {}; for (const id in pl) { const x = by.get(id); if (!x) { out[id] = pl[id]; continue; } for (const q of x.ids) out[q] = { x: x.local[q].x + pl[id].x, y: x.local[q].y + pl[id].y, rot: x.local[q].rot }; } return plan.size ? settleMatch(np, out, f, plan) : out; };
     const newBlocks: MarkerBlock[] = stand.filter(x => x.block).map(x => (x.part ? { ...x.block, ids: x.ids } : x.block));
     const job = nestJob(items, w, { gap, name: r.name });
     try {
@@ -345,7 +350,7 @@ export function openMarker(app: App) {
         onDone: info => {
           clearInterval(runTimer); const got = live; run = null; live = null; liveBlocks = null;
           if (info.error) toast('Nester stopped: ' + info.error, 'error');
-          if (got) { const id = runRow; edit('Nest marker', d => { const x = d.rows.find(q => q.id === id); if (x) { x.placements = got; if (keptMarry.length) x.marry = keptMarry; else delete x.marry; if (newBlocks.length) x.blocks = newBlocks; else delete x.blocks; } }); toast(`Nested: ${fmt(runBest)} ${unitLabel()} long${newBlocks.length ? ` · ${newBlocks.length} fuse block${newBlocks.length > 1 ? 's' : ''}` : ''}${info.stopped ? ' (stopped early)' : ''}`, 'ok'); }
+          if (got) { const id = runRow; edit('Nest marker', d => { const x = d.rows.find(q => q.id === id); if (x) { x.placements = got; if (keptMarry.length) x.marry = keptMarry; else delete x.marry; if (newBlocks.length) x.blocks = newBlocks; else delete x.blocks; } }); toast(`Nested: ${fmt(runBest)} ${unitLabel()} long${newBlocks.length ? ` · ${newBlocks.length} fuse block${newBlocks.length > 1 ? 's' : ''}` : ''}${plan.size ? ` · ${plan.size} part${plan.size > 1 ? 's' : ''} laid onto the stripe / plaid match` : ''}${info.stopped ? ' (stopped early)' : ''}`, 'ok'); }
           else draw();
         },
       });
@@ -455,6 +460,30 @@ export function openMarker(app: App) {
     });
     toast(mg > 0 ? `Buffer: ${fmt(mg)} ${unitLabel()} all round · the parts wait to be laid again` : 'Buffer removed', 'ok');
   }
+  /** Stripe and plaid of the fabric: the repeat distances and where the first bar lies. Match lines of the pieces go onto the bars. */
+  async function matchSettings() {
+    if (busy()) return; if (carry) dropCarry(true);
+    const f = fab() ?? {};
+    const r = await showDialog({ title: 'Stripe and plaid', message: 'Stripe: bars across the fabric width, repeating along its length. A match line across the grain of a piece (a horizontal line on a piece with an upright grain) lies on a stripe.\nPlaid: bars along the fabric length, repeating across its width. A match line along the grain (a vertical line) lies on a plaid bar.\nSet a line to Match in the property editor of the pattern (M1 = to the fabric, P1 … P15 = piece to piece). Distance 0 = none.',
+      fields: [{ kind: 'length', key: 'stripe', label: 'Stripe distance', value: f.stripe ?? 0, min: 0 }, { kind: 'length', key: 'stripe1', label: '1st stripe, from the marker start', value: f.stripe1 ?? 0, min: 0 },
+        { kind: 'length', key: 'plaid', label: 'Plaid distance', value: f.plaid ?? 0, min: 0 }, { kind: 'length', key: 'plaid1', label: '1st plaid, from the fabric edge', value: f.plaid1 ?? 0, min: 0 }] });
+    if (!r) return;
+    const n = { stripe: Math.max(0, r.stripe as number), stripe1: Math.max(0, r.stripe1 as number), plaid: Math.max(0, r.plaid as number), plaid1: Math.max(0, r.plaid1 as number) };
+    edit('Stripe and plaid', d => { if (n.stripe || n.plaid) d.match = n; else delete d.match; });
+    const lines = parts.some(p => p.match?.length);
+    toast(n.stripe || n.plaid ? `${n.stripe ? `Stripe every ${fmt(n.stripe)} ${unitLabel()}` : 'No stripe'} · ${n.plaid ? `plaid every ${fmt(n.plaid)} ${unitLabel()}` : 'no plaid'}${lines ? ' · press ▶ to nest onto the match' : ' · no piece has a match line yet (pattern ▸ select an internal line ▸ Line is)'}` : 'Stripe and plaid off', lines || !(n.stripe || n.plaid) ? 'ok' : 'warn');
+  }
+  /** the carried / thrown parts step onto their match: the first of them that has a match line decides, the rest go with it */
+  function snapMatch(next: Placements, ids: string[], way?: { x?: number; y?: number }): Placements {
+    const f = fab(); if (!f || !matchActive(parts, f)) return next;
+    const only = new Set(ids.filter(id => next[id]));
+    const sh = matchShifts(parts, next, f, { way, only });
+    const s = ids.map(id => sh.get(id)).find(v => v && (Math.abs(v.x) > 1e-6 || Math.abs(v.y) > 1e-6)); if (!s) return next;
+    const out = { ...next }; for (const id of only) out[id] = { ...out[id], x: out[id].x + s.x, y: out[id].y + s.y };
+    // a step that would take the part off the fabric is taken to the nearest match instead
+    const w = wd(), offFab = parts.some(p => { if (!only.has(p.id)) return false; const b = polyBox(placedPoly(p, out[p.id])); return b.x0 < -0.6 || b.y0 < -0.6 || b.y1 > w + 0.6; });
+    return offFab && way ? snapMatch(next, ids) : out;
+  }
   /**
    * Piece details: every panel of the style in one window. Per panel: major piece, goes into fuse blocks, its own rotation, tilt
    * and buffer. With a panel marked for block fuse the limits of the blocks are set here too: the nester fills blocks no longer or
@@ -547,7 +576,7 @@ export function openMarker(app: App) {
       ]) }, 'File ▾'),
       h('button.mk-menu', { type: 'button', 'data-mk': 'menu-marker', onclick: (e: Event) => menu(e, [
         { label: 'Piece details…', run: pieceDetails }, { label: 'Marry pieces', run: marry }, { label: 'Unmarry', run: unmarry },
-        { label: 'Block fuse (selected parts)…', run: () => void blockFuse() }, { label: 'Unblock', run: unblock }, { label: 'Buffer…', run: () => void buffer() },
+        { label: 'Block fuse (selected parts)…', run: () => void blockFuse() }, { label: 'Unblock', run: unblock }, { label: 'Buffer…', run: () => void buffer() }, { label: 'Stripe and plaid…', run: () => void matchSettings() },
       ]) }, 'Marker ▾'),
       h('span.mk-dim', {}, app.doc.style.name || ''),
       h('label', {}, 'Fabric width', num(fmt(wd()), 'Usable fabric width of the marker on screen (every marker has its own; new markers start with the last width typed)', t => { const v = parseLen(t), id = row()?.id; if (Number.isFinite(v) && v > 50) { edit('Fabric width', d => { d.width = v; const x = d.rows.find(q => q.id === id); if (x) x.width = v; }); draw(true); } else draw(); }, 70), h('span.mk-dim', {}, unitLabel())),
@@ -642,6 +671,7 @@ export function openMarker(app: App) {
       b('unmarry', '⚮', 'Unmarry: the parts of the selected group move on their own again', unmarry),
       b('details', '☰', 'Piece details: every panel with its major mark, block fuse, rotation, tilt and buffer; the limits of the fuse blocks', pieceDetails),
       b('block', '▣', 'Block fuse: the selected laid parts become one fuse block, contour or rectangular, with a buffer (Shift+click or draw a box to select)', () => void blockFuse()),
+      b('match', '▦', 'Stripe and plaid: the repeat of the fabric and its first bar; match lines of the pieces are laid onto the bars', () => void matchSettings()),
       b('unblock', '▢', 'Unblock: take away the fuse block of the selected part', unblock),
       b('buffer', '◌', 'Buffer: the piece of the selected part keeps a clear margin all round, in every size', () => void buffer()),
       h('div.mk-sep'),
@@ -658,16 +688,24 @@ export function openMarker(app: App) {
     const st = markerStats(parts, pls(), wd(), blks());
     const el = run ? Math.min(run.seconds, (performance.now() - run.startedAt) / 1000) : 0;
     stat.textContent = [r.name, `${st.placed} of ${st.parts} parts laid`, `length ${fmt(st.length)} ${unitLabel()}`, `efficiency ${(st.efficiency * 100).toFixed(2)} %`,
-      `${r.plies} plies = ${(st.length * r.plies / 1000).toFixed(2)} m of fabric`, `perimeter ${(markerPerimeter(parts, pls(), blks()) / 1000).toFixed(2)} m`, blks().length ? `${blks().length} fuse block${blks().length > 1 ? 's' : ''}` : '', bad.size ? `⚠ ${bad.size} part${bad.size > 1 ? 's' : ''} overlapping, inside a block or off the fabric` : '',
+      `${r.plies} plies = ${(st.length * r.plies / 1000).toFixed(2)} m of fabric`, `perimeter ${(markerPerimeter(parts, pls(), blks()) / 1000).toFixed(2)} m`, blks().length ? `${blks().length} fuse block${blks().length > 1 ? 's' : ''}` : '', bad.size ? `⚠ ${bad.size} part${bad.size > 1 ? 's' : ''} overlapping, inside a block or off the fabric` : '', off.size ? `⚠ ${off.size} part${off.size > 1 ? 's' : ''} off the stripe / plaid match` : '',
       phase ? `nesting… ${phase}` : run ? `nesting… ${el.toFixed(0)} / ${run.seconds} s on ${run.threads} thread${run.threads > 1 ? 's' : ''}` : carry ? 'Carrying: click = put down · press and pull = aim, let go = shoot · right-click = turn 180° · Esc = put back' : 'Click a part to pick it up · press and pull = aim, let go = shoot · right-click = turn 180° · Shift+click or draw a box = select · [ ] = tilt'].filter(Boolean).join('  ·  ');
   }
   function drawSvg() {
     const p0 = pls(), fw = wd(), bk = blks(), st = markerStats(parts, p0, fw, bk);
     bad = busy() ? new Set() : markerProblems(parts, p0, fw, 0.6, bk);
+    const fm = fab(); off = busy() || !fm ? new Set() : markerMismatch(parts, p0, fm);
     const f = (n: number) => n.toFixed(1);
     const len = Math.max(st.length, 1000), a = S({ x: 0, y: 0 }), b2 = S({ x: len, y: fw });
     const sIdx = new Map(sizes().map((s, k) => [s.id, k]));
     let out = `<rect x="${f(a.x)}" y="${f(a.y)}" width="${f(b2.x - a.x + 4000 * view.k)}" height="${f(b2.y - a.y)}" class="mk-fabric"/>`;
+    if (fm && ((fm.stripe ?? 0) > 0 || (fm.plaid ?? 0) > 0)) {
+      // the bars of the fabric: stripes across the width (blue), plaid bars along the length (orange); the first of each is heavier
+      const endX = len + 4000; let g2 = '';
+      if ((fm.stripe ?? 0) > 0 && endX / fm.stripe! < 900 && fm.stripe! * view.k > 2.5) for (let x = fm.stripe1 ?? 0, k2 = 0; x <= endX; x += fm.stripe!, k2++) { const q = S({ x, y: 0 }); g2 += `<line${k2 ? '' : ' class="first"'} x1="${f(q.x)}" y1="${f(a.y)}" x2="${f(q.x)}" y2="${f(b2.y)}"/>`; }
+      if ((fm.plaid ?? 0) > 0 && fw / fm.plaid! < 900 && fm.plaid! * view.k > 2.5) for (let y = fm.plaid1 ?? 0, k2 = 0; y <= fw; y += fm.plaid!, k2++) { const q = S({ x: 0, y }); g2 += `<line class="pl${k2 ? '' : ' first'}" x1="${f(a.x)}" y1="${f(q.y)}" x2="${f(b2.x + 4000 * view.k)}" y2="${f(q.y)}"/>`; }
+      out += `<g class="mk-grid">${g2}</g>`;
+    }
     if (st.length > 0) { const e = S({ x: st.length, y: 0 }); out += `<line x1="${f(e.x)}" y1="${f(a.y - 8)}" x2="${f(e.x)}" y2="${f(b2.y + 8)}" class="mk-end"/><text x="${f(e.x + 5)}" y="${f(a.y - 12)}" class="mk-lab">${fmt(st.length)} ${unitLabel()} · ${(st.efficiency * 100).toFixed(1)} %</text>`; }
     const wedSet = new Set((row()?.marry ?? []).flat());
     const an = annot(), sname = app.doc.style.name, esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -689,13 +727,16 @@ export function openMarker(app: App) {
       const q = where(p); if (!q) continue;
       const pts = placedPoly(p, q).map(S), col = SIZE_COL[(sIdx.get(p.sizeId) ?? 0) % SIZE_COL.length];
       const held = !!carry?.base[p.id];
-      const cls = 'mk-part' + (sel.has(p.id) ? ' sel' : '') + (bad.has(p.id) && !held ? ' bad' : '') + (p0[p.id] || held ? '' : ' wait') + (held ? ' carry' : '') + (wedSet.has(p.id) ? ' wed' : '') + (p.inner ? ' block' : '') + (p.major ? ' major' : '') + (p.fuse ? ' fuse' : '');
+      const cls = 'mk-part' + (sel.has(p.id) ? ' sel' : '') + (bad.has(p.id) && !held ? ' bad' : '') + (p0[p.id] || held ? '' : ' wait') + (held ? ' carry' : '') + (wedSet.has(p.id) ? ' wed' : '') + (p.inner ? ' block' : '') + (p.major ? ' major' : '') + (p.fuse ? ' fuse' : '') + (off.has(p.id) && !held ? ' off' : '');
       const g0 = S(placedPoint(q, p.grain[0])), g1 = S(placedPoint(q, p.grain[1]));
       const bx = polyBox(pts), big = (bx.x1 - bx.x0) > 46 && (bx.y1 - bx.y0) > 16;
       const one = `<g class="${cls}" data-part="${p.id}"><path d="${pts.map((v, i) => `${i ? 'L' : 'M'}${f(v.x)} ${f(v.y)}`).join('')}Z" style="--c:${col}"/>`
         + (p.inner ? `<path class="mk-inner" d="${dl(p.inner, q, true)}" style="--c:${col}"/>` : '')
         + (an.seam && p.sew ? `<path class="mk-seam" d="${dl(p.sew, q, true)}"/>` : '')
-        + (an.internals !== 'none' && p.lines ? `<path class="mk-int${an.internals === 'cut' ? ' cut' : ''}" d="${p.lines.map(l => dl(l, q, false)).join('')}"/>` : '')
+        + (() => { const ways = (p.lines ?? []).map((_, i) => lineWay(p, i, an)), dOf = (w: string) => (p.lines ?? []).filter((_, i) => ways[i] === w).map(l => dl(l, q, false)).join('');
+          const dd = dOf('draw'), dc = dOf('cut'), dm = dOf('match');
+          return (dd ? `<path class="mk-int" d="${dd}"/>` : '') + (dc ? `<path class="mk-int cut" d="${dc}"/>` : '') + (dm ? `<path class="mk-mline" d="${dm}"/>` : '')
+            + (big ? (p.match ?? []).map(m => { const t = S(placedPoint(q, m.mid)); return `<text class="mk-mcode" x="${f(t.x + 3)}" y="${f(t.y - 3)}">${m.code}</text>`; }).join('') : ''); })()
         + (an.grain ? `<line x1="${f(g0.x)}" y1="${f(g0.y)}" x2="${f(g1.x)}" y2="${f(g1.y)}" class="mk-grain"/>` : '')
         + (big ? partLabel(p, an, sname).map((t, i) => `<text x="${f((bx.x0 + bx.x1) / 2)}" y="${f((bx.y0 + bx.y1) / 2 + 3 + i * 11)}" class="mk-pl">${esc(t.slice(0, 40))}</text>`).join('') : '') + '</g>';
       if (held) top2 += one; else out += one; // carried parts are drawn last, on top
@@ -743,7 +784,7 @@ export function openMarker(app: App) {
     if (back) { draw(); return; }
     const next = { ...(row()?.placements ?? {}) };
     for (const p of parts) { const q = now[p.id]; if (!q) continue; if (polyBox(placedPoly(p, q)).y1 < 0) delete next[p.id]; else next[p.id] = q; }
-    keep('Put part down', next);
+    keep('Put part down', snapMatch(next, c.ids)); // onto the nearest stripe / plaid match
   }
   /** let the carried parts go along the aim line: they travel until they touch, and stop */
   function shoot(a: { from: Vec; to: Vec }) {
@@ -757,8 +798,14 @@ export function openMarker(app: App) {
     const sy = lo < 0 ? -lo : hi > w ? w - hi : 0, sx = left < 0 ? -left : 0;
     for (const id of c.ids) start[id] = { ...from[id], x: from[id].x + sx, y: from[id].y + sy };
     const tb = (r.blocks ?? []).filter(b => b.ids.every(id => start[id]));
-    const res = throwParts(parts, start, w, c.ids, dir, { gap: M().gap, blocks: tb }) ?? throwParts(parts, start, w, c.ids, { x: -dir.x, y: -dir.y }, { gap: M().gap, blocks: tb });
+    let went = dir;
+    const res = throwParts(parts, start, w, c.ids, dir, { gap: M().gap, blocks: tb }) ?? (went = { x: -dir.x, y: -dir.y }, throwParts(parts, start, w, c.ids, went, { gap: M().gap, blocks: tb }));
     if (!res) { toast('No free place that way: the part stays on the cursor', 'warn'); drawSvg(); return; }
+    {
+      // with a stripe / plaid match the part steps back along its way to the match it passed last (never forward into what stopped it)
+      const way = { x: went.x < -1e-6 ? 1 : went.x > 1e-6 ? -1 : 0, y: went.y < -1e-6 ? 1 : went.y > 1e-6 ? -1 : 0 };
+      const sn = snapMatch({ ...laid, ...res }, c.ids, way); for (const id of c.ids) if (sn[id]) res[id] = sn[id];
+    }
     carry = null; press = null;
     const ids = c.ids, t0 = performance.now(), dur = 140;
     cancelAnimationFrame(anim); runRow = r.id; liveBlocks = null;
