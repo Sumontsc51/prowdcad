@@ -173,36 +173,60 @@ async function nested(h, fixtures) {
     await h.ev(() => { const E = window.__e2e; E.app.doc.transact('clear marker', s => { delete s.meta.marker; }); });
     return { got: `${plan.rows} markers, cut ${plan.cut} of ${plan.order}; off-plan cells ${ok0} → ${off} → ${back}; nested ${res.laid}/${res.parts} parts, ${res.bad} bad; closed ${closed === 0}`, pass: plan.rows >= 1 && plan.cut === plan.order && plan.big && ok0 === 0 && off === 1 && back === 0 && res.laid === res.parts && res.parts > 0 && res.bad === 0 && closed === 0 };
   });
-  await T('Marker making, classic throw: a waiting part aimed down lands on the fabric, a second one thrown left stops against it; Rotate 180° turns the whole bundle and is only live under "One bundle, one direction"; "All bundles one direction" takes turned parts off', async () => {
+  await T('Marker making, classic: cut plan above the marker; click picks a part up and it follows the cursor (only its transform changes), press-pull-release shoots it until it touches, click puts it down; right-click turns the bundle only with Rotate 180° on; Marry moves parts as one; Block fuse lays the piece as a block', async () => {
     const P = h.page;
     await h.ev(() => { const E = window.__e2e; E.app.doc.transact('2way', s => { for (const p of s.pieces) p.order.rotation = '2way'; }); void E.C.runCommand('marker.open'); }); await P.waitForSelector('.mk-root'); await h.settle(150);
+    const bail = async why => { await h.ev(() => { document.querySelector('.mk-root')?.closeMarker?.(); const E = window.__e2e; E.app.doc.transact('clear marker', s => { delete s.meta.marker; }); }); return { got: why, pass: false }; };
+    let stage = 'start';
+    try {
     for (const [k, n] of Object.entries({ M: 10, L: 10 })) { const i = P.locator(`[data-mk-order="${k}"]`); await i.fill(String(n)); await i.press('Tab'); await h.settle(60); }
     await P.locator('[data-mk="auto"]').click(); await h.settle(250);
-    const st = () => h.ev(() => { const E = window.__e2e, m = E.app.style.meta.marker, r = m.rows[0]; return { n: Object.keys(r.placements).length, rots: Object.values(r.placements).map(q => q.rot).join(), bad: document.querySelectorAll('.mk-part.bad').length, dir: m.direction || 'bundle', r180: m.rot180 !== false, mode: document.querySelector('[data-mk="throw"]').classList.contains('on') }; });
+    const st = () => h.ev(() => { const E = window.__e2e, m = E.app.style.meta.marker, r = m.rows[0]; return { n: Object.keys(r.placements).length, rots: Object.values(r.placements).map(q => q.rot).join(), bad: document.querySelectorAll('.mk-part.bad').length, marry: (r.marry || []).map(g => g.length).join(), block: Object.keys(m.block || {}).length, carry: document.querySelectorAll('.mk-part.carry').length, blocks: document.querySelectorAll('.mk-part.block').length }; });
     const centre = async sel => { const b = await P.locator(sel).first().boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+    const lay = await P.evaluate(() => { const a = document.querySelector('.mk-plan').getBoundingClientRect(), b = document.querySelector('.mk-stage').getBoundingClientRect(); return a.bottom <= b.top + 1 && a.width > b.width * 0.9; });
     const fab = await P.locator('.mk-fabric').boundingBox();
     const throwTo = async (sel, tx, ty) => { const c = await centre(sel); await P.mouse.move(c.x, c.y); await P.mouse.down(); await P.mouse.move((c.x + tx) / 2, (c.y + ty) / 2, { steps: 4 }); await P.mouse.move(tx, ty, { steps: 4 }); const aim = await P.locator('.mk-aim').count(); await P.mouse.up(); await P.waitForTimeout(420); await h.settle(80); return aim; };
-    const s0 = await st();
-    const aim1 = await throwTo('.mk-part.wait', fab.x + 260, fab.y + 120);
-    const s1 = await st();
-    const aim2 = await throwTo('.mk-part.wait', fab.x + 520, fab.y + 100);
-    const s2 = await st();
-    const bail = async why => { await h.ev(() => { document.querySelector('.mk-root')?.closeMarker?.(); const E = window.__e2e; E.app.doc.transact('clear marker', s => { delete s.meta.marker; }); }); return { got: why, pass: false }; };
-    if (s2.n < 2) return bail(`throws did not lay parts: aim ${aim1}/${aim2}, laid ${s0.n}→${s1.n}→${s2.n}, toasts ${JSON.stringify(await h.ev(() => window.__e2e.toasts.slice(-3)))}`);
-    // throw the 2nd laid part to the left: it must stop against the first without overlap
-    await throwTo('.mk-part:not(.wait) >> nth=1', fab.x + 5, (await centre('.mk-part:not(.wait) >> nth=1')).y);
-    const s3 = await st();
-    // turn the bundle of a laid part
-    const c = await centre('.mk-part:not(.wait)'); await P.mouse.click(c.x, c.y); await h.key('r'); await h.settle(120);
-    const s4 = await st();
+    const s0 = await st(); stage = 's0';
+    // pick up with a click: the part follows the cursor, a second click puts it down on the fabric
+    const c0 = await centre('.mk-part.wait'); await P.mouse.click(c0.x, c0.y); await h.settle(60);
+    const s1 = await st(); stage = 's1';
+    await P.mouse.move(fab.x + 300, fab.y + 200, { steps: 5 }); await P.waitForTimeout(80);
+    const moved = await P.locator('.mk-part.carry').first().getAttribute('transform');
+    await P.mouse.click(fab.x + 300, fab.y + 200); await h.settle(120);
+    const s2 = await st(); stage = 's2';
+    // press, pull, let go: the second part shoots onto the fabric; then the first is thrown left to the edge
+    const aim = await throwTo('.mk-part.wait', fab.x + 700, fab.y + 150);
+    const s3 = await st(); stage = 's3';
+    if (s3.n < 2) return bail(`parts not laid: ${s0.n}→${s2.n}→${s3.n}, carry ${s1.carry}, toasts ${JSON.stringify(await h.ev(() => window.__e2e.toasts.slice(-3)))}`);
+    await throwTo('.mk-part:not(.wait)', fab.x + 5, (await centre('.mk-part:not(.wait)')).y);
+    const s4 = await st(); stage = 's4';
+    // right-click turns the bundle (Rotate 180° is on)
+    const c1 = await centre('.mk-part:not(.wait)'); await P.mouse.click(c1.x, c1.y, { button: 'right' }); await h.settle(150);
+    const s5 = await st(); stage = 's5';
+    // marry the two laid parts: picking one up carries both
+    const a1 = await centre('.mk-part:not(.wait) >> nth=0'), a2 = await centre('.mk-part:not(.wait) >> nth=1');
+    const sb = await P.locator('.mk-svg').boundingBox(); await P.mouse.click(sb.x + sb.width - 30, sb.y + sb.height - 12); await h.settle(60); // a click on nothing clears the selection
+    await P.keyboard.down('Shift'); await P.mouse.click(a1.x, a1.y); await P.mouse.click(a2.x, a2.y); await P.keyboard.up('Shift'); await h.settle(60);
+    await P.locator('[data-mk="marry"]').click(); await h.settle(120);
+    const s6 = await st(); stage = 's6';
+    const a3 = await centre('.mk-part.wed'); await P.mouse.click(a3.x, a3.y); await h.settle(80);
+    const s7 = await st(); stage = 's7';
+    await h.key('Escape'); await h.settle(80);
+    // 180° off: a right-click no longer turns; parts turned before go back to waiting
     await P.locator('[data-mk="rot180"]').uncheck(); await h.settle(150);
-    const s5 = await st();
-    await P.locator('[data-mk="direction"]').selectOption('all'); await h.settle(150);
-    const dis = await P.locator('[data-mk="rot180"]').isDisabled();
-    await h.key('Escape'); await h.key('Escape'); await h.settle(150);
-    await h.ev(() => { const E = window.__e2e; E.app.doc.transact('clear marker', s => { delete s.meta.marker; }); });
-    return { got: `throw mode ${s0.mode}; aim line ${aim1}/${aim2}; laid ${s0.n}→${s1.n}→${s2.n}, bad after throw-left ${s3.bad}; rots after R "${s4.rots}"; 180 off → laid ${s5.n}; all-one-direction: switch disabled ${dis}`,
-      pass: s0.mode && aim1 === 1 && aim2 === 1 && s0.n === 0 && s1.n === 1 && s2.n === 2 && s3.bad === 0 && /180/.test(s4.rots) && s5.n < s4.n && dis };
+    const s8 = await st(); stage = 's8';
+    const c2 = await centre('.mk-part:not(.wait)'); await P.mouse.click(c2.x, c2.y, { button: 'right' }); await h.settle(120);
+    const s9 = await st(); stage = 's9';
+    // block fuse on the piece of a selected part
+    await P.mouse.click(sb.x + sb.width - 30, sb.y + sb.height - 12); await h.settle(60);
+    await P.keyboard.down('Shift'); await P.mouse.click(c2.x, c2.y); await P.keyboard.up('Shift'); await h.settle(60);
+    await P.locator('[data-mk="block"]').click(); await h.waitDialog(); await h.ok(); await h.settle(200);
+    const s10 = await st(); stage = 's10';
+    const tools = await P.locator('.mk-tools [data-mk]').evaluateAll(els => els.map(e => e.dataset.mk).join());
+    await h.ev(() => { document.querySelector('.mk-root')?.closeMarker?.(); const E = window.__e2e; E.app.doc.transact('clear marker', s => { delete s.meta.marker; }); });
+    return { got: `plan above marker ${lay}; click → carry ${s1.carry}, moves by "${moved}", click → laid ${s2.n}; aim line ${aim}, laid ${s3.n}, bad after throw ${s4.bad}; right-click rots "${s5.rots}"; married ${s6.marry}, carried together ${s7.carry}; 180 off: laid ${s8.n}, right-click rots "${s9.rots}"; block ${s10.block} piece, ${s10.blocks} block parts; tools ${tools}`,
+      pass: lay && s0.n === 0 && s1.carry === 1 && /translate\(/.test(moved || '') && s2.n === 1 && aim === 1 && s3.n === 2 && s4.bad === 0 && /180/.test(s5.rots) && s6.marry === '2' && s7.carry === 2 && s8.n < s3.n + 1 && !/180/.test(s9.rots) && s10.block === 1 && s10.blocks > 0 && !/left|down|up|turn|throw|move/.test(tools) && /marry/.test(tools) && /block/.test(tools) };
+    } catch (e) { return bail(`after ${stage}: ${String(e.message || e).split('\n')[0]} · toasts ${JSON.stringify(await h.ev(() => window.__e2e.toasts.slice(-2)))}`); }
   });
   await T('Size chip click switches active size; selection kept', async () => { await h.selectA('FRONT', 'UA'); await h.page.locator('.sz-chip', { hasText: 'XL' }).click(); await h.settle(); const s = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); const sel = await h.sel(); return { got: `${s}, sel ${sel.anchors}`, pass: s === 'XL' && sel.anchors[0] === 'FRONT/UA' }; });
   await T('Ctrl+] / Ctrl+[ step sizes', async () => { await h.key('Control+]'); await h.key('Control+]'); const a = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); await h.key('Control+['); const b = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); return { got: `${a} then ${b}`, pass: a === 'XL' && b === 'L' }; });
