@@ -239,6 +239,30 @@ async function nested(h, fixtures) {
       pass: lay && s0.n === 0 && s1.carry === 1 && /translate\(/.test(moved || '') && s2.n === 1 && aim === 1 && s3.n === 2 && s4.bad === 0 && /180/.test(s5.rots) && s6.marry === '2' && s7.carry === 2 && s8.n < s3.n + 1 && !/180/.test(s9.rots) && s10.block === 1 && s10.blocks > 0 && !/left|down|up|turn|throw|move/.test(tools) && /marry/.test(tools) && /block/.test(tools) };
     } catch (e) { return bail(`after ${stage}: ${String(e.message || e).split('\n')[0]} · toasts ${JSON.stringify(await h.ev(() => window.__e2e.toasts.slice(-2)))}`); }
   });
+  await T('Marker making: every marker has its own fabric width; every material has its own cut plan (the order is shared) and comes back when you switch', async () => {
+    const P = h.page;
+    await h.ev(() => { const E = window.__e2e; E.app.doc.transact('lining', s => { s.pieces[1].order.material = 'LINING'; }); void E.C.runCommand('marker.open'); }); await P.waitForSelector('.mk-root'); await h.settle(150);
+    const done = async r => { await h.ev(() => { document.querySelector('.mk-root')?.closeMarker?.(); const E = window.__e2e; E.app.doc.transact('clear marker', s => { delete s.meta.marker; }); }); return r; };
+    try {
+      for (const [k, n] of Object.entries({ S: 60, M: 120, L: 120, XL: 60 })) { const i = P.locator(`[data-mk-order="${k}"]`); await i.fill(String(n)); await i.press('Tab'); await h.settle(60); }
+      await P.locator('[data-mk="auto"]').click(); await h.settle(200);
+      const st = () => h.ev(() => { const m = window.__e2e.app.style.meta.marker; return { mat: m.material, rows: m.rows.length, w: m.rows.map(r => r.width).join(), order: Object.values(m.order).reduce((a, b) => a + b, 0), others: Object.keys(m.others || {}).join('|'), parts: document.querySelectorAll('.mk-part').length, names: [...new Set([...document.querySelectorAll('.mk-pl')].map(t => t.textContent.split(' ')[0]))].join() }; });
+      const a = await st();
+      const wi = P.locator('[data-mk-width]').first(); await wi.fill('1200'); await wi.press('Enter'); await h.settle(150);
+      const b = await st();
+      const fabH = async () => (await P.locator('.mk-fabric').boundingBox()).height;
+      await P.locator('.mk-row').nth(0).locator('td').first().click(); await h.settle(150); const h1 = await fabH();
+      await P.locator('.mk-row').nth(1).locator('td').first().click(); await h.settle(150); const h2 = await fabH();
+      await P.locator('[data-mk="material"]').selectOption('LINING'); await h.settle(200);
+      const c = await st();
+      await P.locator('[data-mk="auto"]').click(); await h.settle(200);
+      const d = await st();
+      await P.locator('[data-mk="material"]').selectOption(''); await h.settle(200);
+      const e = await st();
+      return done({ got: `all: ${a.rows} markers, widths ${a.w} → ${b.w}; fabric drawn ${Math.round(h1)} vs ${Math.round(h2)} px; LINING: ${c.rows} markers (order ${c.order}) → auto ${d.rows}, pieces "${d.names}"; back: ${e.rows} markers, widths ${e.w}, kept "${e.others}"`,
+        pass: a.rows >= 2 && /^1200,1500/.test(b.w) && Math.abs(h1 - h2) > 5 && c.mat === 'LINING' && c.rows === 0 && c.order === 360 && d.rows >= 1 && d.names.split(',').length === 1 && e.rows === a.rows && /^1200,1500/.test(e.w) && e.others === 'LINING' });
+    } catch (err) { return done({ got: String(err.message || err).split('\n')[0], pass: false }); }
+  });
   await T('Size chip click switches active size; selection kept', async () => { await h.selectA('FRONT', 'UA'); await h.page.locator('.sz-chip', { hasText: 'XL' }).click(); await h.settle(); const s = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); const sel = await h.sel(); return { got: `${s}, sel ${sel.anchors}`, pass: s === 'XL' && sel.anchors[0] === 'FRONT/UA' }; });
   await T('Ctrl+] / Ctrl+[ step sizes', async () => { await h.key('Control+]'); await h.key('Control+]'); const a = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); await h.key('Control+['); const b = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); return { got: `${a} then ${b}`, pass: a === 'XL' && b === 'L' }; });
   await T('Nested view: drag the L instance of UA → only L grading of UA changes', async () => {
