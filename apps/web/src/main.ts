@@ -27,7 +27,7 @@ import { dialogOpen } from './ui/dialog';
 import { selectTool } from './tools/select';
 import { wireKernel } from './kernel-wiring';
 import { cornerGallery } from './actions/seam-notch';
-import { downloadSink } from './actions/file';
+import { downloadSink, readInto } from './actions/file';
 import { selectLive } from './live';
 import { ops } from './ops-bridge';
 import { settings } from './settings';
@@ -176,7 +176,7 @@ const hasFiles = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types]
 let dragDepth = 0;
 const dropHint = document.createElement('div');
 dropHint.className = 'drop-hint';
-dropHint.innerHTML = '<div><b>Drop to open</b><span>.prowd.json style &nbsp;·&nbsp; DXF + RUL &nbsp;·&nbsp; SVG &nbsp;·&nbsp; PLT</span></div>';
+dropHint.innerHTML = '<div><b>Drop to open</b><span>.pcd pattern &nbsp;·&nbsp; .pcm marker &nbsp;·&nbsp; DXF + RUL &nbsp;·&nbsp; SVG &nbsp;·&nbsp; PLT</span></div>';
 window.addEventListener('dragenter', e => { if (!hasFiles(e)) return; e.preventDefault(); if (++dragDepth === 1 && !dialogOpen()) document.body.append(dropHint); });
 window.addEventListener('dragleave', e => { if (!hasFiles(e)) return; if (--dragDepth <= 0) { dragDepth = 0; dropHint.remove(); } });
 window.addEventListener('dragover', e => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer!.dropEffect = dialogOpen() ? 'none' : 'copy'; });
@@ -210,4 +210,4 @@ async function start() {
 void start();
 
 // expose for debugging / integrator console access
-(window as unknown as { prowd: unknown }).prowd = { app, canvas, downloadSink };
+(window as unknown as { prowd: unknown }).prowd = { app, canvas, downloadSink, readInto };

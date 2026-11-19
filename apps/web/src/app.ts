@@ -94,7 +94,7 @@ export class App {
   setGradeView(v: 'inc' | 'step' | 'total') { this.gradeSmallLarge = v === 'inc'; this.gradeAbsolute = v === 'total'; settings.gradeView = v; saveSettings(); this.invalidate('panels'); }
   get gradeView(): 'inc' | 'step' | 'total' { return this.gradeSmallLarge ? 'inc' : this.gradeAbsolute ? 'total' : 'step'; }
   space = false;
-  fileName = 'untitled.prowd.json';
+  fileName = 'untitled.pcd';
   fileHandle: unknown = null;
   savedRev = 0;
 

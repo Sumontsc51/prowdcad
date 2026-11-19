@@ -626,3 +626,9 @@ table.sg tr.out { display: none; }
 .mk-tab-s { font: 10px var(--mono); font-weight: 400; color: var(--dim); }
 .mk-tab.done .mk-tab-s { color: #3fae6a; }
 .mk-n.mk-w { width: 60px; }
+.mk-menu { padding: 3px 9px; border: 1px solid transparent; border-radius: 5px; background: none; color: var(--text); font: 12px var(--sans); cursor: pointer; }
+.mk-menu:hover { background: var(--panel2); border-color: var(--line); }
+.mk-seam { fill: none; stroke: rgba(0,0,0,.45); stroke-width: .8; stroke-dasharray: 5 3; pointer-events: none; }
+.mk-int { fill: none; stroke: rgba(0,0,0,.5); stroke-width: .8; stroke-dasharray: 2 2; pointer-events: none; }
+.mk-int.cut { stroke-dasharray: none; stroke: #b01e17; }
+.mk-part.wait .mk-seam, .mk-part.wait .mk-int { stroke: rgba(255,255,255,.4); }
