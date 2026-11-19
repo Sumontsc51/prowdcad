@@ -414,11 +414,12 @@ const hullOf = (pts: Vec[]): Vec[] => {
  * The contour around shapes, `buffer` mm away from them: the shapes are drawn on a fine grid, grown by the buffer, holes are filled
  * and the outer edge is followed. Shapes too far apart to give one outline get their common hull instead.
  */
-export function contourAround(polys: Vec[][], buffer: number): Vec[] {
+export function contourAround(polys: Vec[][], buffer: number, reach = 2): Vec[] {
   const all = polys.flat(), bb = polyBox(all);
-  const hull = (): Vec[] => { const hq = hullOf(all); let g: Vec[] = []; try { g = buffer > 0 ? offsetOutward(signedArea(hq) < 0 ? hq.reverse() : hq, buffer, 'miter') : hq; } catch { g = []; } return g.length > 2 ? g : [{ x: bb.x0 - buffer, y: bb.y0 - buffer }, { x: bb.x1 + buffer, y: bb.y0 - buffer }, { x: bb.x1 + buffer, y: bb.y1 + buffer }, { x: bb.x0 - buffer, y: bb.y1 + buffer }]; };
+  const hull = (): Vec[] => { const hq = hullOf(all); let g: Vec[] = []; try { g = offsetOutward(signedArea(hq) < 0 ? hq.reverse() : hq, Math.max(buffer, 1), 'miter'); } catch { g = []; } return g.length > 2 ? g : [{ x: bb.x0 - buffer, y: bb.y0 - buffer }, { x: bb.x1 + buffer, y: bb.y0 - buffer }, { x: bb.x1 + buffer, y: bb.y1 + buffer }, { x: bb.x0 - buffer, y: bb.y1 + buffer }]; };
   const span = Math.max(bb.x1 - bb.x0, bb.y1 - bb.y0) + 2 * buffer;
-  const cell = Math.max(1, Math.min(5, span / 360)), pad = buffer + 3 * cell;
+  // without a buffer (married parts laid as one shape) the grid is finer and the outline is kept two cells outside, so that it never cuts into a part
+  const tight = buffer <= 0, cell = tight ? Math.max(0.75, Math.sqrt((bb.x1 - bb.x0 + 8) * (bb.y1 - bb.y0 + 8) / 300000)) : Math.max(1, Math.min(5, span / 360)), pad = buffer + (reach + 2) * cell;
   const x0 = bb.x0 - pad, y0 = bb.y0 - pad, nx = Math.ceil((bb.x1 - bb.x0 + 2 * pad) / cell) + 1, ny = Math.ceil((bb.y1 - bb.y0 + 2 * pad) / cell) + 1;
   if (nx * ny > 400000) return hull();
   const g = new Uint8Array(nx * ny), at = (i: number, j: number) => j * nx + i;
@@ -436,8 +437,8 @@ export function contourAround(polys: Vec[][], buffer: number): Vec[] {
     }
   }
   // grow by the buffer (and one cell, so that the outline is never nearer than the buffer)
-  const rr = Math.ceil((buffer + cell) / cell), d = new Uint8Array(g);
-  if (buffer > 0) {
+  const rr = tight ? reach : Math.ceil((buffer + cell) / cell), d = new Uint8Array(g);
+  {
     const disk: [number, number][] = []; for (let dj = -rr; dj <= rr; dj++) for (let di = -rr; di <= rr; di++) if (di * di + dj * dj <= rr * rr) disk.push([di, dj]);
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
       if (!g[at(i, j)]) continue;
@@ -456,9 +457,9 @@ export function contourAround(polys: Vec[][], buffer: number): Vec[] {
   // one piece? (4-connected)
   let first = -1, count = 0; for (let k = 0; k < out.length; k++) if (!out[k]) { count++; if (first < 0) first = k; }
   if (first < 0) return hull();
-  const seen = new Uint8Array(nx * ny); let reach = 0; st.push(first); seen[first] = 1;
-  while (st.length) { const k = st.pop()!, i = k % nx, j = (k - i) / nx; reach++; for (const [a, b] of [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1]]) if (inn(a, b) && !seen[at(a, b)]) { seen[at(a, b)] = 1; st.push(at(a, b)); } }
-  if (reach !== count) return hull();
+  const seen = new Uint8Array(nx * ny); let reached = 0; st.push(first); seen[first] = 1;
+  while (st.length) { const k = st.pop()!, i = k % nx, j = (k - i) / nx; reached++; for (const [a, b] of [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1]]) if (inn(a, b) && !seen[at(a, b)]) { seen[at(a, b)] = 1; st.push(at(a, b)); } }
+  if (reached !== count) return tight && reach < 40 ? contourAround(polys, buffer, reach * 2) : hull(); // parts a little apart: reach further before giving up
   // follow the edge: every side between the block and the outside is one step, the block on its left
   const next = new Map<number, number>(), vk = (i: number, j: number) => j * (nx + 1) + i;
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
