@@ -46,6 +46,15 @@ export type AnnotPlace = 'top' | 'bottom' | 'start' | 'end';
  *            A match line along the grain of a piece lies on a bar.
  */
 export interface FabricMatch { stripe?: number; stripe1?: number; plaid?: number; plaid1?: number }
+/**
+ * Shade zones of a marker (shading of the fabric from side to centre and along the roll). The major pieces of a bundle (Piece
+ * details ▸ Major) must lie within one zone, so that the panels of a garment have the same shade.
+ *   rows       — the fabric width is divided into this many equal rows (1 = the whole width)
+ *   colBy      — 'length': a zone is `colLength` long; 'bundle': a zone ends where its bundle ends (bundles follow each other)
+ *   rowOverlap — how far a piece may reach into the next row, in % of the row height
+ *   colOverlap — in % of the column length ('length'), or of the bundle length that may be shared with the next bundle ('bundle')
+ */
+export interface ShadeSet { rows: number; colBy: 'length' | 'bundle'; colLength: number; rowOverlap: number; colOverlap: number }
 /** A match line of a part, in the frame of the part: its code ('M1', 'P1' … 'P15'), middle and direction. */
 export interface MatchLine { code: string; mid: Vec; dir: Vec }
 /** How a piece is treated in marker making (Piece details). */
@@ -103,6 +112,8 @@ export interface MarkerDoc {
   detail?: Record<Id, PieceDetail>;
   /** stripe and plaid of the fabric, for the match lines of the pieces */
   match?: FabricMatch;
+  /** shade zones: the major pieces of a bundle are laid within one zone */
+  shade?: ShadeSet;
   /** limits and shape of the fuse blocks the nester builds; absent = DEFAULT_BLOCKSET */
   blockSet?: Partial<BlockSet>;
   rows: MarkerRow[];
@@ -856,5 +867,65 @@ export function settleMatch(parts: MarkerPart[], pl: Placements, f: FabricMatch 
   const ids = [...plan.keys()].filter(id => out[id]);
   settle(new Set(ids.filter(id => parts.find(p => p.id === id)?.match?.some(m => m.code[0] === 'M'))));
   settle(new Set(ids));
+  return out;
+}
+
+// ───────────────────────── shade zones ─────────────────────────
+
+/** Where the major parts of every bundle lie: their box, and the row they belong to (the row that holds their middle). */
+export function shadeBundles(parts: MarkerPart[], pl: Placements, width: number, sh: ShadeSet): { key: string; ids: string[]; box: { x0: number; y0: number; x1: number; y1: number }; row: number }[] {
+  const rows = Math.max(1, Math.floor(sh.rows)), h = width / rows, by = new Map<string, { ids: string[]; pts: Vec[] }>();
+  for (const p of parts) {
+    if (!p.major || !pl[p.id]) continue;
+    const key = p.sizeId + '|' + p.bundle, g = by.get(key) ?? { ids: [], pts: [] };
+    g.ids.push(p.id); g.pts.push(...cutOutline(p).map(q => placedPoint(pl[p.id], q))); by.set(key, g);
+  }
+  return [...by].map(([key, g]) => { const box = polyBox(g.pts); return { key, ids: g.ids, box, row: Math.max(0, Math.min(rows - 1, Math.floor((box.y0 + box.y1) / 2 / h))) }; });
+}
+/**
+ * Major parts that break the shade zones: a bundle whose major parts do not lie within one row (plus the row overlap), are spread
+ * over more than one column length (plus the overlap), or — columns by bundle end — share more of their length with another
+ * bundle of the row than the overlap allows. Returns the ids of the major parts of those bundles.
+ */
+export function shadeProblems(parts: MarkerPart[], pl: Placements, width: number, sh: ShadeSet | undefined, tol = 1): Set<string> {
+  const bad = new Set<string>(); if (!sh || !(sh.rows >= 1)) return bad;
+  const rows = Math.max(1, Math.floor(sh.rows)), h = width / rows, ro = Math.max(0, sh.rowOverlap) / 100 * h, co = Math.max(0, sh.colOverlap) / 100;
+  const B = shadeBundles(parts, pl, width, sh), flag = (b: { ids: string[] }) => b.ids.forEach(id => bad.add(id));
+  for (const b of B) {
+    if (b.box.y0 < b.row * h - ro - tol || b.box.y1 > (b.row + 1) * h + ro + tol) flag(b);
+    if (sh.colBy === 'length' && sh.colLength > 0 && b.box.x1 - b.box.x0 > sh.colLength * (1 + 2 * co) + tol) flag(b);
+  }
+  if (sh.colBy === 'bundle') for (let i = 0; i < B.length; i++) for (let j = i + 1; j < B.length; j++) {
+    const a = B[i], b = B[j]; if (a.row !== b.row) continue;
+    const share = Math.min(a.box.x1, b.box.x1) - Math.max(a.box.x0, b.box.x0);
+    if (share > co * Math.min(a.box.x1 - a.box.x0, b.box.x1 - b.box.x0) + tol) { flag(a); flag(b); }
+  }
+  return bad;
+}
+/**
+ * One shape around laid parts for the nester: at every place along the length it reaches from the lowest to the highest part
+ * (exact at the outline, nothing is cut off). With a `spine` the stretch from spine.x0 to spine.x1 reaches from spine.y0 to spine.y1,
+ * so that no other shape of that height can lie beside it there.
+ */
+export function columnHull(polys: Vec[][], spine?: { x0: number; x1: number; y0: number; y1: number }): Vec[] {
+  const all = polys.flat(), b = polyBox(all), xs = new Set<number>(all.map(q => q.x));
+  for (let x = b.x0; x < b.x1; x += 3) xs.add(x);
+  if (spine) { xs.add(spine.x0); xs.add(spine.x1); }
+  const cols = [...xs].filter(x => x >= b.x0 - 1e-9 && x <= b.x1 + 1e-9).sort((p, q) => p - q), lo: Vec[] = [], hi: Vec[] = [];
+  let last = (b.y0 + b.y1) / 2;
+  for (const x of cols) {
+    let l = Infinity, u = -Infinity;
+    for (const pts of polys) for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], c = pts[(i + 1) % pts.length];
+      if (x < Math.min(a.x, c.x) - 1e-9 || x > Math.max(a.x, c.x) + 1e-9) continue;
+      for (const y of Math.abs(c.x - a.x) < 1e-9 ? [a.y, c.y] : [a.y + (x - a.x) / (c.x - a.x) * (c.y - a.y)]) { if (y < l) l = y; if (y > u) u = y; }
+    }
+    if (l > u) { l = last - 0.5; u = last + 0.5; } // a gap between the parts: a thin bridge keeps the shape in one piece
+    if (spine && x >= spine.x0 - 1e-9 && x <= spine.x1 + 1e-9) { l = Math.min(l, spine.y0); u = Math.max(u, spine.y1); }
+    last = (l + u) / 2; lo.push({ x, y: l }); hi.push({ x, y: u });
+  }
+  let out = [...lo, ...hi.reverse()];
+  out = out.filter((q, i) => { const n = out[(i + 1) % out.length]; return Math.hypot(q.x - n.x, q.y - n.y) > 1e-6; });
+  if (signedArea(out) < 0) out.reverse();
   return out;
 }
