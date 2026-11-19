@@ -30,6 +30,7 @@ export * from './ops/rules';
 export * from './ops/movement';
 export * from './ops/spec';
 export * from './ops/lines';
+export * from './ops/props';
 export * from './io/dxf';
 export * from './io/svg';
 export * from './io/plt';
