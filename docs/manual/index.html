@@ -611,8 +611,10 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
         <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td>▶ Nest (<kbd>N</kbd>)</td><td>Lays the whole marker automatically. Choose the search time under the button (15 s to 10 min); longer usually gives a shorter marker. The layout improves on screen while it runs; ■ stops and keeps the best one so far.</td></tr>
-          <tr><td>Drag</td><td>Move a part by hand; drag it from the waiting row onto the fabric, or back above the fabric to take it off. Shift+click selects several. Arrow keys move by 1 mm (Shift: 10 mm).</td></tr>
-          <tr><td>⟳ Turn (<kbd>R</kbd>)</td><td>Turns the selected part to its next allowed direction (180° for 2-way fabric, 90° steps for 4-way; a 1-way piece does not turn).</td></tr>
+          <tr><td>➶ Throw (<kbd>T</kbd>)</td><td>The classic way of laying a marker, and the tool you start in. Press on a part, pull out the orange direction line and let go: the part shoots along the line until it touches another part or the edge of the fabric, and stops there, keeping the gap. A waiting part is put down where the line ends and flies on from there. A part thrown along the fabric stops at the end of the marker. <kbd>Esc</kbd> while aiming cancels.</td></tr>
+          <tr><td>✥ Move (<kbd>M</kbd>)</td><td>The part follows the cursor and stays where you drop it; drop it above the fabric to take it off. Arrow keys move the selected part by 1 mm (Shift: 10 mm).</td></tr>
+          <tr><td>Select</td><td>Click a part; Shift+click adds; double-click selects its whole bundle.</td></tr>
+          <tr><td>⟳ Turn 180° (<kbd>R</kbd>)</td><td>Under <em>One bundle, one direction</em> with <em>Rotate 180°</em> on: turns the whole bundle of the selected part. Under <em>By piece setting</em>: turns the single part to its next allowed direction. The other direction rules do not let parts be turned by hand.</td></tr>
           <tr><td>⇤ ⤓ ⤒ Push</td><td>Pushes the selected part towards the start of the fabric or an edge until it touches (<kbd>Home</kbd>, <kbd>End</kbd>, <kbd>PageUp</kbd>).</td></tr>
           <tr><td>⤴ Take off (<kbd>Del</kbd>), ⌫ Clear</td><td>Puts the selected part, or every part, back in the waiting row.</td></tr>
           <tr><td>⤢ Fit (<kbd>F</kbd>)</td><td>Shows the whole marker. Wheel zooms; drag the background (or the right button) to pan.</td></tr>
@@ -620,6 +622,18 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
           <tr><td>Report</td><td>Every marker with its ratio, plies, length and efficiency, the garments cut against the order, and the fabric needed in total and per garment.</td></tr>
         </tbody>
       </table></div>
+      <h3>Marker direction</h3>
+      <p>The <em>Direction</em> list at the top says which way the parts may face; it applies to laying by hand and to the nester.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Direction</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>One bundle, one direction</td><td>Every part of a bundle faces the same way. The <strong>Rotate 180°</strong> switch belongs to this rule: on, a bundle may be turned as a whole and the nester lays bundles both ways; off, every bundle faces the same way.</td></tr>
+          <tr><td>Same size, same direction</td><td>All bundles of a size face the same way; the nester may lay different sizes opposite ways. No turning by hand.</td></tr>
+          <tr><td>All bundles one direction</td><td>Every part faces the same way, for one-way fabric or nap.</td></tr>
+          <tr><td>By piece setting</td><td>Each part on its own, as far as its piece allows (<span class="menu">Inspector ▸ Order ▸ Rotation</span>).</td></tr>
+        </tbody>
+      </table></div>
+      <p>The Rotate 180° switch is greyed out under every rule except <em>One bundle, one direction</em>. A bundle with a one-way piece never turns. When you change the rule or switch 180° off, parts that face the wrong way go back to the waiting row.</p>
       <p>A part that overlaps another or lies off the fabric turns red, and the status line counts them. The status line also shows the length, the efficiency and the fabric for the plies of this marker.</p>
       <div class="note"><strong>Nester.</strong> The automatic nesting uses sparrow (Gardeyn, Vanden Berghe and Wauters, KU Leuven, MIT licence) with its geometry library jagua-rs (MPL-2.0), compiled to WebAssembly and built into ProwdCAD. It runs on your computer; nothing is sent anywhere.</div>
     </section>
