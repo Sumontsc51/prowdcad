@@ -263,6 +263,49 @@ async function nested(h, fixtures) {
         pass: a.rows >= 2 && /^1200,1500/.test(b.w) && Math.abs(h1 - h2) > 5 && c.mat === 'LINING' && c.rows === 0 && c.order === 360 && d.rows >= 1 && d.names.split(',').length === 1 && e.rows === a.rows && /^1200,1500/.test(e.w) && e.others === 'LINING' });
     } catch (err) { return done({ got: String(err.message || err).split('\n')[0], pass: false }); }
   });
+  await T('Marker making: File menu (save .pcm, plot .plt, settings · annotation) and Marker menu (marry, block fuse, buffer); the annotation settings change the text on the parts and the plot; a .pcm opens the style in the marker room', async () => {
+    const P = h.page;
+    await h.ev(() => { const E = window.__e2e; E.downloads.length = 0; void E.C.runCommand('marker.open'); }); await P.waitForSelector('.mk-root'); await h.settle(150);
+    const done = async r => { await h.ev(() => { document.querySelector('.mk-root')?.closeMarker?.(); const E = window.__e2e; E.app.doc.transact('clear marker', s => { delete s.meta.marker; }); }); return r; };
+    let stage = 'open';
+    try {
+      for (const [k, n] of Object.entries({ M: 10, L: 10 })) { const i = P.locator(`[data-mk-order="${k}"]`); await i.fill(String(n)); await i.press('Tab'); await h.settle(60); }
+      await P.locator('[data-mk="auto"]').click(); await h.settle(250);
+      const menuOf = async id => { await P.locator(`[data-mk="${id}"]`).click(); await h.settle(80); const t = (await P.locator('.ctx-menu .menu-item').allTextContents()).join(' | '); return t; };
+      const pick = async label => { await P.locator('.ctx-menu .menu-item', { hasText: label }).click(); await h.settle(150); };
+      const fileMenu = await menuOf('menu-file'); await h.key('Escape'); stage = 'menus';
+      const markerMenu = await menuOf('menu-marker'); await h.key('Escape');
+      // lay two parts so there is something to plot
+      const fab = await P.locator('.mk-fabric').boundingBox();
+      for (const x of [260, 900]) { const b = await P.locator('.mk-part.wait').first().boundingBox(); await P.mouse.click(b.x + b.width / 2, b.y + b.height / 2); await P.mouse.move(fab.x + x, fab.y + 150, { steps: 4 }); await P.mouse.click(fab.x + x, fab.y + 150); await h.settle(120); }
+      const lab0 = await P.locator('.mk-part:not(.wait) .mk-pl').first().textContent(); stage = 'laid';
+      // settings: style name on, bundle code off, seam line on
+      await menuOf('menu-file'); await pick('Settings'); await h.waitDialog();
+      await h.fields({ style: true, bundle: false, seam: true }); await h.ok(); await h.settle(200);
+      const lab1 = await P.locator('.mk-part:not(.wait) .mk-pl').first().textContent(), seams = await P.locator('.mk-part:not(.wait) .mk-seam').count(); stage = 'settings';
+      await menuOf('menu-file'); await pick('Plot'); await h.settle(200);
+      await menuOf('menu-file'); await pick('Save marker (.pcm)'); await h.settle(200);
+      // buffer on the piece of a selected part
+      const pb = await P.locator('.mk-part:not(.wait)').first().boundingBox();
+      await P.keyboard.down('Shift'); await P.mouse.click(pb.x + pb.width / 2, pb.y + pb.height / 2); await P.keyboard.up('Shift'); await h.settle(60);
+      await menuOf('menu-marker'); await pick('Buffer'); await h.waitDialog(); await h.ok(); await h.settle(200); stage = 'buffer';
+      const buf = await h.ev(() => Object.keys(window.__e2e.app.style.meta.marker.buffer || {}).length);
+      const dls = await h.downloads();
+      const plt = dls.find(d => d.name.endsWith('.plt')), pcm = dls.find(d => d.name.endsWith('.pcm'));
+      const pltT = plt ? Buffer.from(plt.b64, 'base64').toString('latin1') : '', pcmJ = pcm ? JSON.parse(Buffer.from(pcm.b64, 'base64').toString('utf8')) : null;
+      const styleName = await h.ev(() => window.__e2e.app.doc.style.name);
+      // a .pcm opens the style and goes straight to the marker room
+      await h.ev(() => document.querySelector('.mk-root')?.closeMarker?.()); await h.settle(100);
+      const reopened = pcm ? await h.ev(async b64 => { const E = window.__e2e; const txt = new TextDecoder().decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0))); window.prowd.readInto(E.app, txt, 'job.pcm', null); await new Promise(r => setTimeout(r, 400)); return { room: !!document.querySelector('.mk-root'), file: E.app.fileName, rows: E.app.style.meta.marker?.rows.length ?? 0 }; }, pcm.b64) : null;
+      return done({ got: `File: ${fileMenu} · Marker: ${markerMenu} · label "${lab0}" → "${lab1}", seam lines ${seams} · plot ${plt ? plt.name : 'none'} (pen 2 ${/SP2;/.test(pltT)}, text ${/LB/.test(pltT)}) · saved ${pcm ? pcm.name : 'none'} with ${pcmJ ? pcmJ.pieces.length : 0} pieces and ${pcmJ?.meta?.marker?.rows?.length ?? 0} markers · buffer ${buf} · .pcm reopened ${JSON.stringify(reopened)}`,
+        pass: /Save marker \(\.pcm\)/.test(fileMenu) && /Save marker as/.test(fileMenu) && /Import marker/.test(fileMenu) && /Export/.test(fileMenu) && /Plot/.test(fileMenu) && /Settings/.test(fileMenu)
+          && /Marry pieces/.test(markerMenu) && /Block fuse/.test(markerMenu) && /Buffer/.test(markerMenu)
+          && /M-1|L-1/.test(lab0) && lab1.startsWith(styleName) && !/-1/.test(lab1) && seams >= 2
+          && !!plt && /SP1;/.test(pltT) && /SP2;/.test(pltT) && pltT.includes('LB' + styleName) && /EFF/.test(pltT) && /PERIM/.test(pltT)
+          && !!pcm && pcmJ.pieces.length === 2 && pcmJ.meta.marker.rows.length >= 1 && buf === 1
+          && !!reopened && reopened.room && /\.pcd$/.test(reopened.file) && reopened.rows >= 1 });
+    } catch (err) { return done({ got: `after ${stage}: ${String(err.message || err).split('\n')[0]}`, pass: false }); }
+  });
   await T('Size chip click switches active size; selection kept', async () => { await h.selectA('FRONT', 'UA'); await h.page.locator('.sz-chip', { hasText: 'XL' }).click(); await h.settle(); const s = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); const sel = await h.sel(); return { got: `${s}, sel ${sel.anchors}`, pass: s === 'XL' && sel.anchors[0] === 'FRONT/UA' }; });
   await T('Ctrl+] / Ctrl+[ step sizes', async () => { await h.key('Control+]'); await h.key('Control+]'); const a = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); await h.key('Control+['); const b = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); return { got: `${a} then ${b}`, pass: a === 'XL' && b === 'L' }; });
   await T('Nested view: drag the L instance of UA → only L grading of UA changes', async () => {

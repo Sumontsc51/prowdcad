@@ -80,7 +80,7 @@ const cases = [
     after: async (h, c, r) => { if (h._askedName) r.notes.push(`plain Save (Ctrl+S) asks for a file name ("${h._askedName}" dialog) every time when the File System Access API is missing`); },
     expect: async (h, c) => { const d = dl(c, '.json'); if (!d) return 'no .prowd.json download'; const j = JSON.parse(txt(d)); return [req(j.schema === 'prowdcad/2', 'schema'), req(j.pieces.length === 2, 'pieces in saved file'), req(!!j.meta.previewPng, 'preview PNG not attached on save')]; } },
   { id: 'file.saveAs', sel: noFSA, notes: [FSA_NOTE], change: 'maybe', undo: false, drive: async h => { await h.waitDialog(3000).catch(() => {}); if (await h.hasDialog()) { await h.fill('n', 'my-tee'); await h.ok(); } },
-    expect: (h, c) => req(c.downloads.some(d => d.name === 'my-tee.prowd.json'), 'expected download my-tee.prowd.json, got ' + c.downloads.map(d => d.name)) },
+    expect: (h, c) => req(c.downloads.some(d => d.name === 'my-tee.pcd'), 'expected download my-tee.pcd, got ' + c.downloads.map(d => d.name)) },
   { id: 'file.import', title: 'Import DXF + RUL', invoke: chooser([f('e2e-src.dxf'), f('e2e-src.rul')], 'file.import'),
     drive: async h => { await h.waitDialog(); await h.ok(); await h.waitDialog(); h._rep = await h.dlg().locator('.dlg-msg').textContent(); await h.ok(); },
     expect: (h, c) => [req(c.after.pieces.length === 4, `expected 4 pieces after import, got ${pieces(c.after)}`), req(/Rule library/i.test(h._rep || ''), 'import report shows no rule library')],
@@ -99,7 +99,7 @@ const cases = [
   { id: 'file.export.pdf', change: false, drive: OK(), expect: (h, c) => { const d = dl(c, '.pdf'); if (!d) return 'no .pdf download'; const t = txt(d); return [req(t.startsWith('%PDF-'), 'not a PDF'), req((t.match(/\/Type\s*\/Page[^s]/g) || []).length >= 1, 'PDF has no pages'), req(/%%EOF\s*$/.test(t), 'PDF not terminated')]; } },
   { id: 'file.export.plt', change: false, drive: async h => { await OK()(h); await OK()(h); }, expect: (h, c) => { const d = dl(c, '.plt'); if (!d) return 'no .plt download'; const t = txt(d); return req(/IN;/.test(t) && /PD/.test(t), 'PLT lacks IN;/PD'); } },
   { id: 'file.export.standalone', sel: PC('FRONT'), change: false, drive: async h => { await h.waitDialog(); await h.dlg().locator('[data-key="s"]').selectOption({ label: 'L' }); await h.ok(); },
-    expect: (h, c) => { const d = dl(c, '.prowd.json'); if (!d) return 'no standalone download'; const j = JSON.parse(txt(d)); return [req(d.name === 'FRONT_L.prowd.json', 'name ' + d.name), req(j.pieces.length === 1 && Q.line(j).sizes.length === 1, 'standalone should hold 1 piece × 1 size')]; } },
+    expect: (h, c) => { const d = dl(c, '.pcd'); if (!d) return 'no standalone download'; const j = JSON.parse(txt(d)); return [req(d.name === 'FRONT_L.pcd', 'name ' + d.name), req(j.pieces.length === 1 && Q.line(j).sizes.length === 1, 'standalone should hold 1 piece × 1 size')]; } },
   { id: 'file.preview', expect: (h, c) => req(!!c.after.meta.previewPng && c.after.meta.previewPng.startsWith('data:image/png'), 'no preview PNG') },
   { id: 'file.styleInfo', drive: DLG({ customer: 'ACME', season: 'SS27' }), expect: (h, c) => req(c.after.meta.customer === 'ACME' && c.after.meta.season === 'SS27', 'meta not stored') },
 
