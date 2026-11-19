@@ -518,7 +518,12 @@ export const movePointTool: Tool = {
         app.invalidate(); return;
       }
     }
-    if (!hit) { app.status(mpMode() === 'single' ? 'Nothing to pick here: press on a point, or on a line to add a point and drag it' : 'Nothing to pick here: click a point (or press on a dart apex and drag)'); return; }
+    if (!hit) {
+      // every mode: a drag on the empty sheet draws a box that selects the points (handles) inside it
+      app.status(mpMode() === 'single' ? 'Nothing to pick here: press on a point, or on a line to add a point and drag it' : 'Nothing to pick here: click a point (or press on a dart apex and drag)');
+      MP.box = { a: p.w, b: p.w, as: p.s, bs: p.s, mode: p.e.shiftKey ? 'add' : p.e.ctrlKey || p.e.metaKey ? 'toggle' : 'replace' };
+      return;
+    }
     const piece = app.doc.piece(hit.ref.pieceId);
     if (piece.locked) { toast(lockedMsg(piece), 'warn'); return; }
     const why = mpMode() === 'group' ? null : lockBlock(app, hit.ref.pieceId, hit.ref.contourId, hit.ref.anchorId, 'point');
@@ -575,14 +580,17 @@ export const movePointTool: Tool = {
     }
     if (MP.box) {
       const b = MP.box; MP.box = null;
-      if (Math.hypot(b.bs.x - b.as.x, b.bs.y - b.as.y) < THRESH_PX) { app.status('Group: drag a box around the points to move, or click a point'); app.invalidate(); return; }
+      if (Math.hypot(b.bs.x - b.as.x, b.bs.y - b.as.y) < THRESH_PX) { if (mpMode() === 'group') app.status('Group: drag a box around the points to move, or click a point'); app.invalidate(); return; }
       const box = { minX: Math.min(b.a.x, b.b.x), maxX: Math.max(b.a.x, b.b.x), minY: Math.min(b.a.y, b.b.y), maxY: Math.max(b.a.y, b.b.y) };
       const crossing = b.bs.x < b.as.x;
       const items = gatherInBox(app, box, crossing, 'points').filter(it => it.k === 'point' && !app.doc.piece(it.ref.pieceId).locked);
       if (b.mode === 'replace') { app.sel = { pieces: [], anchors: [] }; app.liveSel = null; }
       for (const it of items) app.applySel(it, b.mode === 'toggle' ? 'toggle' : 'add');
-      MP.before = null; mpAdopt(app);
       const n = app.sel.anchors.length;
+      // a box around several points in another mode: they are moved together, so the tool goes to Group
+      const was = mpMode(); if (n > 1 && was !== 'group') { settings.movePointMode = 'group'; saveSettings(); }
+      MP.before = null; mpAdopt(app);
+      if (was !== 'group') { app.status(n > 1 ? `${n} points selected · the tool is now on Group: drag one of them to move them all` : n ? '1 point selected: drag it' : 'No points in the box'); app.invalidate(); return; }
       app.status(n ? `Group: ${n} point(s) selected · drag one of them to move them all · Shift+drag a box adds` : 'No points in the box');
       app.invalidate(); return;
     }
@@ -1436,7 +1444,9 @@ const CV: {
   run: SegSel[] | null;
   runOp: { which: 'start' | 'end'; s: Vec; moved: boolean; rel: Vec | null } | null;
   runErr: string;
-} = { op: null, picked: null, frozen: false, seg: null, segOp: null, run: null, runOp: null, runErr: '' };
+  /** a box drawn on the empty sheet: selects the points inside it, so that their handles show */
+  box: { a: Vec; b: Vec; as: Vec; bs: Vec; mode: 'replace' | 'add' | 'toggle' } | null;
+} = { op: null, picked: null, frozen: false, seg: null, segOp: null, run: null, runOp: null, runErr: '', box: null };
 
 const SEG_YELLOW = '#f2c200';
 /** The picked line as one curve (base size), from the live preview when there is one. */
@@ -1508,9 +1518,9 @@ async function cvInput(app: App, typed?: string) {
 export const curveTool: Tool = {
   foldAware: true,
   id: 'curve', title: 'Curve / Handle', group: 'modify', hotkey: 'Shift+C', icon: ICON.curve, cursor: 'default',
-  activate(app) { CV.op = null; CV.frozen = false; CV.seg = null; CV.segOp = null; CV.run = null; CV.runOp = null; CV.runErr = ''; cvAdopt(app); },
-  deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); CV.op = null; CV.seg = null; CV.segOp = null; CV.run = null; CV.runOp = null; app.cancelPreview(); },
-  busy: () => !!CV.op || !!CV.segOp || !!CV.runOp,
+  activate(app) { CV.op = null; CV.frozen = false; CV.seg = null; CV.segOp = null; CV.run = null; CV.runOp = null; CV.runErr = ''; CV.box = null; cvAdopt(app); },
+  deactivate(app) { if (inputBoxOpen()) inputBoxCancel(); CV.op = null; CV.seg = null; CV.segOp = null; CV.run = null; CV.runOp = null; CV.box = null; app.cancelPreview(); },
+  busy: () => !!CV.op || !!CV.segOp || !!CV.runOp || !!CV.box,
   badge(app) { return app.activeSize !== app.baseSize() ? { text: 'Handles are not graded: switch to the base size to edit them', amber: true } : null; },
   hint(app) {
     if (CV.runOp?.moved) return `Curve · shaping ${CV.run?.length ?? 0} lines as one curve · the two ends of the run stay, every other corner point moves onto the curve · Shift = H/V/45° · Esc cancel`;
@@ -1571,7 +1581,12 @@ export const curveTool: Tool = {
       // a line: pick it, it gets one handle at each end
       CV.picked = null;
       const ch = lineNear(app, p.w, { tolPx: 8 });
-      if (!ch) { if (!e.shiftKey) { CV.seg = null; CV.run = null; } app.status('Nothing to pick here: click a line or a point'); app.invalidate(); return; }
+      if (!ch) {
+        if (!e.shiftKey) { CV.seg = null; CV.run = null; }
+        app.status('Nothing to pick here: click a line or a point, or drag a box around points to show their handles');
+        CV.box = { a: p.w, b: p.w, as: p.s, bs: p.s, mode: e.shiftKey ? 'add' : e.ctrlKey || e.metaKey ? 'toggle' : 'replace' };
+        app.invalidate(); return;
+      }
       const pts = ch.contour.points;
       const from = ch.from ?? pts[0].id, to = ch.to ?? pts[pts.length - 1].id;
       if (from === to) { CV.seg = null; app.status('This line has one grade point only: add a point (Cut Point) to split it into lines'); app.invalidate(); return; }
@@ -1606,6 +1621,7 @@ export const curveTool: Tool = {
   },
   move(app, p) {
     trackClient(p);
+    if (CV.box) { CV.box.b = p.w; CV.box.bs = p.s; app.invalidate('canvas', 'status'); return; }
     if (CV.runOp && CV.run && !CV.frozen) {
       const ro = CV.runOp, run = CV.run;
       if (!ro.moved && Math.hypot(p.s.x - ro.s.x, p.s.y - ro.s.y) < THRESH_PX) return;
@@ -1648,6 +1664,18 @@ export const curveTool: Tool = {
     });
   },
   up(app) {
+    if (CV.box) {
+      const b = CV.box; CV.box = null;
+      if (Math.hypot(b.bs.x - b.as.x, b.bs.y - b.as.y) >= THRESH_PX) {
+        const box = { minX: Math.min(b.a.x, b.b.x), maxX: Math.max(b.a.x, b.b.x), minY: Math.min(b.a.y, b.b.y), maxY: Math.max(b.a.y, b.b.y) };
+        const items = gatherInBox(app, box, b.bs.x < b.as.x, 'points').filter(it => it.k === 'point');
+        if (b.mode === 'replace') { app.sel = { pieces: [], anchors: [] }; app.liveSel = null; }
+        for (const it of items) app.applySel(it, b.mode === 'toggle' ? 'toggle' : 'add');
+        CV.picked = null;
+        app.status(items.length ? `${app.sel.anchors.length} point(s) selected: their handles show · drag a handle to reshape · Shift+drag a box adds` : 'No points in the box');
+      }
+      app.invalidate(); return;
+    }
     if (CV.runOp) {
       const ro = CV.runOp, run = CV.run; CV.runOp = null;
       if (!run || !ro.moved || !ro.rel) { app.cancelPreview(); app.invalidate(); return; }
@@ -1685,6 +1713,7 @@ export const curveTool: Tool = {
   },
   key(app, e) {
     if (inputBoxOpen()) return false;
+    if (e.key === 'Escape' && CV.box) { CV.box = null; app.status('Box select cancelled'); app.invalidate(); return true; }
     if (e.key === 'Escape' && CV.runOp) { CV.runOp = null; app.cancelPreview(); app.invalidate(); return true; }
     if (e.key === 'Escape' && CV.run && !CV.op) { CV.run = null; CV.runErr = ''; app.invalidate(); return true; }
     if (e.key === 'Escape' && CV.segOp) { CV.segOp = null; app.cancelPreview(); app.invalidate(); return true; }
@@ -1695,6 +1724,10 @@ export const curveTool: Tool = {
     return false;
   },
   overlay(app) {
+    if (CV.box) {
+      const a = app.view.toScreen(CV.box.a), b = app.view.toScreen(CV.box.b), crossing = CV.box.bs.x < CV.box.as.x;
+      return `<rect data-cv-box="1" x="${fs(Math.min(a.x, b.x))}" y="${fs(Math.min(a.y, b.y))}" width="${fs(Math.abs(a.x - b.x))}" height="${fs(Math.abs(a.y - b.y))}" fill="${crossing ? 'rgba(46,204,113,0.08)' : 'rgba(78,161,255,0.08)'}" stroke="${crossing ? '#27ae60' : '#4ea1ff'}"${crossing ? ' stroke-dasharray="5 4"' : ''}/>`;
+    }
     if (CV.run) {
       const rc = cvRun(app);
       const S = (q: Vec) => app.view.toScreen(q);
