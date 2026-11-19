@@ -185,3 +185,35 @@ describe('throwing a part', () => {
     expect(polyBox(placedPoly(b, r[b.id])).x0).toBeLessThanOrEqual(621);
   });
 });
+
+describe('block fuse', () => {
+  it('lays the piece as its box grown by the margin and keeps the outline inside', () => {
+    const d = style(), I = ids(d);
+    const slv = d.style.pieces.find(p => p.name === 'SLEEVE')!;
+    const plain = markerParts(d, { [I.M]: 1 }).find(p => p.name === 'SLEEVE')!;
+    const blk = markerParts(d, { [I.M]: 1 }, { block: { [slv.id]: 10 } }).find(p => p.name === 'SLEEVE')!;
+    const b0 = polyBox(plain.poly), b1 = polyBox(blk.poly);
+    expect(blk.poly.length).toBe(4);
+    expect(b1.x1).toBeCloseTo(b0.x1 + 20, 6); expect(b1.y1).toBeCloseTo(b0.y1 + 20, 6);
+    expect(polyBox(blk.inner!).x0).toBeCloseTo(10, 6); expect(blk.inner!.length).toBe(plain.poly.length);
+    expect(blk.area).toBeGreaterThan(plain.area);
+    expect(markerParts(d, { [I.M]: 1 }, { block: { [slv.id]: 10 } }).find(p => p.name === 'BODY')!.inner).toBeUndefined();
+    const dxf = markerDXF([blk], { [blk.id]: placeAt(blk, 0, 0, 0) }, 1000);
+    expect(dxf).toContain('BLOCK'); expect((dxf.match(/\nPOLYLINE\n8\nCUT/g) ?? []).length).toBe(1);
+  });
+});
+
+describe('parts lying exactly on top of each other', () => {
+  const d = style(), I = ids(d);
+  const [a, b] = markerParts(d, { [I.M]: 1 }).filter(p => p.name === 'BODY');
+  it('are found as a problem', () => {
+    const pl = { [a.id]: placeAt(a, 0, 0, 0), [b.id]: placeAt(b, 0, 0, 0) };
+    expect(markerProblems([a, b], pl, 1000).size).toBe(2);
+  });
+  it('a part thrown from on top of another comes free, even towards the end of the marker', () => {
+    const pl = { [a.id]: placeAt(a, 0, 0, 0), [b.id]: placeAt(b, 0, 0, 0) };
+    const r = throwParts([a, b], pl, 1000, [b.id], { x: 1, y: 0.3 })!;
+    expect(r).not.toBeNull();
+    expect(markerProblems([a, b], { ...pl, ...r }, 1000).size).toBe(0);
+  });
+});
