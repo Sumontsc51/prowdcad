@@ -7,7 +7,7 @@
  */
 import {
   autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placedPoly, placedPoint, polyBox, placeAt, nestJob,
-  markerDXF, markerHPGL, type MarkerDoc, type MarkerRow, type MarkerPart, type Placements, type Vec,
+  markerDXF, markerHPGL, directedParts, obeyDirection, directionGroup, groupMayTurn, throwParts, type MarkerDirection, type MarkerDoc, type MarkerRow, type MarkerPart, type Placements, type Vec,
 } from '@prowdcad/kernel';
 import type { App } from '../app';
 import { h, clear, isTyping } from '../ui/dom';
@@ -39,7 +39,40 @@ export function openMarker(app: App) {
   let sel = new Set<string>();
   let view = { k: 0.25, ox: 40, oy: 40 };            // screen = (mm · k) + o ; the fabric's y runs down the screen
   let parts: MarkerPart[] = [], partsKey = '', tray: Placements = {}, bad = new Set<string>();
-  let drag: { ids: string[]; start: Vec; base: Placements; moved: boolean } | null = null;
+  let drag: { ids: string[]; start: Vec; base: Placements; moved: boolean; grab: string } | null = null;
+  // how a drag works: 'throw' = aim with a direction line and let go, the part shoots that way until it touches (classic marker making);
+  // 'move' = the part follows the cursor
+  let mode: 'throw' | 'move' = 'throw';
+  let aim: { from: Vec; to: Vec } | null = null, anim = 0;
+  const rule = (): MarkerDirection => M().direction ?? 'bundle';
+  const r180 = (): boolean => M().rot180 ?? true;
+  const RULES: [MarkerDirection, string, string][] = [
+    ['bundle', 'One bundle, one direction', 'Every part of a bundle faces the same way. With Rotate 180° on, a bundle may be turned as a whole.'],
+    ['size', 'Same size, same direction', 'All bundles of a size face the same way; the nester may lay the sizes opposite ways.'],
+    ['all', 'All bundles one direction', 'Every part faces the same way (one-way fabric, nap).'],
+    ['piece', 'By piece setting', 'Each part on its own, as far as its piece allows (Inspector ▸ Order ▸ Rotation).'],
+  ];
+  /** set the direction rule / the 180° switch; parts laid against the new rule go back to waiting */
+  function setRule(next: { direction?: MarkerDirection; rot180?: boolean }) {
+    let off = 0;
+    edit('Marker direction', d => {
+      if (next.direction) d.direction = next.direction;
+      if (next.rot180 !== undefined) d.rot180 = next.rot180;
+      for (const r of d.rows) {
+        const ps = markerParts(app.doc, r.ratio, { material: d.material || undefined });
+        const res = obeyDirection(ps, r.placements, d.direction ?? 'bundle', d.rot180 ?? true);
+        r.placements = res.placements; off += res.removed;
+      }
+    });
+    if (off) toast(`${off} part${off > 1 ? 's' : ''} faced the other way and went back to waiting`, 'warn');
+  }
+  /** the direction a part must take when it is laid now: that of the parts of its group already on the marker */
+  function groupRot(p: MarkerPart, pl: Placements): number {
+    const ru = rule(); if (ru === 'piece') return 0;
+    const g = directionGroup(p, ru);
+    const mate = parts.find(q => q.id !== p.id && pl[q.id] && directionGroup(q, ru) === g);
+    return mate ? pl[mate.id].rot : 0;
+  }
   let pan: { x: number; y: number } | null = null;
   let run: NestRun | null = null, runRow = '', runTimer = 0, runBest = 0;
   let live: Placements | null = null;                // layout of the running nest, shown before it is kept
@@ -90,6 +123,25 @@ export function openMarker(app: App) {
   const keep = (label: string, next: Placements) => { const id = row()?.id; if (!id) return; edit(label, m => { const r = m.rows.find(x => x.id === id); if (r) r.placements = next; }); };
   function rotateSel() {
     const p0 = pls(), next = { ...p0 }; let n = 0;
+    const ru = rule();
+    if (ru !== 'piece') {
+      if (ru !== 'bundle') { toast(`"${RULES.find(x => x[0] === ru)![1]}" does not let parts be turned by hand`, 'warn'); return; }
+      if (!r180()) { toast('Rotate 180° is off: switch it on at the top to turn a bundle', 'warn'); return; }
+      // the whole bundle turns: every laid part of it, each about its own middle
+      const groups = new Set(parts.filter(p => sel.has(p.id)).map(p => directionGroup(p, ru)));
+      if (!groups.size) { toast('Select a part of the bundle to turn', 'warn'); return; }
+      for (const g of groups) {
+        if (!groupMayTurn(parts, g, ru, true)) { toast('This bundle has a one-way piece and cannot be turned (Inspector ▸ Order ▸ Rotation)', 'warn'); continue; }
+        for (const p of parts) {
+          const q = p0[p.id]; if (!q || directionGroup(p, ru) !== g) continue;
+          const b = polyBox(placedPoly(p, q)), rot = q.rot === 180 ? 0 : 180;
+          const t = placeAt(p, 0, 0, rot), nb = polyBox(placedPoly(p, t));
+          next[p.id] = { x: t.x + (b.x0 + b.x1) / 2 - (nb.x0 + nb.x1) / 2, y: t.y + (b.y0 + b.y1) / 2 - (nb.y0 + nb.y1) / 2, rot }; n++;
+        }
+      }
+      if (n) { sel = new Set(parts.filter(p => groups.has(directionGroup(p, ru))).map(p => p.id)); keep('Turn bundle 180°', next); }
+      return;
+    }
     for (const p of parts) {
       if (!sel.has(p.id) || !p0[p.id] || p.angles.length < 2) continue;
       const q = p0[p.id], b = polyBox(placedPoly(p, q));
@@ -118,9 +170,10 @@ export function openMarker(app: App) {
     const r = row(); if (run || !r) return;
     if (!parts.length) { toast('This marker has no parts: give it a ratio in the cut plan', 'warn'); return; }
     const w = M().width;
-    const wide = parts.find(p => p.angles.every(a => { const b = polyBox(placedPoly(p, { x: 0, y: 0, rot: a })); return b.y1 - b.y0 > w; }));
+    const np = directedParts(parts, rule(), r180());
+    const wide = np.find(p => p.angles.every(a => { const b = polyBox(placedPoly(p, { x: 0, y: 0, rot: a })); return b.y1 - b.y0 > w; }));
     if (wide) { toast(`${wide.name} (${wide.sizeName}) is wider than the fabric`, 'error'); return; }
-    const job = nestJob(parts, w, { gap: M().gap, name: r.name });
+    const job = nestJob(np, w, { gap: M().gap, name: r.name });
     runRow = r.id; live = null; runBest = 0;
     try {
       run = startNest(job, M().nestSeconds, {
@@ -165,6 +218,17 @@ export function openMarker(app: App) {
       h('label', {}, 'Fabric width', num(fmt(m.width), 'Usable fabric width', t => { const v = parseLen(t); if (Number.isFinite(v) && v > 50) edit('Fabric width', d => { d.width = v; }); else draw(); }), h('span.mk-dim', {}, unitLabel())),
       h('label', {}, 'Gap', num(fmt(m.gap), 'Smallest gap between parts', t => { const v = parseLen(t); if (Number.isFinite(v) && v >= 0) edit('Marker gap', d => { d.gap = v; }); else draw(); }, 54), h('span.mk-dim', {}, unitLabel())),
       h('label', {}, 'Material', mat),
+      (() => {
+        const dsel = h('select.mk-in', { 'data-mk': 'direction', title: RULES.find(x => x[0] === rule())![2] }, ...RULES.map(([v, l, t]) => h('option', { value: v, selected: v === rule(), title: t }, l))) as HTMLSelectElement;
+        dsel.addEventListener('change', () => setRule({ direction: dsel.value as MarkerDirection }));
+        return h('label', {}, 'Direction', dsel);
+      })(),
+      (() => {
+        const can = rule() === 'bundle';
+        const cb = h('input', { type: 'checkbox', 'data-mk': 'rot180', checked: can && r180(), disabled: !can }) as HTMLInputElement;
+        cb.addEventListener('change', () => setRule({ rot180: cb.checked }));
+        return h('label.mk-tog' + (can ? '' : '.off'), { title: can ? 'On: a bundle may be turned 180° as a whole (R), and the nester lays bundles both ways. Off: every bundle faces the same way.' : 'Only "One bundle, one direction" uses this switch' }, cb, 'Rotate 180°');
+      })(),
       h('span.mk-grow'),
       h('button.btn.sm', { title: 'Back to the pattern (Esc)', 'data-mk': 'close', onclick: () => closeMarker() }, 'Close ✕'));
   }
@@ -220,7 +284,10 @@ export function openMarker(app: App) {
     tools.append(
       run ? b('stop', '■', 'Stop nesting and keep the best layout so far', nestStop, '.stop') : b('nest', '▶', 'Nest this marker automatically (N)', nestStart, '.play'),
       time, h('div.mk-sep'),
-      b('turn', '⟳', 'Turn the selected part to its next allowed direction (R)', rotateSel),
+      b('throw', '➶', 'Throw (T): press on a part, pull out a direction line and let go. The part shoots that way until it touches a part or the fabric edge', () => { mode = 'throw'; draw(); }, mode === 'throw' ? '.on' : ''),
+      b('move', '✥', 'Move (M): the part follows the cursor and stays where you drop it', () => { mode = 'move'; draw(); }, mode === 'move' ? '.on' : ''),
+      h('div.mk-sep'),
+      b('turn', '⟳', 'Turn 180° (R): the whole bundle under "One bundle, one direction" with Rotate 180° on; a single part under "By piece setting"', rotateSel),
       b('left', '⇤', 'Push the selected part towards the start of the fabric (←← Home)', () => push(-1, 0)),
       b('down', '⤓', 'Push the selected part towards the lower edge (End)', () => push(0, 1)),
       b('up', '⤒', 'Push the selected part towards the upper edge (PageUp)', () => push(0, -1)),
@@ -238,7 +305,7 @@ export function openMarker(app: App) {
     const el = run ? Math.min(run.seconds, (performance.now() - run.startedAt) / 1000) : 0;
     stat.textContent = [r.name, `${st.placed} of ${st.parts} parts laid`, `length ${fmt(st.length)} ${unitLabel()}`, `efficiency ${(st.efficiency * 100).toFixed(2)} %`,
       `${r.plies} plies = ${(st.length * r.plies / 1000).toFixed(2)} m of fabric`, bad.size ? `⚠ ${bad.size} part${bad.size > 1 ? 's' : ''} overlapping or off the fabric` : '',
-      run ? `nesting… ${el.toFixed(0)} / ${run.seconds} s on ${run.threads} thread${run.threads > 1 ? 's' : ''}` : sel.size ? `${sel.size} selected · drag = move · R = turn · Del = take off` : 'drag a part onto the fabric · ▶ nests automatically'].filter(Boolean).join('  ·  ');
+      run ? `nesting… ${el.toFixed(0)} / ${run.seconds} s on ${run.threads} thread${run.threads > 1 ? 's' : ''}` : mode === 'throw' ? 'Throw: press on a part, pull a line, let go · double-click = whole bundle · R = turn · Del = take off' : 'Move: drag a part and drop it · double-click = whole bundle · R = turn · Del = take off'].filter(Boolean).join('  ·  ');
   }
   function drawSvg() {
     const m = M(), p0 = pls(), st = markerStats(parts, p0, m.width);
@@ -257,6 +324,11 @@ export function openMarker(app: App) {
       out += `<g class="${cls}" data-part="${p.id}"><path d="${pts.map((v, i) => `${i ? 'L' : 'M'}${f(v.x)} ${f(v.y)}`).join('')}Z" style="--c:${col}"/>`
         + `<line x1="${f(g0.x)}" y1="${f(g0.y)}" x2="${f(g1.x)}" y2="${f(g1.y)}" class="mk-grain"/>`
         + (big ? `<text x="${f((bx.x0 + bx.x1) / 2)}" y="${f((bx.y0 + bx.y1) / 2 + 3)}" class="mk-pl">${p.name.slice(0, 14)} ${p.sizeName}${p.mirror ? '·M' : ''}</text>` : '') + '</g>';
+    }
+    if (aim) {
+      const a1 = S(aim.from), a2 = S(aim.to), ang = Math.atan2(a2.y - a1.y, a2.x - a1.x), hd = 11;
+      const pt = (r: number, o: number) => `${f(a2.x + r * Math.cos(ang + o))} ${f(a2.y + r * Math.sin(ang + o))}`;
+      out += `<g class="mk-aim"><line x1="${f(a1.x)}" y1="${f(a1.y)}" x2="${f(a2.x)}" y2="${f(a2.y)}"/><path d="M${pt(0, 0)}L${pt(-hd, 0.42)}L${pt(-hd, -0.42)}Z"/><circle cx="${f(a1.x)}" cy="${f(a1.y)}" r="3.5"/></g>`;
     }
     if (Object.keys(tray).length) { const t = S({ x: 0, y: -30 }); out += `<text x="${f(t.x)}" y="${f(t.y)}" class="mk-lab">Waiting to be laid: ${Object.keys(tray).length}</text>`; }
     svg.innerHTML = out;
@@ -279,7 +351,7 @@ export function openMarker(app: App) {
     const id = g.dataset.part!;
     if (e.shiftKey) { if (sel.has(id)) sel.delete(id); else sel.add(id); } else if (!sel.has(id)) sel = new Set([id]);
     const baseP: Placements = {}; for (const p of parts) if (sel.has(p.id)) { const q = where(p); if (q) baseP[p.id] = { ...q }; }
-    drag = { ids: Object.keys(baseP), start: evW(e), base: baseP, moved: false };
+    drag = { ids: Object.keys(baseP), start: evW(e), base: baseP, moved: false, grab: id };
     svg.setPointerCapture(e.pointerId); draw();
   });
   svg.addEventListener('pointermove', e => {
@@ -289,6 +361,12 @@ export function openMarker(app: App) {
     if (!drag.moved && Math.hypot(dx, dy) * view.k < 3) return;
     drag.moved = true;
     const r = row(); if (!r) return;
+    if (mode === 'throw') {
+      // aim: a direction line from the middle of the grabbed part to the cursor
+      const gp = parts.find(p => p.id === drag!.grab), gq = gp && drag.base[gp.id];
+      if (gp && gq) { const b = polyBox(placedPoly(gp, gq)); aim = { from: { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 }, to: w }; drawSvg(); stat.textContent = 'Throw: let go to shoot the part along the line until it touches · Esc cancels'; }
+      return;
+    }
     // shown live without touching the document: the row's placements are swapped for the drag
     live = { ...r.placements }; runRow = r.id;
     for (const id of drag.ids) live[id] = { ...drag.base[id], x: drag.base[id].x + dx, y: drag.base[id].y + dy };
@@ -298,6 +376,7 @@ export function openMarker(app: App) {
     try { svg.releasePointerCapture(e.pointerId); } catch { /* */ }
     if (pan) { pan = null; return; }
     const d = drag; drag = null; if (!d) return;
+    if (mode === 'throw') { const a = aim; aim = null; if (d.moved && a) shoot(d, a); else draw(); return; }
     const got = live; live = null;
     if (!d.moved || !got) { draw(); return; }
     const next: Placements = {};
@@ -305,6 +384,43 @@ export function openMarker(app: App) {
     for (const p of parts) { const q = got[p.id]; if (!q) continue; const b = polyBox(placedPoly(p, q)); if (d.ids.includes(p.id) && b.y1 < 0) continue; next[p.id] = q; }
     keep('Move part', next);
   };
+  /** let a thrown part go: it enters the fabric if it was waiting, travels along the line until it touches, and stops */
+  function shoot(d: NonNullable<typeof drag>, a: { from: Vec; to: Vec }) {
+    const r = row(); if (!r) return;
+    const dir = { x: a.to.x - a.from.x, y: a.to.y - a.from.y };
+    if (Math.hypot(dir.x, dir.y) * view.k < 8) { draw(); return; }
+    const w = M().width, laid = r.placements;
+    const start: Placements = { ...laid }; let ids = d.ids.filter(id => laid[id]);
+    const gp = parts.find(p => p.id === d.grab)!;
+    if (!laid[gp.id]) {
+      // a waiting part: it is put down where the line ends (inside the fabric), facing the way its bundle faces, and flies on from there
+      const rot = groupRot(gp, laid), b = polyBox(placedPoly(gp, { x: 0, y: 0, rot })), bw = b.x1 - b.x0, bh = b.y1 - b.y0;
+      if (a.to.y < -bh / 2) { toast('Aim a waiting part onto the fabric', 'warn'); draw(); return; }
+      start[gp.id] = placeAt(gp, Math.max(0, a.to.x - bw / 2), Math.max(0, Math.min(w - bh, a.to.y - bh / 2)), rot); ids = [gp.id];
+    }
+    // along the line; a part put down on top of another that finds no room ahead backs out the way it came
+    const res = throwParts(parts, start, w, ids, dir, { gap: M().gap }) ?? (laid[gp.id] ? null : throwParts(parts, start, w, ids, { x: -dir.x, y: -dir.y }, { gap: M().gap }));
+    if (!res) { toast('No free place that way', 'warn'); draw(); return; }
+    // the flight: a short slide from where the part was to where it stops
+    const from: Placements = {}; for (const id of ids) from[id] = d.base[id] ?? start[id];
+    const t0 = performance.now(), dur = 150;
+    cancelAnimationFrame(anim); runRow = r.id;
+    const tick = () => {
+      if (!root) return;
+      const k = Math.min(1, (performance.now() - t0) / dur), e = 1 - (1 - k) * (1 - k);
+      live = { ...laid };
+      for (const id of ids) live[id] = { rot: res[id].rot, x: from[id].x + (res[id].x - from[id].x) * e, y: from[id].y + (res[id].y - from[id].y) * e };
+      drawSvg();
+      if (k < 1) { anim = requestAnimationFrame(tick); return; }
+      live = null; keep('Throw part', { ...laid, ...res });
+    };
+    tick();
+  }
+  svg.addEventListener('dblclick', e => {
+    const g = (e.target as Element).closest('[data-part]') as SVGElement | null; if (!g) return;
+    const p = parts.find(q => q.id === g.dataset.part); if (!p) return;
+    sel = new Set(parts.filter(q => q.sizeId === p.sizeId && q.bundle === p.bundle).map(q => q.id)); draw();
+  });
   svg.addEventListener('pointerup', up); svg.addEventListener('pointercancel', up);
   svg.addEventListener('contextmenu', e => e.preventDefault());
   svg.addEventListener('wheel', e => {
@@ -318,6 +434,7 @@ export function openMarker(app: App) {
     if (!root) return;
     if (dialogOpen()) return;
     const typing = isTyping();
+    if (e.key === 'Escape' && aim) { aim = null; drag = null; draw(); e.preventDefault(); e.stopImmediatePropagation(); return; }
     if (e.key === 'Escape') { if (typing) (document.activeElement as HTMLElement).blur(); else if (run) nestStop(); else if (sel.size) { sel.clear(); draw(); } else closeMarker(); e.preventDefault(); e.stopImmediatePropagation(); return; }
     if (typing) { e.stopImmediatePropagation(); return; }
     const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
@@ -327,6 +444,8 @@ export function openMarker(app: App) {
     else if (mod) return; // leave browser shortcuts (and Ctrl+S) alone
     else if (k === 'n') nestStart();
     else if (k === 'r') rotateSel();
+    else if (k === 't') { mode = 'throw'; draw(); }
+    else if (k === 'm') { mode = 'move'; draw(); }
     else if (k === 'f') { fit(); draw(); }
     else if (k === 'delete' || k === 'backspace') unplaceSel();
     else if (k === 'home') push(-1, 0); else if (k === 'end') push(0, 1); else if (k === 'pageup') push(0, -1);
