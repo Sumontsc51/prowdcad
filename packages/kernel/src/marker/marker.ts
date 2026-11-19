@@ -15,6 +15,14 @@ import type { Id, SizeId } from '../model/types';
 
 export interface CutPlanRow { id: string; name: string; ratio: Record<SizeId, number>; plies: number }
 export interface CutPlanOptions { maxPlies: number; maxBundles: number }
+/**
+ * Marker direction rule (lay limits):
+ *   'bundle' — one bundle, one direction: every part of a bundle faces the same way; with the 180° switch on a bundle may be turned as a whole
+ *   'size'   — same size, same direction: all bundles of a size face the same way; sizes may face opposite ways
+ *   'all'    — all bundles one direction: every part faces the same way
+ *   'piece'  — each part on its own, as far as its piece allows (Order ▸ Rotation)
+ */
+export type MarkerDirection = 'bundle' | 'size' | 'all' | 'piece';
 /** One marker of the cut plan: its ratio and plies, and where its parts are laid. */
 export interface MarkerRow extends CutPlanRow { placements: Record<string, { x: number; y: number; rot: number }> }
 /** Everything marker making keeps with the style. */
@@ -22,6 +30,8 @@ export interface MarkerDoc {
   order: Record<SizeId, number>; maxPlies: number; maxBundles: number;
   /** fabric width (mm), gap between parts (mm), material the markers are for ('' = all pieces), nesting time (s) */
   width: number; gap: number; material: string; nestSeconds: number;
+  /** which way the parts may face (absent = 'bundle'), and whether a bundle may be turned 180° (absent = true; only used by 'bundle') */
+  direction?: MarkerDirection; rot180?: boolean;
   rows: MarkerRow[];
 }
 
@@ -133,6 +143,89 @@ export function markerParts(doc: Document, ratio: Record<SizeId, number>, o: { m
   return out;
 }
 
+// ───────────────────────── direction rule ─────────────────────────
+
+/** The group of parts that must face the same way under a rule ('' = the part is on its own). */
+export function directionGroup(p: MarkerPart, rule: MarkerDirection): string {
+  return rule === 'all' ? '*' : rule === 'size' ? p.sizeId : rule === 'bundle' ? p.sizeId + '|' + p.bundle : '';
+}
+/** May the parts of a group be turned 180° together? Only when every piece in it allows 180° and the rule does. */
+export function groupMayTurn(parts: MarkerPart[], group: string, rule: MarkerDirection, rot180: boolean): boolean {
+  if (rule === 'all' || rule === 'piece' || (rule === 'bundle' && !rot180)) return false;
+  return parts.filter(p => directionGroup(p, rule) === group).every(p => p.angles.includes(180));
+}
+/**
+ * The parts as the nester may lay them under a rule: every group gets one fixed direction. Groups that may
+ * turn alternate 0° / 180° in their order (bundle after bundle, or size after size), which lets them interlock;
+ * the others stay at 0°. Under 'piece' the parts keep their own allowed turns.
+ */
+export function directedParts(parts: MarkerPart[], rule: MarkerDirection, rot180: boolean): MarkerPart[] {
+  if (rule === 'piece') return parts;
+  const order: string[] = [];
+  for (const p of parts) { const g = directionGroup(p, rule); if (!order.includes(g)) order.push(g); }
+  const ang = new Map<string, number>();
+  let k = 0;
+  for (const g of order) ang.set(g, groupMayTurn(parts, g, rule, rot180) ? (k++ % 2 ? 180 : 0) : 0);
+  return parts.map(p => ({ ...p, angles: [ang.get(directionGroup(p, rule)) ?? 0] }));
+}
+/**
+ * Placements made to obey a rule: in every group the direction of its first laid part counts (0° when the group
+ * may not turn); parts laid the other way are taken off the marker. Returns the placements and how many were taken off.
+ */
+export function obeyDirection(parts: MarkerPart[], pl: Placements, rule: MarkerDirection, rot180: boolean): { placements: Placements; removed: number } {
+  if (rule === 'piece') return { placements: pl, removed: 0 };
+  const dir = new Map<string, number>(), out: Placements = {};
+  let removed = 0;
+  for (const p of parts) {
+    const q = pl[p.id]; if (!q) continue;
+    const g = directionGroup(p, rule);
+    if (!dir.has(g)) dir.set(g, groupMayTurn(parts, g, rule, rot180) && q.rot === 180 ? 180 : 0);
+    if (q.rot === dir.get(g)) out[p.id] = q; else removed++;
+  }
+  return { placements: out, removed };
+}
+
+// ───────────────────────── throwing a part ─────────────────────────
+
+/**
+ * Throw parts along a direction: they travel from where they are until they touch another part or an edge of
+ * the fabric, and stop there. Parts that start on top of something first travel until they are free. A part
+ * thrown along the fabric stops at the end of the marker. Returns the new placements of `ids`, or null when
+ * there is no free place on the way.
+ */
+export function throwParts(parts: MarkerPart[], pl: Placements, width: number, ids: string[], dir: Vec, o: { tol?: number; gap?: number } = {}): Placements | null {
+  const L = Math.hypot(dir.x, dir.y); if (L < 1e-9) return null;
+  const d = { x: dir.x / L, y: dir.y / L }, tol = o.tol ?? 0.05, gap = Math.max(0, o.gap ?? 0);
+  const set = new Set(ids);
+  const still = parts.filter(p => pl[p.id] && !set.has(p.id)).map(p => { const poly = placedPoly(p, pl[p.id]); return { poly, box: polyBox(poly), smp: null as Vec[] | null }; });
+  const movers = parts.filter(p => pl[p.id] && set.has(p.id)).map(p => { const poly = placedPoly(p, pl[p.id]); return { id: p.id, poly, box: polyBox(poly), smp: samples(poly, 8) }; });
+  if (!movers.length) return null;
+  const end = still.reduce((a, s) => Math.max(a, s.box.x1), 0);
+  const reach = gap + tol;
+  const deep = (pts: Vec[], poly: Vec[], dx: number, dy: number) => pts.some(q => { const v = { x: q.x + dx, y: q.y + dy }; return pointInPolygon(v, poly) ? distToPolygon(v, poly) > tol : gap > 0 && distToPolygon(v, poly) < gap - tol; });
+  const fits = (t: number): boolean => {
+    const dx = d.x * t, dy = d.y * t;
+    for (const m of movers) {
+      const b = { x0: m.box.x0 + dx, y0: m.box.y0 + dy, x1: m.box.x1 + dx, y1: m.box.y1 + dy };
+      if (b.y0 < -tol || b.y1 > width + tol || b.x0 < -tol) return false;
+      if (d.x > 0.05 && t > 0 && b.x0 > end + tol) return false; // along the fabric: not past the end of the marker
+      for (const s of still) {
+        if (b.x1 < s.box.x0 - reach + tol * 2 || s.box.x1 < b.x0 - reach + tol * 2 || b.y1 < s.box.y0 - reach + tol * 2 || s.box.y1 < b.y0 - reach + tol * 2) continue;
+        s.smp ??= samples(s.poly, 8);
+        if (deep(m.smp, s.poly, dx, dy) || deep(s.smp, m.poly, -dx, -dy)) return false;
+      }
+    }
+    return true;
+  };
+  const far = 3 * (width + end) + 4000;
+  let t = 0;
+  if (!fits(0)) { for (t = 5; t <= far && !fits(t); t += 5); if (t > far) return null; }
+  for (const step of [40, 8, 1.6, 0.3, 0.05]) while (t + step <= far && fits(t + step)) t += step;
+  const out: Placements = {};
+  for (const m of movers) out[m.id] = { ...pl[m.id], x: pl[m.id].x + d.x * t, y: pl[m.id].y + d.y * t };
+  return out;
+}
+
 // ───────────────────────── checks and statistics ─────────────────────────
 
 export interface MarkerStats { parts: number; placed: number; length: number; usedArea: number; efficiency: number; totalArea: number }
@@ -205,7 +298,7 @@ export function nestJob(parts: MarkerPart[], width: number, o: { gap?: number; i
   const groups: string[][] = [], byKey = new Map<string, number>(), items: unknown[] = [];
   for (const p of parts) {
     if (o.ids && !o.ids.has(p.id)) continue;
-    const key = [p.pieceId, p.sizeId, p.mirror ? 1 : 0].join('|');
+    const key = [p.pieceId, p.sizeId, p.mirror ? 1 : 0, p.angles.join(',')].join('|');
     let gi = byKey.get(key);
     if (gi === undefined) {
       gi = groups.length; byKey.set(key, gi); groups.push([]);
