@@ -184,6 +184,17 @@ async function nested(h, fixtures) {
     const st = () => h.ev(() => { const E = window.__e2e, m = E.app.style.meta.marker, r = m.rows[0]; return { n: Object.keys(r.placements).length, rots: Object.values(r.placements).map(q => q.rot).join(), bad: document.querySelectorAll('.mk-part.bad').length, marry: (r.marry || []).map(g => g.length).join(), block: Object.keys(m.block || {}).length, carry: document.querySelectorAll('.mk-part.carry').length, blocks: document.querySelectorAll('.mk-part.block').length }; });
     const centre = async sel => { const b = await P.locator(sel).first().boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
     const lay = await P.evaluate(() => { const a = document.querySelector('.mk-plan').getBoundingClientRect(), b = document.querySelector('.mk-stage').getBoundingClientRect(); return a.bottom <= b.top + 1 && a.width > b.width * 0.9; });
+    // folded cut plan: the markers are tabs
+    await h.ev(() => { const E = window.__e2e; E.app.doc.transact('2nd marker', s => { const m = s.meta.marker; m.rows.push({ id: 'mx', name: 'Marker 2', ratio: { ...m.rows[0].ratio }, plies: 3, placements: {} }); }); });
+    await P.locator('[data-mk="plan-fold"]').click(); await h.settle(200);
+    const tabN = await P.locator('.mk-tab').count(), tblGone = await P.locator('.mk-tbl').count();
+    await P.locator('.mk-tab').nth(1).click(); await h.settle(150);
+    const tabOn = await P.locator('.mk-tab.on').textContent();
+    await P.locator('.mk-tab').nth(0).click(); await h.settle(150);
+    await h.ev(() => { const E = window.__e2e; E.app.doc.transact('drop 2nd', s => { s.meta.marker.rows.pop(); }); });
+    await P.locator('[data-mk="plan-fold"]').click(); await h.settle(200);
+    const tabsOk = tabN === 2 && tblGone === 0 && /Marker 2/.test(tabOn) && (await P.locator('.mk-tbl').count()) === 1;
+    if (!tabsOk) return bail(`tabs: ${tabN} tabs, table hidden ${tblGone === 0}, selected "${tabOn}"`);
     const fab = await P.locator('.mk-fabric').boundingBox();
     const throwTo = async (sel, tx, ty) => { const c = await centre(sel); await P.mouse.move(c.x, c.y); await P.mouse.down(); await P.mouse.move((c.x + tx) / 2, (c.y + ty) / 2, { steps: 4 }); await P.mouse.move(tx, ty, { steps: 4 }); const aim = await P.locator('.mk-aim').count(); await P.mouse.up(); await P.waitForTimeout(420); await h.settle(80); return aim; };
     const s0 = await st(); stage = 's0';
