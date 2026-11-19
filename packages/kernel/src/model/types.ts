@@ -92,6 +92,8 @@ export interface Contour {
   style?: 'solid' | 'dashed' | 'dotted';
   /** draw vs cut (plot/cut mode) */
   mode?: 'draw' | 'cut';
+  /** (internal lines) match line: 'M1' = match to the fabric (stripe / plaid), 'P1' … 'P15' = match piece to piece */
+  match?: string;
   /**
    * (internal lines) lock to the sew line, re-applied after every edit in every size (ops/lock.ts).
    * Absent = free internal.
