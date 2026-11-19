@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { Document } from '../src/model/doc';
 import { makeStyle, makePiece, rectangleContour, makeContour, gradePoint } from '../src/model/factory';
-import { switchMarkerMaterial, type MarkerDoc } from '../src/marker/marker';
+import { switchMarkerMaterial, markerPerimeter, partLabel, borderText, cutOutline, DEFAULT_ANNOT, type MarkerDoc } from '../src/marker/marker';
 import { directedParts, obeyDirection, groupMayTurn, directionGroup, throwParts, autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placeAt, placedPoly, polyBox, nestJob, nestResult, markerDXF, markerHPGL, simplifyClosed } from '../src/marker/marker';
 
 describe('cut plan', () => {
@@ -113,7 +113,7 @@ describe('marker export', () => {
     expect((dxf.match(/\nPOLYLINE\n8\nCUT/g) ?? []).length).toBe(parts.length);
     expect(dxf).toContain('BODY M'); expect(dxf.trim().endsWith('EOF')).toBe(true);
     const plt = markerHPGL(parts, pl);
-    expect((plt.match(/^PD/gm) ?? []).length).toBe(parts.length);
+    expect((plt.split('SP2;')[0].match(/^PD/gm) ?? []).length).toBe(parts.length); // pen 1 cuts one outline per part
   });
 });
 
@@ -230,5 +230,46 @@ describe('a cut plan per material', () => {
     expect(d.others!.LINING.rows[0].width).toBe(1400);
     switchMarkerMaterial(d, 'LINING');
     expect(d.rows.map(r => r.id)).toEqual(['b']); expect(d.maxPlies).toBe(80); expect(d.others!.LINING).toBeUndefined();
+  });
+});
+
+describe('annotation, buffer and plot', () => {
+  const d = style(), I = ids(d);
+  d.transact('desc', st => { st.pieces[0].description = 'Front body'; });
+  const body = d.style.pieces[0];
+  it('a part looks as on the pattern sheet (y turned for the view from above) and carries its sew line and code', () => {
+    const p = markerParts(d, { [I.M]: 2 }).find(q => q.name === 'BODY' && q.bundle === 2)!;
+    expect(p.code).toBe('M-2'); expect(p.desc).toBe('Front body');
+    expect(p.sew!.length).toBe(4);
+    const sb = polyBox(p.sew!); expect(sb.x0).toBeCloseTo(10, 6); expect(sb.y0).toBeCloseTo(10, 6); // seam 10 inside the cut line
+  });
+  it('labels follow the settings', () => {
+    const p = markerParts(d, { [I.M]: 1 }).find(q => q.name === 'BODY')!;
+    expect(partLabel(p, DEFAULT_ANNOT, 'ST-1')).toEqual(['BODY M M-1']);
+    expect(partLabel(p, { ...DEFAULT_ANNOT, style: true, desc: true, bundle: false }, 'ST-1')).toEqual(['ST-1 BODY M', 'Front body']);
+    expect(partLabel(p, { ...DEFAULT_ANNOT, piece: false, size: false, bundle: false })).toEqual([]);
+  });
+  it('buffer keeps a margin around the part; only the real outline is cut', () => {
+    const plain = markerParts(d, { [I.M]: 1 }).find(q => q.name === 'BODY')!;
+    const buf = markerParts(d, { [I.M]: 1 }, { buffer: { [body.id]: 5 } }).find(q => q.name === 'BODY')!;
+    expect(buf.hold).toBe('buffer');
+    expect(polyBox(buf.poly).x1).toBeCloseTo(polyBox(plain.poly).x1 + 10, 4);
+    expect(polyBox(cutOutline(buf)).x1 - polyBox(cutOutline(buf)).x0).toBeCloseTo(620, 4);
+    const pl = { [buf.id]: placeAt(buf, 0, 0, 0) };
+    expect(markerPerimeter([buf], pl)).toBeCloseTo(2 * (620 + 420), 3);
+    const dxf = markerDXF([buf], pl, 1000);
+    expect((dxf.match(/\nPOLYLINE\n8\nCUT/g) ?? []).length).toBe(1); expect(dxf).not.toContain('BLOCK');
+  });
+  it('the plot cuts with pen 1 and draws seam, grain, text and the border facts with pen 2, as set', () => {
+    const parts = markerParts(d, { [I.M]: 1 }).filter(q => q.name === 'BODY');
+    const pl = Object.fromEntries(parts.map((p, i) => [p.id, placeAt(p, i * 620, 0, 0)]));
+    const full = markerHPGL(parts, pl, 1000, { annot: { seam: true }, name: 'Marker 1', ratio: 'M 1', styleName: 'ST-1' });
+    const [cut, draw] = full.split('SP2;');
+    expect((cut.match(/^PD/gm) ?? []).length).toBe(2);
+    expect(draw).toContain('LBBODY M M-1'); expect(draw).toContain('Marker 1'); expect(draw).toContain('EFF'); expect(draw).toContain('PERIM');
+    expect((draw.match(/^PD/gm) ?? []).length).toBe(2 + 2 + 1); // seam + grain per part, and the border
+    const bare = markerHPGL(parts, pl, 1000, { annot: { piece: false, size: false, bundle: false, grain: false, border: false, internals: 'none' } });
+    expect(bare).not.toContain('SP2;'); expect(bare).not.toContain('LB');
+    expect(borderText(parts, pl, 1000, { ...DEFAULT_ANNOT, bPerim: false, bEff: false }, { name: 'M1', ratio: 'M 1' })).toBe('M1   M 1   L 1240 mm   W 1000 mm');
   });
 });
