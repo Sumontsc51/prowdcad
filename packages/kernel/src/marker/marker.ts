@@ -22,7 +22,38 @@ export interface MarkerAnnot {
   /** internal lines of the pieces: left out, drawn (pen), or cut */
   internals: 'none' | 'draw' | 'cut';
   border: boolean; bName: boolean; bRatio: boolean; bLength: boolean; bWidth: boolean; bEff: boolean; bPerim: boolean;
+  /**
+   * What is written on a part, as typed: every line of this text is one printed line, and {style} {piece} {size} {bundle} {no}
+   * {desc} {material} are filled in. Absent = built from the switches above.
+   */
+  partText?: string;
+  /** What is written at the marker, as typed: {name} {ratio} {length} {width} {eff} {perim} {style} {material} {plies} {parts}. Absent = built from the switches. */
+  markerText?: string;
+  /** unit of the lengths written at the marker (absent = mm) */
+  unit?: AnnotUnit;
+  /** where the marker text goes: above or below the marker at its start, or written upward before its start / after its end (absent = top) */
+  place?: AnnotPlace;
+  /** text height on the parts and at the marker (mm); absent = 8 and 12 */
+  textH?: number; bTextH?: number;
 }
+export type AnnotUnit = 'mm' | 'cm' | 'm' | 'in' | 'yd';
+export type AnnotPlace = 'top' | 'bottom' | 'start' | 'end';
+/** How a piece is treated in marker making (Piece details). */
+export interface PieceDetail {
+  /** goes into fuse blocks when the marker is nested */
+  block?: boolean;
+  /** a major piece (the big panels): shown first among the waiting parts */
+  major?: boolean;
+  /** turns allowed on the marker; absent = the piece's own setting (Order ▸ Rotation) */
+  rotation?: '1way' | '2way' | '4way';
+  /** how far the part may be tilted off the grain, either way (degrees) */
+  tilt?: number;
+}
+/** Fuse blocks built by the nester: no block is longer or wider than this; every block has its own margin all round. */
+export interface BlockSet { maxLength: number; maxWidth: number; buffer: number; shape: 'rect' | 'contour' }
+export const DEFAULT_BLOCKSET: BlockSet = { maxLength: 1000, maxWidth: 600, buffer: 10, shape: 'rect' };
+/** A fuse block on a marker: these laid parts are cut out together, inside one outline (their box, or their contour, grown by the margin). They move as one. */
+export interface MarkerBlock { ids: string[]; shape: 'rect' | 'contour'; buffer: number; /** built by the nester (replaced at the next nest) */ auto?: boolean }
 export const DEFAULT_ANNOT: MarkerAnnot = { style: false, piece: true, size: true, bundle: true, desc: false, grain: true, seam: false, internals: 'draw', border: true, bName: true, bRatio: true, bLength: true, bWidth: true, bEff: true, bPerim: true };
 
 /**
@@ -40,6 +71,8 @@ export interface MarkerRow extends CutPlanRow {
   width?: number;
   /** married parts: groups of part ids that are picked up, thrown and turned as one */
   marry?: string[][];
+  /** fuse blocks of laid parts */
+  blocks?: MarkerBlock[];
 }
 /** Everything marker making keeps with the style. */
 export interface MarkerDoc {
@@ -54,8 +87,12 @@ export interface MarkerDoc {
   buffer?: Record<Id, number>;
   /** what is written on the parts and around the marker (plot, DXF and screen); absent = DEFAULT_ANNOT */
   annot?: Partial<MarkerAnnot>;
-  /** block fuse: pieces cut as a block, their outline replaced by its box grown by this margin (mm), keyed by piece id */
+  /** (old files) pieces that were laid as a block each; read as "goes into fuse blocks" */
   block?: Record<Id, number>;
+  /** piece details: block, major, rotation, tilt, keyed by piece id */
+  detail?: Record<Id, PieceDetail>;
+  /** limits and shape of the fuse blocks the nester builds; absent = DEFAULT_BLOCKSET */
+  blockSet?: Partial<BlockSet>;
   rows: MarkerRow[];
 }
 
@@ -130,10 +167,12 @@ export interface MarkerPart {
   grain: [Vec, Vec];
   area: number;
   material: string;
-  /** block fuse / buffer: the piece's own cut outline inside `poly` (which is then the block, or the outline grown by the buffer) */
+  /** buffer: the piece's own cut outline inside `poly` (which is then the outline grown by the buffer) */
   inner?: Vec[];
-  /** 'block' = cut as a block (the block is cut, the outline is cut after fusing); 'buffer' = only room kept around the part */
+  /** 'buffer' = room kept around the part ('block' is only used for the stand-in part of a fuse block) */
   hold?: 'block' | 'buffer';
+  /** piece details: tilt allowed either way (degrees), major piece, goes into fuse blocks */
+  tilt?: number; major?: boolean; fuse?: boolean;
   /** sew line and internal lines of the piece, in the frame of the part */
   sew?: Vec[]; lines?: Vec[][];
   /** piece description, and the bundle code (size and bundle number) */
@@ -157,7 +196,7 @@ export function placeAt(part: MarkerPart, x: number, y: number, rot: number): Pl
  * ratio, once per bundle and per quantity; a piece cut as a pair (side L + R) gives a mirrored part as well.
  * `material` keeps only the pieces of that material (empty = all).
  */
-export function markerParts(doc: Document, ratio: Record<SizeId, number>, o: { material?: string; block?: Record<Id, number>; buffer?: Record<Id, number> } = {}): MarkerPart[] {
+export function markerParts(doc: Document, ratio: Record<SizeId, number>, o: { material?: string; block?: Record<Id, number>; buffer?: Record<Id, number>; detail?: Record<Id, PieceDetail> } = {}): MarkerPart[] {
   const out: MarkerPart[] = [];
   for (const piece of doc.style.pieces) {
     const mat = piece.order?.material ?? '';
@@ -169,7 +208,9 @@ export function markerParts(doc: Document, ratio: Record<SizeId, number>, o: { m
       const src = rp.cut.length > 2 ? rp.cut : rp.sew.pts; if (src.length < 3) continue;
       const g = rp.grain, ang = -Math.atan2(g.b.y - g.a.y, g.b.x - g.a.x) * 180 / Math.PI;
       const sizeName = line.sizes.find(s => s.id === sid)?.name ?? sid;
-      const rot = piece.order?.rotation ?? '2way';
+      const det = o.detail?.[piece.id] ?? {};
+      const rot = det.rotation ?? piece.order?.rotation ?? '2way';
+      const tilt = Math.max(0, Math.min(15, det.tilt ?? 0)), fuse = det.block ?? !!o.block?.[piece.id];
       const angles = rot === '1way' ? [0] : rot === '2way' ? [0, 180] : [0, 90, 180, 270];
       const qty = Math.max(1, Math.floor(piece.order?.qtyPerBundle ?? 1));
       const pair = piece.order?.side === 'LR';
@@ -181,15 +222,10 @@ export function markerParts(doc: Document, ratio: Record<SizeId, number>, o: { m
         let pts = src.map(T0);
         const b = polyBox(pts);
         let sh = { x: -b.x0, y: -b.y0 };
-        // block fuse: the part is laid as a block (its box grown by the margin). Buffer: the outline grown by the margin keeps the
-        // room around the part clear. In both the real outline is kept inside.
-        const bm = Math.max(0, o.block?.[piece.id] ?? 0), bf = bm > 0 ? 0 : Math.max(0, o.buffer?.[piece.id] ?? 0);
-        let inner: Vec[] | undefined, hold: 'block' | 'buffer' | undefined;
-        if (bm > 0) {
-          sh = { x: bm - b.x0, y: bm - b.y0 }; inner = pts.map(q => ({ x: q.x + sh.x, y: q.y + sh.y })); hold = 'block';
-          const w = b.x1 - b.x0 + 2 * bm, hh = b.y1 - b.y0 + 2 * bm;
-          pts = [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: hh }, { x: 0, y: hh }];
-        } else if (bf > 0) {
+        // buffer: the outline grown by the margin keeps the room around the part clear; the real outline is kept inside
+        const bf = Math.max(0, o.buffer?.[piece.id] ?? 0);
+        let inner: Vec[] | undefined, hold: 'buffer' | undefined;
+        if (bf > 0) {
           let grown: Vec[] = []; try { grown = offsetOutward(pts, bf, 'miter'); } catch { grown = []; }
           if (grown.length > 2) {
             const gb = polyBox(grown); sh = { x: -gb.x0, y: -gb.y0 };
@@ -205,7 +241,7 @@ export function markerParts(doc: Document, ratio: Record<SizeId, number>, o: { m
         const desc = piece.description?.trim() || undefined;
         const area = Math.abs(signedArea(pts));
         for (let bn = 1; bn <= n; bn++) for (let k = 1; k <= qty; k++) {
-          out.push({ id: [piece.id, sid, bn, k, mirror ? 'm' : 'n'].join('|'), pieceId: piece.id, name: piece.name, sizeId: sid, sizeName, bundle: bn, mirror, angles, poly: pts, grain, area, material: mat, code: `${sizeName}-${bn}`, ...(inner ? { inner, hold } : {}), ...(sew ? { sew } : {}), ...(lines.length ? { lines } : {}), ...(desc ? { desc } : {}) });
+          out.push({ id: [piece.id, sid, bn, k, mirror ? 'm' : 'n'].join('|'), pieceId: piece.id, name: piece.name, sizeId: sid, sizeName, bundle: bn, mirror, angles, poly: pts, grain, area, material: mat, code: `${sizeName}-${bn}`, ...(inner ? { inner, hold } : {}), ...(sew ? { sew } : {}), ...(lines.length ? { lines } : {}), ...(desc ? { desc } : {}), ...(tilt ? { tilt } : {}), ...(det.major ? { major: true } : {}), ...(fuse ? { fuse: true } : {}) });
         }
       }
     }
@@ -215,6 +251,8 @@ export function markerParts(doc: Document, ratio: Record<SizeId, number>, o: { m
 
 // ───────────────────────── direction rule ─────────────────────────
 
+/** The way a part faces: its turn without the tilt (0, 90, 180 or 270). */
+export function facing(rot: number): number { return ((Math.round(rot / 90) * 90) % 360 + 360) % 360; }
 /** The group of parts that must face the same way under a rule ('' = the part is on its own). */
 export function directionGroup(p: MarkerPart, rule: MarkerDirection): string {
   return rule === 'all' ? '*' : rule === 'size' ? p.sizeId : rule === 'bundle' ? p.sizeId + '|' + p.bundle : '';
@@ -249,8 +287,8 @@ export function obeyDirection(parts: MarkerPart[], pl: Placements, rule: MarkerD
   for (const p of parts) {
     const q = pl[p.id]; if (!q) continue;
     const g = directionGroup(p, rule);
-    if (!dir.has(g)) dir.set(g, groupMayTurn(parts, g, rule, rot180) && q.rot === 180 ? 180 : 0);
-    if (q.rot === dir.get(g)) out[p.id] = q; else removed++;
+    if (!dir.has(g)) dir.set(g, groupMayTurn(parts, g, rule, rot180) && facing(q.rot) === 180 ? 180 : 0);
+    if (facing(q.rot) === dir.get(g)) out[p.id] = q; else removed++;
   }
   return { placements: out, removed };
 }
@@ -263,7 +301,20 @@ export function obeyDirection(parts: MarkerPart[], pl: Placements, rule: MarkerD
  * thrown along the fabric stops at the end of the marker. Returns the new placements of `ids`, or null when
  * there is no free place on the way.
  */
-export function throwParts(parts: MarkerPart[], pl: Placements, width: number, ids: string[], dir: Vec, o: { tol?: number; gap?: number } = {}): Placements | null {
+export function throwParts(parts: MarkerPart[], pl: Placements, width: number, ids: string[], dir: Vec, o: { tol?: number; gap?: number; blocks?: MarkerBlock[] } = {}): Placements | null {
+  if (o.blocks?.length) {
+    // a fuse block travels and stops as one shape: its outline
+    const v = blockView(parts, pl, o.blocks), vid = new Set(ids.map(id => v.of.get(id) ?? id));
+    const res = throwParts(v.parts, v.pl, width, [...vid], dir, { tol: o.tol, gap: o.gap });
+    if (!res) return null;
+    const out: Placements = {};
+    for (const id of vid) {
+      const m = v.members.get(id);
+      if (!m) { out[id] = res[id]; continue; }
+      for (const q of m) out[q] = { ...pl[q], x: pl[q].x + res[id].x - v.pl[id].x, y: pl[q].y + res[id].y - v.pl[id].y };
+    }
+    return out;
+  }
   const L = Math.hypot(dir.x, dir.y); if (L < 1e-9) return null;
   const d = { x: dir.x / L, y: dir.y / L }, tol = o.tol ?? 0.05, gap = Math.max(0, o.gap ?? 0);
   const set = new Set(ids);
@@ -299,8 +350,9 @@ export function throwParts(parts: MarkerPart[], pl: Placements, width: number, i
 // ───────────────────────── checks and statistics ─────────────────────────
 
 export interface MarkerStats { parts: number; placed: number; length: number; usedArea: number; efficiency: number; totalArea: number }
-export function markerStats(parts: MarkerPart[], pl: Placements, width: number): MarkerStats {
+export function markerStats(parts: MarkerPart[], pl: Placements, width: number, blocks?: MarkerBlock[]): MarkerStats {
   let length = 0, used = 0, placed = 0, all = 0;
+  for (const b of blocks ?? []) { const o = blockOutline(parts, pl, b); if (o) length = Math.max(length, polyBox(o).x1); }
   for (const p of parts) {
     all += p.area;
     const q = pl[p.id]; if (!q) continue;
@@ -327,7 +379,14 @@ function samples(pts: Vec[], step: number): Vec[] {
  * Parts that are not laid correctly: they overlap another part by more than `tol` mm, or they reach outside
  * the fabric (y < 0, y > width, x < 0). Returns their ids.
  */
-export function markerProblems(parts: MarkerPart[], pl: Placements, width: number, tol = 0.6): Set<string> {
+export function markerProblems(parts: MarkerPart[], pl: Placements, width: number, tol = 0.6, blocks?: MarkerBlock[]): Set<string> {
+  if (blocks?.length) {
+    // a block is checked as one shape against the rest; its own parts are checked against each other
+    const v = blockView(parts, pl, blocks), out = new Set<string>();
+    for (const id of markerProblems(v.parts, v.pl, width, tol)) { const m = v.members.get(id); if (m) m.forEach(q => out.add(q)); else out.add(id); }
+    for (const m of v.members.values()) { const set = new Set(m), sub: Placements = {}; for (const q of m) sub[q] = pl[q]; for (const id of markerProblems(parts.filter(p => set.has(p.id)), sub, Infinity, tol)) out.add(id); }
+    return out;
+  }
   const bad = new Set<string>();
   const P = parts.filter(p => pl[p.id]).map(p => { const poly = placedPoly(p, pl[p.id]); return { id: p.id, poly, box: polyBox(poly), smp: null as Vec[] | null }; });
   for (const a of P) if (a.box.y0 < -tol || a.box.y1 > width + tol || a.box.x0 < -tol) bad.add(a.id);
@@ -339,6 +398,140 @@ export function markerProblems(parts: MarkerPart[], pl: Placements, width: numbe
     if (deep(a.smp, b.poly) || deep(b.smp, a.poly)) { bad.add(a.id); bad.add(b.id); }
   }
   return bad;
+}
+
+// ───────────────────────── fuse blocks ─────────────────────────
+
+const hullOf = (pts: Vec[]): Vec[] => {
+  const p = [...pts].sort((a, b) => a.x - b.x || a.y - b.y); if (p.length < 3) return p;
+  const cr = (o: Vec, a: Vec, b: Vec) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lo: Vec[] = [], up: Vec[] = [];
+  for (const q of p) { while (lo.length > 1 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (up.length > 1 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+  return [...lo.slice(0, -1), ...up.slice(0, -1)];
+};
+/**
+ * The contour around shapes, `buffer` mm away from them: the shapes are drawn on a fine grid, grown by the buffer, holes are filled
+ * and the outer edge is followed. Shapes too far apart to give one outline get their common hull instead.
+ */
+export function contourAround(polys: Vec[][], buffer: number): Vec[] {
+  const all = polys.flat(), bb = polyBox(all);
+  const hull = (): Vec[] => { const hq = hullOf(all); let g: Vec[] = []; try { g = buffer > 0 ? offsetOutward(signedArea(hq) < 0 ? hq.reverse() : hq, buffer, 'miter') : hq; } catch { g = []; } return g.length > 2 ? g : [{ x: bb.x0 - buffer, y: bb.y0 - buffer }, { x: bb.x1 + buffer, y: bb.y0 - buffer }, { x: bb.x1 + buffer, y: bb.y1 + buffer }, { x: bb.x0 - buffer, y: bb.y1 + buffer }]; };
+  const span = Math.max(bb.x1 - bb.x0, bb.y1 - bb.y0) + 2 * buffer;
+  const cell = Math.max(1, Math.min(5, span / 360)), pad = buffer + 3 * cell;
+  const x0 = bb.x0 - pad, y0 = bb.y0 - pad, nx = Math.ceil((bb.x1 - bb.x0 + 2 * pad) / cell) + 1, ny = Math.ceil((bb.y1 - bb.y0 + 2 * pad) / cell) + 1;
+  if (nx * ny > 400000) return hull();
+  const g = new Uint8Array(nx * ny), at = (i: number, j: number) => j * nx + i;
+  const ci = (x: number) => Math.max(0, Math.min(nx - 1, Math.floor((x - x0) / cell))), cj = (y: number) => Math.max(0, Math.min(ny - 1, Math.floor((y - y0) / cell)));
+  for (const poly of polys) {
+    for (let j = 0; j < ny; j++) {
+      const y = y0 + (j + 0.5) * cell, xs: number[] = [];
+      for (let k = 0; k < poly.length; k++) { const a = poly[k], b = poly[(k + 1) % poly.length]; if ((a.y > y) !== (b.y > y)) xs.push(a.x + (y - a.y) / (b.y - a.y) * (b.x - a.x)); }
+      xs.sort((a, b) => a - b);
+      for (let k = 0; k + 1 < xs.length; k += 2) for (let i = ci(xs[k]); i <= ci(xs[k + 1]); i++) g[at(i, j)] = 1;
+    }
+    for (let k = 0; k < poly.length; k++) { // the outline itself, so that thin places are not lost
+      const a = poly[k], b = poly[(k + 1) % poly.length], n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / (cell * 0.5)));
+      for (let t = 0; t <= n; t++) g[at(ci(a.x + (b.x - a.x) * t / n), cj(a.y + (b.y - a.y) * t / n))] = 1;
+    }
+  }
+  // grow by the buffer (and one cell, so that the outline is never nearer than the buffer)
+  const rr = Math.ceil((buffer + cell) / cell), d = new Uint8Array(g);
+  if (buffer > 0) {
+    const disk: [number, number][] = []; for (let dj = -rr; dj <= rr; dj++) for (let di = -rr; di <= rr; di++) if (di * di + dj * dj <= rr * rr) disk.push([di, dj]);
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      if (!g[at(i, j)]) continue;
+      if (i > 0 && i < nx - 1 && j > 0 && j < ny - 1 && g[at(i - 1, j)] && g[at(i + 1, j)] && g[at(i, j - 1)] && g[at(i, j + 1)]) continue;
+      for (const [di, dj] of disk) { const a = i + di, b = j + dj; if (a >= 0 && b >= 0 && a < nx && b < ny) d[at(a, b)] = 1; }
+    }
+  }
+  // outside = what can be reached from the border; everything else is the block (holes filled)
+  const out = new Uint8Array(nx * ny), st: number[] = [];
+  const seed = (i: number, j: number) => { const k = at(i, j); if (!d[k] && !out[k]) { out[k] = 1; st.push(k); } };
+  for (let i = 0; i < nx; i++) { seed(i, 0); seed(i, ny - 1); } for (let j = 0; j < ny; j++) { seed(0, j); seed(nx - 1, j); }
+  while (st.length) { const k = st.pop()!, i = k % nx, j = (k - i) / nx; if (i > 0) seed(i - 1, j); if (i < nx - 1) seed(i + 1, j); if (j > 0) seed(i, j - 1); if (j < ny - 1) seed(i, j + 1); }
+  const inn = (i: number, j: number) => i >= 0 && j >= 0 && i < nx && j < ny && !out[at(i, j)];
+  // cells that touch only by a corner would make the outline cross itself: fill the corner in
+  for (let again = true, guard = 0; again && guard < 8; guard++) { again = false; for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) { const a = inn(i, j), b = inn(i + 1, j), c = inn(i, j + 1), e = inn(i + 1, j + 1); if ((a && e && !b && !c) || (b && c && !a && !e)) { out[at(i, j)] = out[at(i + 1, j)] = out[at(i, j + 1)] = out[at(i + 1, j + 1)] = 0; again = true; } } }
+  // one piece? (4-connected)
+  let first = -1, count = 0; for (let k = 0; k < out.length; k++) if (!out[k]) { count++; if (first < 0) first = k; }
+  if (first < 0) return hull();
+  const seen = new Uint8Array(nx * ny); let reach = 0; st.push(first); seen[first] = 1;
+  while (st.length) { const k = st.pop()!, i = k % nx, j = (k - i) / nx; reach++; for (const [a, b] of [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1]]) if (inn(a, b) && !seen[at(a, b)]) { seen[at(a, b)] = 1; st.push(at(a, b)); } }
+  if (reach !== count) return hull();
+  // follow the edge: every side between the block and the outside is one step, the block on its left
+  const next = new Map<number, number>(), vk = (i: number, j: number) => j * (nx + 1) + i;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    if (!inn(i, j)) continue;
+    if (!inn(i, j - 1)) next.set(vk(i, j), vk(i + 1, j));
+    if (!inn(i + 1, j)) next.set(vk(i + 1, j), vk(i + 1, j + 1));
+    if (!inn(i, j + 1)) next.set(vk(i + 1, j + 1), vk(i, j + 1));
+    if (!inn(i - 1, j)) next.set(vk(i, j + 1), vk(i, j));
+  }
+  const start = next.keys().next().value as number, loop: Vec[] = [];
+  for (let k = start, n = 0; n <= next.size; n++) { const i = k % (nx + 1), j = (k - i) / (nx + 1); loop.push({ x: x0 + i * cell, y: y0 + j * cell }); k = next.get(k)!; if (k === start || k === undefined) break; }
+  if (loop.length < 4) return hull();
+  const pts = simplifyClosed(loop, cell * 0.8);
+  if (signedArea(pts) < 0) pts.reverse();
+  return pts.length > 2 ? pts : hull();
+}
+
+const outlineCache = new Map<string, Vec[]>();
+/** The outline of a fuse block where its parts lie now (null when none of them is laid). */
+export function blockOutline(parts: MarkerPart[], pl: Placements, b: MarkerBlock): Vec[] | null {
+  const set = new Set(b.ids), mem = parts.filter(p => set.has(p.id) && pl[p.id]); if (!mem.length) return null;
+  const o = pl[mem[0].id], m = Math.max(0, b.buffer);
+  if (b.shape === 'rect') {
+    const bb = polyBox(mem.flatMap(p => cutOutline(p).map(q => placedPoint(pl[p.id], q))));
+    return [{ x: bb.x0 - m, y: bb.y0 - m }, { x: bb.x1 + m, y: bb.y0 - m }, { x: bb.x1 + m, y: bb.y1 + m }, { x: bb.x0 - m, y: bb.y1 + m }];
+  }
+  // the contour is worked out once for a block and moved with it
+  const key = [m, ...mem.map(p => [p.id, p.area.toFixed(1), pl[p.id].rot, (pl[p.id].x - o.x).toFixed(2), (pl[p.id].y - o.y).toFixed(2)].join(':'))].join('|');
+  let loc = outlineCache.get(key);
+  if (!loc) {
+    loc = contourAround(mem.map(p => cutOutline(p).map(q => { const v = placedPoint(pl[p.id], q); return { x: v.x - o.x, y: v.y - o.y }; })), m);
+    if (outlineCache.size > 300) outlineCache.clear();
+    outlineCache.set(key, loc);
+  }
+  return loc.map(q => ({ x: q.x + o.x, y: q.y + o.y }));
+}
+/**
+ * A fuse block as one stand-in part: its outline with the lower-left of its box at the origin, where that origin lies now (`at`),
+ * and where its parts lie inside it (`local`). Laying the stand-in at a place lays the parts: local + that place.
+ */
+export function blockPart(id: string, parts: MarkerPart[], pl: Placements, b: MarkerBlock): { part: MarkerPart; at: Placement; local: Placements; ids: string[] } | null {
+  const o = blockOutline(parts, pl, b); if (!o) return null;
+  const set = new Set(b.ids), mem = parts.filter(p => set.has(p.id) && pl[p.id]), bb = polyBox(o);
+  const poly = o.map(q => ({ x: q.x - bb.x0, y: q.y - bb.y0 })); if (signedArea(poly) < 0) poly.reverse();
+  const local: Placements = {}; for (const p of mem) local[p.id] = { x: pl[p.id].x - bb.x0, y: pl[p.id].y - bb.y0, rot: pl[p.id].rot };
+  const f = mem[0];
+  const part: MarkerPart = { id, pieceId: id, name: 'Block', sizeId: f.sizeId, sizeName: f.sizeName, bundle: f.bundle, mirror: false, angles: [0], poly, grain: [{ x: 0, y: 0 }, { x: 1, y: 0 }], area: mem.reduce((a, p) => a + p.area, 0), material: f.material, hold: 'block', code: '' };
+  return { part, at: { x: bb.x0, y: bb.y0, rot: 0 }, local, ids: mem.map(p => p.id) };
+}
+/** The marker with every fuse block replaced by its stand-in part (for throwing and checking). */
+function blockView(parts: MarkerPart[], pl: Placements, blocks: MarkerBlock[]) {
+  const of = new Map<string, string>(), members = new Map<string, string[]>(), vp: MarkerPart[] = [], vpl: Placements = { ...pl };
+  blocks.forEach((b, k) => {
+    const bp = blockPart('#b' + k, parts, pl, { ...b, ids: b.ids.filter(id => !of.has(id)) }); if (!bp) return;
+    vp.push(bp.part); vpl[bp.part.id] = bp.at; members.set(bp.part.id, bp.ids);
+    for (const id of bp.ids) { of.set(id, bp.part.id); delete vpl[id]; }
+  });
+  for (const p of parts) if (!of.has(p.id)) vp.push(p);
+  return { parts: vp, pl: vpl, of, members };
+}
+/** Share parts out over `k` blocks, the biggest first, each to the block with the least in it so far. */
+export function blockBins(parts: MarkerPart[], k: number): MarkerPart[][] {
+  const bins: MarkerPart[][] = Array.from({ length: Math.max(1, Math.min(k, parts.length || 1)) }, () => []), load = bins.map(() => 0);
+  for (const p of [...parts].sort((a, b) => b.area - a.area)) { let i = 0; for (let j = 1; j < bins.length; j++) if (load[j] < load[i]) i = j; bins[i].push(p); load[i] += p.area; }
+  return bins.filter(b => b.length);
+}
+/** The room inside a fuse block for its parts (the limits less the margin on both sides), and the least number of blocks the parts need by area. */
+export function blockRoom(set: BlockSet, fabricWidth: number, parts: MarkerPart[] = []) {
+  const m = Math.max(0, set.buffer) + 1.5;
+  const length = Math.max(1, set.maxLength - 2 * m), width = Math.max(1, Math.min(set.maxWidth, fabricWidth) - 2 * m);
+  const area = parts.reduce((a, p) => a + p.area, 0);
+  const tooBig = parts.find(p => p.angles.every(a => { const b = polyBox(p.poly.map(q => rotP(q, a))); return b.x1 - b.x0 > length || b.y1 - b.y0 > width; }));
+  return { length, width, least: Math.max(1, Math.ceil(area / (length * width * 0.92))), tooBig };
 }
 
 // ───────────────────────── nesting engine job (sparrow) ─────────────────────────
@@ -372,12 +565,14 @@ export function nestJob(parts: MarkerPart[], width: number, o: { gap?: number; i
   const groups: string[][] = [], byKey = new Map<string, number>(), items: unknown[] = [];
   for (const p of parts) {
     if (o.ids && !o.ids.has(p.id)) continue;
-    const key = [p.pieceId, p.sizeId, p.mirror ? 1 : 0, p.angles.join(',')].join('|');
+    const t = p.tilt ?? 0, norm = (a: number) => +((((a % 360) + 360) % 360).toFixed(2));
+    const angles = t > 0 ? [...new Set(p.angles.flatMap(a => [a, a + t / 2, a - t / 2, a + t, a - t].map(norm)))] : p.angles;
+    const key = [p.pieceId, p.sizeId, p.mirror ? 1 : 0, angles.join(',')].join('|');
     let gi = byKey.get(key);
     if (gi === undefined) {
       gi = groups.length; byKey.set(key, gi); groups.push([]);
       const pts = simplifyClosed(p.poly, o.tol ?? 0.3).map(q => [+q.x.toFixed(3), +q.y.toFixed(3)]);
-      items.push({ id: gi, demand: 0, orientation: { rotation: { mode: 'discrete', angles: p.angles } }, shape: { type: 'simple_polygon', data: pts } });
+      items.push({ id: gi, demand: 0, orientation: { rotation: { mode: 'discrete', angles } }, shape: { type: 'simple_polygon', data: pts } });
     }
     groups[gi].push(p.id); (items[gi] as { demand: number }).demand++;
   }
@@ -390,40 +585,67 @@ export function nestResult(sol: string | { strip_width: number; layout: { placed
   for (const pi of s.layout.placed_items) {
     const g = job.groups[pi.item_id]; if (!g) continue;
     const id = g[used[pi.item_id]++]; if (!id) continue;
-    out[id] = { x: pi.transformation.translation[0], y: pi.transformation.translation[1], rot: ((Math.round(pi.transformation.rotation) % 360) + 360) % 360 };
+    out[id] = { x: pi.transformation.translation[0], y: pi.transformation.translation[1], rot: +((((pi.transformation.rotation % 360) + 360) % 360).toFixed(2)) % 360 };
   }
   return { placements: out, length: s.strip_width };
 }
 
 // ───────────────────────── export ─────────────────────────
 
-/** The outline that is cut for a part: the block of a block-fuse part, otherwise its own outline. */
+/** The outline that is cut for a part: its own outline (without the buffer around it). */
 export function cutOutline(p: MarkerPart): Vec[] { return p.hold === 'buffer' && p.inner ? p.inner : p.poly; }
-/** Total length cut on the marker: the cut outlines of every laid part (mm). */
-export function markerPerimeter(parts: MarkerPart[], pl: Placements): number {
+/** Total length cut on the marker: the cut outlines of every laid part, and the outlines of the fuse blocks (mm). */
+export function markerPerimeter(parts: MarkerPart[], pl: Placements, blocks?: MarkerBlock[]): number {
   let L = 0;
-  for (const p of parts) { if (!pl[p.id]) continue; const o = cutOutline(p); for (let i = 0; i < o.length; i++) { const a = o[i], b = o[(i + 1) % o.length]; L += Math.hypot(b.x - a.x, b.y - a.y); } }
+  const add = (o: Vec[]) => { for (let i = 0; i < o.length; i++) { const a = o[i], b = o[(i + 1) % o.length]; L += Math.hypot(b.x - a.x, b.y - a.y); } };
+  for (const p of parts) if (pl[p.id]) add(cutOutline(p));
+  for (const b of blocks ?? []) { const o = blockOutline(parts, pl, b); if (o) add(o); }
   return L;
+}
+/** The text of a part as it is typed in the settings (built from the switches when nothing was typed). */
+export function partTemplate(a: MarkerAnnot): string {
+  return a.partText ?? [[a.style ? '{style}' : '', a.piece ? '{piece}' : '', a.size ? '{size}' : '', a.bundle ? '{bundle}' : ''].filter(Boolean).join(' '), a.desc ? '{desc}' : ''].filter(Boolean).join('\n');
+}
+/** The text at the marker as it is typed in the settings (built from the switches when nothing was typed). */
+export function markerTemplate(a: MarkerAnnot): string {
+  return a.markerText ?? [a.bName ? '{name}' : '', a.bRatio ? '{ratio}' : '', a.bLength ? 'L {length}' : '', a.bWidth ? 'W {width}' : '', a.bEff ? 'EFF {eff}' : '', a.bPerim ? 'PERIM {perim}' : ''].filter(Boolean).join('   ');
+}
+const fill = (tpl: string, v: Record<string, string>): string[] =>
+  tpl.split(/\r?\n/).map(l => l.replace(/\{(\w+)\}/g, (m, k: string) => (k in v ? v[k] : m)).replace(/[ \t]{4,}/g, '   ').trim()).filter(Boolean);
+/** A length written in the unit of the annotation. */
+export function annotLength(mm: number, unit: AnnotUnit = 'mm'): string {
+  return unit === 'cm' ? `${(mm / 10).toFixed(1)} cm` : unit === 'm' ? `${(mm / 1000).toFixed(3)} m` : unit === 'in' ? `${(mm / 25.4).toFixed(2)} in` : unit === 'yd' ? `${(mm / 914.4).toFixed(3)} yd` : `${mm.toFixed(0)} mm`;
 }
 /** The lines written on a part, by the annotation settings. */
 export function partLabel(p: MarkerPart, a: MarkerAnnot, styleName = ''): string[] {
-  const one = [a.style && styleName ? styleName : '', a.piece ? p.name + (p.mirror ? ' (M)' : '') : '', a.size ? p.sizeName : '', a.bundle ? p.code : ''].filter(Boolean).join(' ');
-  return [one, a.desc && p.desc ? p.desc : ''].filter(Boolean);
+  return fill(partTemplate(a), { style: styleName, piece: p.name + (p.mirror ? ' (M)' : ''), size: p.sizeName, bundle: p.code, no: String(p.bundle), desc: p.desc ?? '', material: p.material });
 }
-/** The facts written at the marker border, by the annotation settings. */
-export function borderText(parts: MarkerPart[], pl: Placements, width: number, a: MarkerAnnot, o: { name?: string; ratio?: string } = {}): string {
-  const st = markerStats(parts, pl, width);
-  return [a.bName && o.name ? o.name : '', a.bRatio && o.ratio ? o.ratio : '', a.bLength ? `L ${st.length.toFixed(0)} mm` : '', a.bWidth ? `W ${width.toFixed(0)} mm` : '',
-    a.bEff ? `EFF ${(st.efficiency * 100).toFixed(2)}%` : '', a.bPerim ? `PERIM ${(markerPerimeter(parts, pl) / 1000).toFixed(2)} m` : ''].filter(Boolean).join('   ');
+export interface MarkerOut { annot?: Partial<MarkerAnnot>; name?: string; ratio?: string; styleName?: string; blocks?: MarkerBlock[]; plies?: number; material?: string }
+/** The lines written at the marker, by the annotation settings. */
+export function borderLines(parts: MarkerPart[], pl: Placements, width: number, a: MarkerAnnot, o: MarkerOut = {}): string[] {
+  const st = markerStats(parts, pl, width, o.blocks), u = a.unit ?? 'mm', per = markerPerimeter(parts, pl, o.blocks);
+  // an empty name or ratio leaves no gap behind
+  return fill(markerTemplate(a), { name: o.name ?? '', ratio: o.ratio ?? '', length: annotLength(st.length, u), width: annotLength(width, u), eff: `${(st.efficiency * 100).toFixed(2)}%`,
+    perim: u === 'in' || u === 'yd' ? `${(per / 914.4).toFixed(2)} yd` : `${(per / 1000).toFixed(2)} m`, style: o.styleName ?? '', material: o.material ?? '', plies: o.plies != null ? String(o.plies) : '', parts: `${st.placed}/${st.parts}` });
 }
-export interface MarkerOut { annot?: Partial<MarkerAnnot>; name?: string; ratio?: string; styleName?: string }
+/** The facts written at the marker border as one line. */
+export function borderText(parts: MarkerPart[], pl: Placements, width: number, a: MarkerAnnot, o: MarkerOut = {}): string { return borderLines(parts, pl, width, a, o).join('   '); }
+/**
+ * Where the lines of the marker text go (marker frame, y running down the width): the start of every line, and `up` when the text is
+ * written upward (before the start or after the end of the marker) instead of along it.
+ */
+export function borderLayout(a: MarkerAnnot, n: number, length: number, width: number): { at: Vec[]; up: boolean; h: number } {
+  const h = a.bTextH ?? 12, lh = h * 1.4, place = a.place ?? 'top', at: Vec[] = [];
+  for (let i = 0; i < n; i++) at.push(place === 'bottom' ? { x: 0, y: width + 4 + h + i * lh } : place === 'start' ? { x: -4 - (n - 1 - i) * lh, y: width } : place === 'end' ? { x: length + 4 + h + i * lh, y: width } : { x: 0, y: -4 - (n - 1 - i) * lh });
+  return { at, up: place === 'start' || place === 'end', h };
+}
 
 /**
- * Marker as DXF (R12, mm, y up as on a plotter). Layers: FABRIC (border), CUT (outlines to cut), BLOCK (block-fuse blocks), SEAM (sew
+ * Marker as DXF (R12, mm, y up as on a plotter). Layers: FABRIC (border), CUT (outlines to cut), BLOCK (fuse blocks), SEAM (sew
  * lines), INTERNAL / INTCUT (internal lines drawn / cut), GRAIN, TEXT. What is written follows the annotation settings.
  */
 export function markerDXF(parts: MarkerPart[], pl: Placements, width: number, name = 'MARKER', o: MarkerOut = {}): string {
-  const a = { ...DEFAULT_ANNOT, ...(o.annot ?? {}) }, st = markerStats(parts, pl, width);
+  const a = { ...DEFAULT_ANNOT, ...(o.annot ?? {}) }, st = markerStats(parts, pl, width, o.blocks);
   const Y = (v: Vec): Vec => ({ x: v.x, y: width - v.y });
   const L: (string | number)[] = [0, 'SECTION', 2, 'HEADER', 9, '$INSUNITS', 70, 4, 0, 'ENDSEC', 0, 'SECTION', 2, 'ENTITIES'];
   const poly = (pts: Vec[], layer: string, closed: boolean) => {
@@ -431,50 +653,56 @@ export function markerDXF(parts: MarkerPart[], pl: Placements, width: number, na
     for (const q of pts.map(Y)) L.push(0, 'VERTEX', 8, layer, 10, q.x.toFixed(3), 20, q.y.toFixed(3));
     L.push(0, 'SEQEND');
   };
-  const text = (at: Vec, hgt: number, t: string) => { const q = Y(at); L.push(0, 'TEXT', 8, 'TEXT', 10, q.x.toFixed(3), 20, q.y.toFixed(3), 40, hgt, 1, t); };
+  const text = (at: Vec, hgt: number, t: string, up = false) => { const q = Y(at); L.push(0, 'TEXT', 8, 'TEXT', 10, q.x.toFixed(3), 20, q.y.toFixed(3), 40, hgt, 1, t, ...(up ? [50, 90] : [])); };
   if (a.border) poly([{ x: 0, y: 0 }, { x: st.length, y: 0 }, { x: st.length, y: width }, { x: 0, y: width }], 'FABRIC', true);
+  for (const b of o.blocks ?? []) { const bo = blockOutline(parts, pl, b); if (bo) poly(bo, 'BLOCK', true); }
+  const th = a.textH ?? 8;
   for (const p of parts) {
     const q = pl[p.id]; if (!q) continue;
     const at = (v: Vec) => placedPoint(q, v), b = polyBox(placedPoly(p, q));
-    if (p.hold === 'block') { poly(p.poly.map(at), 'BLOCK', true); if (p.inner) poly(p.inner.map(at), 'CUT', true); }
-    else poly(cutOutline(p).map(at), 'CUT', true);
+    poly(cutOutline(p).map(at), 'CUT', true);
     if (a.seam && p.sew) poly(p.sew.map(at), 'SEAM', true);
     if (a.internals !== 'none') for (const ln of p.lines ?? []) poly(ln.map(at), a.internals === 'cut' ? 'INTCUT' : 'INTERNAL', false);
     if (a.grain) poly([at(p.grain[0]), at(p.grain[1])], 'GRAIN', false);
-    partLabel(p, a, o.styleName).forEach((t, i) => text({ x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 + i * 11 }, 8, t));
+    partLabel(p, a, o.styleName).forEach((t, i) => text({ x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 + i * th * 1.4 }, th, t));
   }
-  const bt = a.border ? borderText(parts, pl, width, a, { name: o.name ?? name, ratio: o.ratio }) : '';
-  if (bt) text({ x: 0, y: -12 }, 12, bt);
+  if (a.border) {
+    const bl = borderLines(parts, pl, width, a, { ...o, name: o.name ?? name }), lay = borderLayout(a, bl.length, st.length, width);
+    bl.forEach((t, i) => text(lay.at[i], lay.h, t, lay.up));
+  }
   L.push(0, 'ENDSEC', 0, 'EOF');
   return L.join('\n') + '\n';
 }
 /**
- * Marker as a plot file (HPGL / .plt, 40 units per mm, y up). Pen 1 cuts: the outline of every laid part (the block of a block-fuse
- * part, and its outline), and the internal lines when they are set to cut. Pen 2 draws: seam lines, drawn internal lines, grain lines,
- * the text on the parts, the marker border and its facts, as far as the annotation settings ask for them.
+ * Marker as a plot file (HPGL / .plt, 40 units per mm, y up). Pen 1 cuts: the outline of every laid part, the fuse blocks, and the
+ * internal lines when they are set to cut. Pen 2 draws: seam lines, drawn internal lines, grain lines, the text on the parts, the
+ * marker border and its text, as far as the annotation settings ask for them. Text below or before the marker moves the whole
+ * plot up or along, so that nothing has a negative place.
  */
 export function markerHPGL(parts: MarkerPart[], pl: Placements, width = 0, o: MarkerOut = {}): string {
   const a = { ...DEFAULT_ANNOT, ...(o.annot ?? {}) };
-  const st = markerStats(parts, pl, width || 1);
+  const st = markerStats(parts, pl, width || 1, o.blocks);
   const H = width || parts.reduce((m, p) => { const q = pl[p.id]; return q ? Math.max(m, polyBox(placedPoly(p, q)).y1) : m; }, 0);
-  const u = (v: number) => Math.round(v * 40), Y = (v: Vec): Vec => ({ x: v.x, y: H - v.y });
+  const bl = a.border && width ? borderLines(parts, pl, width, a, o) : [], lay = borderLayout(a, bl.length, st.length, width);
+  const ox = bl.length ? Math.max(0, -Math.min(...lay.at.map(v => v.x)) + (lay.up ? lay.h : 0)) : 0, oy = bl.length ? Math.max(0, Math.max(...lay.at.map(v => v.y)) - H + 2) : 0;
+  const u = (v: number) => Math.round(v * 40), Y = (v: Vec): Vec => ({ x: v.x + ox, y: H - v.y + oy });
   const path = (pts: Vec[], closed: boolean) => { const q = pts.map(Y); return [`PU${u(q[0].x)},${u(q[0].y)};`, 'PD' + [...q.slice(1), ...(closed ? [q[0]] : [])].map(v => `${u(v.x)},${u(v.y)}`).join(',') + ';']; };
-  const label = (at: Vec, mm: number, t: string) => { const q = Y(at); return [`PU${u(q.x)},${u(q.y)};`, 'DI1,0;', `SI${(mm * 0.07).toFixed(3)},${(mm * 0.1).toFixed(3)};`, `LB${t.replace(/[\x00-\x1f;]/g, ' ')}\x03`]; };
+  const label = (at: Vec, mm: number, t: string, up = false) => { const q = Y(at); return [`PU${u(q.x)},${u(q.y)};`, up ? 'DI0,1;' : 'DI1,0;', `SI${(mm * 0.07).toFixed(3)},${(mm * 0.1).toFixed(3)};`, `LB${t.replace(/[\x00-\x1f;]/g, ' ')}\x03`]; };
   const cut: string[] = [], draw: string[] = [];
+  for (const b of o.blocks ?? []) { const bo = blockOutline(parts, pl, b); if (bo) cut.push(...path(bo, true)); }
+  const th = a.textH ?? 6;
   for (const p of parts) {
     const q = pl[p.id]; if (!q) continue;
     const at = (v: Vec) => placedPoint(q, v), b = polyBox(placedPoly(p, q));
-    if (p.hold === 'block') { cut.push(...path(p.poly.map(at), true)); if (p.inner) cut.push(...path(p.inner.map(at), true)); }
-    else cut.push(...path(cutOutline(p).map(at), true));
+    cut.push(...path(cutOutline(p).map(at), true));
     if (a.internals !== 'none') for (const ln of p.lines ?? []) (a.internals === 'cut' ? cut : draw).push(...path(ln.map(at), false));
     if (a.seam && p.sew) draw.push(...path(p.sew.map(at), true));
     if (a.grain) draw.push(...path([at(p.grain[0]), at(p.grain[1])], false));
-    partLabel(p, a, o.styleName).forEach((t, i) => draw.push(...label({ x: b.x0 + (b.x1 - b.x0) * 0.25, y: (b.y0 + b.y1) / 2 + 6 + i * 9 }, 6, t)));
+    partLabel(p, a, o.styleName).forEach((t, i) => draw.push(...label({ x: b.x0 + (b.x1 - b.x0) * 0.25, y: (b.y0 + b.y1) / 2 + th + i * th * 1.5 }, th, t)));
   }
   if (a.border && width) {
     draw.push(...path([{ x: 0, y: 0 }, { x: st.length, y: 0 }, { x: st.length, y: width }, { x: 0, y: width }], true));
-    const bt = borderText(parts, pl, width, a, { name: o.name, ratio: o.ratio });
-    if (bt) draw.push(...label({ x: 0, y: -4 }, 9, bt));
+    bl.forEach((t, i) => draw.push(...label(lay.at[i], a.bTextH ?? 9, t, lay.up)));
   }
   return ['IN;', 'SP1;', ...cut, ...(draw.length ? ['SP2;', ...draw] : []), 'PU0,0;', 'SP0;'].join('\n') + '\n';
 }
