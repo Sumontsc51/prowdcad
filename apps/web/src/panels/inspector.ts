@@ -13,7 +13,8 @@ import { ops } from '../ops-bridge';
 import { reportError } from '../commands';
 import { cornerGallery } from '../actions/seam-notch';
 import { fmt, unitLabel } from '../units-ui';
-import { spanLength, gradeSegment, totalLength } from '@prowdcad/kernel';
+import { spanLength, gradeSegment, totalLength, setLineUse, setNotchProps, lineUseOf, lineUseLabel, isPlainInternal, LINE_USES, type NotchPatch, type Notch } from '@prowdcad/kernel';
+import { settings, saveSettings } from '../settings';
 import { liveInspector } from './live-inspector';
 import { lockInteractive, lockDetail, LOCK_KINDS, LOCK_MEASURES, type LockKind } from '../actions/lock-cmds';
 import type { Piece, Contour, LockMeasure } from '@prowdcad/kernel';
@@ -30,6 +31,10 @@ export function renderInspector(app: App, host: HTMLElement) {
     const si = app.sel.internals[app.sel.internals.length - 1];
     const ip = si && (app.sel.primary === 'internal' || !app.sel.segments.length) ? app.doc.style.pieces.find(x => x.id === si.pieceId) : undefined;
     const ic = ip?.internals.find(x => x.id === si.contourId);
+    if (ip && ic) lineSection(app, host, ip, ic);
+    const sn = app.sel.notches[app.sel.notches.length - 1];
+    const np = sn && app.doc.style.pieces.find(x => x.id === sn.pieceId), nn = np?.notches.find(x => x.id === sn.notchId);
+    if (np && nn) notchSection(app, host, np, nn);
     if (ip && ic) internalLockSection(app, host, ip, ic);
     pieceInspector(app, host, piece.id); return;
   }
@@ -55,6 +60,43 @@ function selectionSummary(app: App, host: HTMLElement) {
   }
   if (s.notches.length) host.append(row('Notches', h('span.val', {}, String(s.notches.length))));
   if (s.marks.length) host.append(row('Drills / texts', h('span.val', {}, String(s.marks.length))));
+}
+
+const tag = <T extends HTMLElement>(el: T, k: string): T => { el.dataset.k = k; return el; };
+/** The Global switch of the property editor: on = a change goes to every internal line / every notch of the whole work area. */
+function globalRow(app: App, what: string, applyAll: () => void): HTMLElement[] {
+  const box = checkbox(settings.propGlobal, v => { settings.propGlobal = v; saveSettings(); app.invalidate(); }, `every ${what} of every piece`);
+  tag(box.querySelector('input') ?? box, 'propGlobal');
+  return [row('Global', box), ...(settings.propGlobal ? [row('', tag(h('button.btn.sm', { title: `Give every ${what} in the work area the settings shown here`, onclick: applyAll }, `Apply these to all ${what}s`), 'applyAll'))] : [])];
+}
+/** A selected internal line: what it is for (draw, cut, match to the fabric, match piece to piece) and its line style. */
+function lineSection(app: App, host: HTMLElement, piece: Piece, c: Contour) {
+  const picked = app.sel.internals.map(g => ({ pieceId: g.pieceId, contourId: g.contourId }));
+  const run = (label: string, fn: () => void) => { try { fn(); } catch (err) { reportError(err, label); } };
+  const use = lineUseOf(c), style = c.style ?? 'solid';
+  const setUse = (v: string, all = settings.propGlobal) => run('Line use', () => { const n = setLineUse(app.doc, all ? 'all' : picked, v); app.status(`${lineUseLabel(v)}: ${all ? `every internal line (${n} changed)` : `${n} line${n === 1 ? '' : 's'}`}`); });
+  const setStyle = (v: string, all = settings.propGlobal) => tx(app, all ? 'Line style (all lines)' : 'Line style', () => { for (const p of app.doc.style.pieces) for (const x of p.internals) if (all ? isPlainInternal(x) : picked.some(t => t.pieceId === p.id && t.contourId === x.id)) { if (v === 'solid') delete x.style; else x.style = v as Contour['style']; } });
+  host.append(group('ln.use', `Internal line${picked.length > 1 ? `s · ${picked.length}` : ` ${piece.internals.indexOf(c) + 1}`}`, [
+    row('Line is', tag(selectInput(use, LINE_USES.map(u => [u, lineUseLabel(u)] as [string, string]), v => setUse(v)), 'lineUse')),
+    row('Line style', tag(selectInput(style, [['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted']], v => setStyle(v)), 'lineStyle')),
+    ...globalRow(app, 'internal line', () => { setUse(use, true); setStyle(style, true); }),
+    h('div.insp-hint', {}, use === 'M1' ? 'Match to fabric: on the marker a line across the grain lies on a stripe, a line along the grain on a plaid bar (Marker ▸ Stripe and plaid).' : /^P/.test(use) ? `Piece to piece: every ${use} line of a bundle lies on the same place of the stripe / plaid repeat, so the pieces match where they meet.` : use === 'cut' ? 'Cut: the line is cut on the marker.' : 'Draw: the line is drawn with the pen (or as the marker settings say).'),
+  ]));
+}
+/** A selected notch: type, size, angle, where it is marked. */
+function notchSection(app: App, host: HTMLElement, piece: Piece, n: Notch) {
+  const picked = app.sel.notches.map(g => ({ pieceId: g.pieceId, notchId: g.notchId }));
+  const set = (patch: NotchPatch, all = settings.propGlobal) => { try { const k = setNotchProps(app.doc, all ? 'all' : picked, patch); app.status(all ? `Every notch of the work area changed (${k})` : `${k} notch${k === 1 ? '' : 'es'} changed`); } catch (err) { reportError(err, 'Notch'); app.invalidate(); } };
+  const seam = !piece.noSeam && n.contourId === piece.sew.id;
+  host.append(group('nt.props', `Notch${picked.length > 1 ? `es · ${picked.length}` : ''}${n.name ? ' · ' + n.name : ''}`, [
+    row('Type', tag(selectInput(n.type, [['slit', 'Slit'], ['T', 'T'], ['V', 'V'], ['U', 'U'], ['castle', 'Castle']], v => set({ type: v as Notch['type'] })), 'notchType')),
+    row('Depth', tag(lengthInput(n.depth, v => set({ depth: v }), { min: 0 }), 'notchDepth'), unitTag()),
+    row('Width', tag(lengthInput(n.width, v => set({ width: v }), { min: 0 }), 'notchWidth'), unitTag()),
+    row('Angle', numberInput(n.angleDeg, v => set({ angleDeg: v }), { decimals: 1, title: '0 = square to the line' }), h('span.u', {}, '°')),
+    seam ? row('Marked on', selectInput(n.on ?? 'cut', [['cut', 'Cut line'], ['sew', 'Sew line'], ['both', 'Both']], v => set({ on: v as Notch['on'] }))) : null,
+    row('Made by', selectInput(n.mode ?? 'cut', [['cut', 'Cut'], ['draw', 'Draw']], v => set({ mode: v as Notch['mode'] }))),
+    ...globalRow(app, 'notch', () => set({ type: n.type, depth: n.depth, width: n.width, angleDeg: n.angleDeg, mode: n.mode ?? 'cut', ...(seam ? { on: n.on ?? 'cut' } : {}) }, true)),
+  ]));
 }
 
 /** Lock of a selected internal line to the outline (ops/lock): mode, target, kept measure, offset / range, unlock. */
