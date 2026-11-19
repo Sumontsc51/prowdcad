@@ -7,7 +7,8 @@
  */
 import {
   autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placedPoly, placedPoint, polyBox, placeAt, nestJob,
-  markerDXF, markerHPGL, partLabel, markerPerimeter, DEFAULT_ANNOT, type MarkerAnnot, switchMarkerMaterial, directedParts, obeyDirection, directionGroup, groupMayTurn, throwParts, type MarkerDirection, type MarkerDoc, type MarkerRow, type MarkerPart, type Placements, type Placement, type Vec,
+  markerDXF, markerHPGL, partLabel, markerPerimeter, DEFAULT_ANNOT, type MarkerAnnot, blockOutline, blockPart, blockBins, blockRoom, facing, borderLines, borderLayout, partTemplate, markerTemplate, DEFAULT_BLOCKSET,
+  type MarkerBlock, type PieceDetail, type BlockSet, type AnnotUnit, type AnnotPlace, switchMarkerMaterial, directedParts, obeyDirection, directionGroup, groupMayTurn, throwParts, type MarkerDirection, type MarkerDoc, type MarkerRow, type MarkerPart, type Placements, type Placement, type Vec,
 } from '@prowdcad/kernel';
 import type { App } from '../app';
 import { h, clear, isTyping } from '../ui/dom';
@@ -18,6 +19,7 @@ import { ops } from '../ops-bridge';
 import { openContextMenu } from '../ui/menu';
 import { fmt, unitLabel, parseLen } from '../units-ui';
 import { startNest, type NestRun } from './nester';
+import { pieceThumb } from '../panels/pieces';
 
 const SIZE_COL = ['#d62728', '#ff7f0e', '#2ca02c', '#1f77b4', '#9467bd', '#8c564b', '#e377c2', '#17becf', '#bcbd22', '#7f7f7f'];
 const TIMES: [number, string][] = [[15, '15 s'], [30, '30 s'], [60, '1 min'], [120, '2 min'], [300, '5 min'], [600, '10 min']];
@@ -36,6 +38,8 @@ export function openMarker(app: App) {
     try { app.doc.transact(label, s => { const m: MarkerDoc = s.meta.marker ? s.meta.marker : (s.meta.marker = blank()); fn(m); }); } catch (err) { toast((err as Error).message, 'error'); }
     partsKey = ''; draw();
   };
+  const mp = (ratio: MarkerRow['ratio'], d: MarkerDoc = M()) => markerParts(app.doc, ratio, { material: d.material || undefined, block: d.block, buffer: d.buffer, detail: d.detail });
+  const bset = (): BlockSet => ({ ...DEFAULT_BLOCKSET, ...(M().blockSet ?? {}) });
   // ── view state (not saved)
   let cur = M().rows[0]?.id ?? '';
   let sel = new Set<string>();
@@ -63,7 +67,7 @@ export function openMarker(app: App) {
       if (next.direction) d.direction = next.direction;
       if (next.rot180 !== undefined) d.rot180 = next.rot180;
       for (const r of d.rows) {
-        const ps = markerParts(app.doc, r.ratio, { material: d.material || undefined, block: d.block, buffer: d.buffer });
+        const ps = mp(r.ratio, d);
         const res = obeyDirection(ps, r.placements, d.direction ?? 'bundle', d.rot180 ?? true);
         r.placements = res.placements; off += res.removed;
       }
@@ -80,10 +84,18 @@ export function openMarker(app: App) {
   let pan: { x: number; y: number } | null = null;
   let run: NestRun | null = null, runRow = '', runTimer = 0, runBest = 0;
   let live: Placements | null = null;                // layout of the running nest, shown before it is kept
+  let liveBlocks: MarkerBlock[] | null = null;       // … and its fuse blocks
+  let phase = '', aborted = false;                   // building the fuse blocks before the nest; Stop pressed
+  const busy = () => !!run || !!phase;
+  let trayShift = 0;
+  let mq: { a: Vec; b: Vec; add: boolean; px: { x: number; y: number } } | null = null; // box drawn to select parts
+  let dlg: { close: () => void } | null = null;      // piece details / settings window
   const row = (): MarkerRow | undefined => M().rows.find(r => r.id === cur) ?? M().rows[0];
   /** fabric width of a marker (default: the marker on screen); every marker has its own */
   const wd = (r?: MarkerRow): number => (r ?? row())?.width ?? M().width;
   const pls = (): Placements => (live && row()?.id === runRow ? live : row()?.placements ?? {});
+  /** the fuse blocks of the marker on screen */
+  const blks = (): MarkerBlock[] => (live && liveBlocks && row()?.id === runRow ? liveBlocks : row()?.blocks ?? []);
 
   // ── elements
   const planBox = h('div.mk-plan'), tools = h('div.mk-tools'), stat = h('div.mk-status');
@@ -95,17 +107,20 @@ export function openMarker(app: App) {
   // ── geometry helpers
   function refreshParts() {
     const r = row(), m = M();
-    const key = r ? JSON.stringify([r.id, r.ratio, m.material, m.block ?? null, m.buffer ?? null]) : '-';
+    const key = r ? JSON.stringify([r.id, r.ratio, m.material, m.block ?? null, m.buffer ?? null, m.detail ?? null]) : '-';
     if (key === partsKey) return;
     partsKey = key;
-    parts = r ? markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block, buffer: m.buffer }) : [];
+    parts = r ? mp(r.ratio, m) : [];
+    parts = [...parts.filter(p => p.major), ...parts.filter(p => !p.major)]; // the major pieces wait first
     sel = new Set([...sel].filter(id => parts.some(p => p.id === id)));
   }
   /** parts not laid yet wait in rows above the fabric (negative y) */
   function layTray() {
     tray = {};
     const p0 = pls(), wait = parts.filter(p => !p0[p.id]);
-    let x = 0, y = -60, rowH = 0; const maxX = Math.max(3000, wd() * 2.5);
+    const an = annot(), topLines = an.border && (an.place ?? 'top') === 'top' ? markerTemplate(an).split('\n').filter(t => t.trim()).length : 0;
+    trayShift = topLines ? Math.min(900, (topLines * 15 + 40) / Math.max(view.k, 0.02)) : 0; // room for the marker text above the fabric
+    let x = 0, y = -60 - trayShift, rowH = 0; const maxX = Math.max(3000, wd() * 2.5);
     for (const p of wait) {
       const b = polyBox(p.poly), w = b.x1 - b.x0, hh = b.y1 - b.y0;
       if (x > 0 && x + w > maxX) { x = 0; y -= rowH + 40; rowH = 0; }
@@ -117,25 +132,45 @@ export function openMarker(app: App) {
   const W = (x: number, y: number): Vec => ({ x: (x - view.ox) / view.k, y: (y - view.oy) / view.k });
   const evW = (e: MouseEvent) => { const r = svg.getBoundingClientRect(); return W(e.clientX - r.left, e.clientY - r.top); };
   function fit() {
-    const st = markerStats(parts, pls(), wd());
+    const st = markerStats(parts, pls(), wd(), blks());
     const r = svg.getBoundingClientRect(); if (r.width < 50) return;
     let minY = 0; for (const id in tray) minY = Math.min(minY, tray[id].y);
     const maxX = Math.max(st.length, 1500, ...Object.values(tray).map(t => t.x + 600));
-    const k = Math.min((r.width - 150) / maxX, (r.height - 70) / (wd() - minY));
-    view = { k, ox: 30, oy: 30 - minY * k };
+    // room for the marker text where the settings put it
+    const an = annot(), n = an.border ? markerTemplate(an).split('\n').filter(t => t.trim()).length : 0, pl = an.place ?? 'top';
+    const padT = pl === 'top' && !Object.keys(tray).length ? n * 15 + 26 : 0, padB = pl === 'bottom' ? n * 15 + 12 : 0, padL = pl === 'start' ? n * 15 + 10 : 0, padR = pl === 'end' ? n * 15 + 10 : 0;
+    const k = Math.min((r.width - 150 - padL - padR) / maxX, (r.height - 70 - padT - padB) / (wd() - minY));
+    view = { k, ox: 30 + padL, oy: 30 + padT - minY * k };
   }
 
   // ── commits
-  const keep = (label: string, next: Placements, marry?: string[][]) => { const id = row()?.id; if (!id) return; edit(label, m => { const r = m.rows.find(x => x.id === id); if (!r) return; r.placements = next; const g = (marry ?? r.marry ?? []).map(x => x.filter(q => next[q])).filter(x => x.length > 1); if (g.length) r.marry = g; else delete r.marry; }); };
+  const keep = (label: string, next: Placements, marry?: string[][], blocks?: MarkerBlock[]) => { const id = row()?.id; if (!id) return; edit(label, m => {
+    const r = m.rows.find(x => x.id === id); if (!r) return; r.placements = next;
+    const g = (marry ?? r.marry ?? []).map(x => x.filter(q => next[q])).filter(x => x.length > 1); if (g.length) r.marry = g; else delete r.marry;
+    const b = (blocks ?? r.blocks ?? []).map(x => ({ ...x, ids: x.ids.filter(q => next[q]) })).filter(x => x.ids.length); if (b.length) r.blocks = b; else delete r.blocks;
+  }); };
+  /** parts of these pieces go back to waiting in every marker of every material (their shape or their rules changed) */
+  const strip = (d: MarkerDoc, pieceIds: string[]) => {
+    for (const r of [...d.rows, ...Object.values(d.others ?? {}).flatMap(o => o.rows)]) {
+      for (const k of Object.keys(r.placements)) if (pieceIds.some(id => k.startsWith(id + '|'))) delete r.placements[k];
+      r.marry = (r.marry ?? []).map(g => g.filter(q => r.placements[q])).filter(g => g.length > 1); if (!r.marry.length) delete r.marry;
+      r.blocks = (r.blocks ?? []).map(b => ({ ...b, ids: b.ids.filter(q => r.placements[q]) })).filter(b => b.ids.length); if (!r.blocks.length) delete r.blocks;
+    }
+  };
   const centre = (b: { x0: number; y0: number; x1: number; y1: number }): Vec => ({ x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 });
   /** the parts married to a part (itself included) */
-  const marriedTo = (id: string): Set<string> => new Set(row()?.marry?.find(g => g.includes(id)) ?? [id]);
+  const marriedTo = (id: string): Set<string> => {
+    // married parts and the parts of a fuse block move as one
+    const out = new Set([id]), groups = [...(row()?.marry ?? []), ...(row()?.blocks ?? []).map(b => b.ids)];
+    for (let grew = true; grew;) { grew = false; for (const g of groups) if (g.some(q => out.has(q)) && g.some(q => !out.has(q))) { g.forEach(q => out.add(q)); grew = true; } }
+    return out;
+  };
   /**
    * Turn a part 180° (right-click). Only with Rotate 180° on: under "One bundle, one direction" every laid part of its bundle
    * turns with it, so the bundle keeps one direction; married parts turn together as one block, about their common middle.
    */
   function turn(id: string) {
-    if (run) return;
+    if (busy()) return;
     const ru = rule(), p = parts.find(q => q.id === id); if (!p) return;
     if (ru !== 'bundle' && ru !== 'piece') { toast(`"${RULES.find(x => x[0] === ru)![1]}" does not let parts be turned`, 'warn'); return; }
     if (ru === 'bundle' && !r180()) { toast('Rotate 180° is off: tick it at the top to turn parts with a right-click', 'warn'); return; }
@@ -166,7 +201,7 @@ export function openMarker(app: App) {
   }
   /** Marry the selected laid parts: from now on they are picked up, thrown and turned as one. */
   function marry() {
-    const r = row(); if (!r || run) return;
+    const r = row(); if (!r || busy()) return;
     const ids = [...sel].filter(id => r.placements[id]);
     if (ids.length < 2) { toast('Marry: select two or more laid parts first (Shift+click adds a part)', 'warn'); return; }
     const all = new Set(ids); const rest: string[][] = [];
@@ -175,50 +210,119 @@ export function openMarker(app: App) {
     toast(`${all.size} parts married: they move as one`, 'ok');
   }
   function unmarry() {
-    const r = row(); if (!r || run) return;
+    const r = row(); if (!r || busy()) return;
     const left = (r.marry ?? []).filter(g => !g.some(id => sel.has(id)));
     if (left.length === (r.marry ?? []).length) { toast('Select a married part to unmarry its group', 'warn'); return; }
     keep('Unmarry parts', r.placements, left);
     toast('Unmarried: the parts move on their own again', 'ok');
   }
-  /** Block fuse: the pieces of the selected parts are laid as blocks (their box plus a margin), in every size and marker. */
+  /** Block fuse: the selected laid parts become one fuse block (only these parts, on this marker): their box or their contour, grown by a buffer. */
   async function blockFuse() {
-    if (run) return;
-    const ps = parts.filter(p => sel.has(p.id)); const pieceIds = [...new Set(ps.map(p => p.pieceId))];
-    if (!pieceIds.length) { toast('Block fuse: select a part of the piece first', 'warn'); return; }
-    const curM = M().block?.[pieceIds[0]] ?? 0;
-    const r = await showDialog({ title: 'Block fuse', message: `${[...new Set(ps.map(p => p.name))].join(', ')}\nThe piece is laid and cut as a block: its box grown by the margin on every side, in every size and every marker. The outline is drawn inside the block. Margin 0 takes the block off.`,
-      fields: [{ kind: 'length', key: 'm', label: 'Block margin', value: curM || 10, min: 0 }] });
-    if (!r) return;
-    const mg = Math.max(0, r.m as number);
-    edit(mg > 0 ? 'Block fuse' : 'Remove block', d => {
-      const b = { ...(d.block ?? {}) };
-      for (const id of pieceIds) { if (mg > 0) b[id] = mg; else delete b[id]; }
-      if (Object.keys(b).length) d.block = b; else delete d.block;
-      if (mg > 0 && d.buffer) { for (const id of pieceIds) delete d.buffer[id]; if (!Object.keys(d.buffer).length) delete d.buffer; }
-      // the shape of these parts changed: they go back to waiting in every marker
-      for (const row2 of d.rows) { for (const k of Object.keys(row2.placements)) if (pieceIds.some(id => k.startsWith(id + '|'))) delete row2.placements[k]; row2.marry = (row2.marry ?? []).map(g => g.filter(q => row2.placements[q])).filter(g => g.length > 1); if (!row2.marry.length) delete row2.marry; }
-    });
-    toast(mg > 0 ? `Block fuse: ${fmt(mg)} ${unitLabel()} margin · the parts wait to be laid again` : 'Block removed', 'ok');
+    const r = row(); if (!r || busy()) return;
+    if (carry) dropCarry(true);
+    const ids = [...sel].filter(id => r.placements[id]);
+    if (!ids.length) { toast('Block fuse: select the laid parts that go into the block first (Shift+click, or draw a box around them)', 'warn'); return; }
+    const set = bset(), old = (r.blocks ?? []).find(b => ids.some(id => b.ids.includes(id)));
+    const res = await showDialog({ title: 'Block fuse', message: `${ids.length} laid part${ids.length > 1 ? 's' : ''} become${ids.length > 1 ? '' : 's'} one fuse block, on this marker only. The block is cut out first; nothing else may lie inside it. Its parts move as one.`,
+      fields: [{ kind: 'select', key: 'shape', label: 'Block outline', value: old?.shape ?? set.shape, options: [{ value: 'contour', label: 'Contour (follows the parts)' }, { value: 'rect', label: 'Rectangular' }] },
+        { kind: 'length', key: 'm', label: 'Buffer', value: old?.buffer ?? set.buffer, min: 0, hint: 'Room kept around the parts inside the block' }] });
+    if (!res) return;
+    const pick = new Set(ids), rest = (r.blocks ?? []).map(b => ({ ...b, ids: b.ids.filter(id => !pick.has(id)) })).filter(b => b.ids.length);
+    keep('Block fuse', r.placements, undefined, [...rest, { ids, shape: res.shape === 'rect' ? 'rect' : 'contour', buffer: Math.max(0, res.m as number) }]);
+    toast(`Fuse block of ${ids.length} part${ids.length > 1 ? 's' : ''}${bad.size ? ' · parts inside its buffer are shown red: move them away' : ''}`, bad.size ? 'warn' : 'ok');
+  }
+  function unblock() {
+    const r = row(); if (!r || busy()) return;
+    const left = (r.blocks ?? []).filter(b => !b.ids.some(id => sel.has(id)));
+    if (left.length === (r.blocks ?? []).length) { toast('Select a part of a fuse block to take the block away', 'warn'); return; }
+    keep('Remove fuse block', r.placements, undefined, left);
+    toast('Fuse block removed: the parts lie on their own again', 'ok');
+  }
+  /** Tilt the carried or selected parts off the grain, as far as Piece details lets each of them. */
+  function tiltBy(step: number) {
+    const r = row(); if (!r || busy()) return;
+    const ids = carry ? carry.ids : [...sel].filter(id => r.placements[id]);
+    const laid = { ...r.placements }; let n = 0, changed = false;
+    for (const id of ids) {
+      const q = parts.find(x => x.id === id), pl = carry?.base[id] ?? laid[id]; if (!q || !pl || !q.tilt || marriedTo(id).size > 1) continue;
+      const f = facing(pl.rot), off = ((pl.rot - f + 540) % 360) - 180, to = Math.max(-q.tilt, Math.min(q.tilt, off + step)); n++;
+      if (Math.abs(to - off) < 1e-6) continue;
+      const rot = +(((f + to) % 360 + 360) % 360).toFixed(2), oc = centre(polyBox(placedPoly(q, pl))), t = placeAt(q, 0, 0, rot), tc = centre(polyBox(placedPoly(q, t)));
+      const np = { x: t.x + oc.x - tc.x, y: t.y + oc.y - tc.y, rot };
+      if (carry?.base[id]) carry.base[id] = np; else { laid[id] = np; changed = true; }
+    }
+    if (!n) { toast('No tilt is allowed for this part: set it in Piece details (single parts only, not blocks or married parts)', 'warn'); return; }
+    if (changed) keep('Tilt part', laid); else drawSvg();
   }
   // ── nesting
-  function nestStart() {
-    const r = row(); if (run || !r) return;
+  /** one run of the engine, waited for (a part alone needs no engine) */
+  const nestOnce = (job: ReturnType<typeof nestJob>, ps: MarkerPart[], seconds: number, room: { length: number; width: number }): Promise<{ placements: Placements; length: number } | null> => {
+    if (ps.length === 1) {
+      const p = ps[0], a = p.angles.find(x => { const b = polyBox(placedPoly(p, { x: 0, y: 0, rot: x })); return b.x1 - b.x0 <= room.length && b.y1 - b.y0 <= room.width; }) ?? p.angles[0];
+      const q = placeAt(p, 0, 0, a), b = polyBox(placedPoly(p, q));
+      return Promise.resolve({ placements: { [p.id]: q }, length: b.x1 });
+    }
+    return new Promise(res => {
+      let best: { placements: Placements; length: number } | null = null;
+      try {
+        run = startNest(job, seconds, { onBest: (pl, len) => { best = { placements: pl, length: len }; }, onDone: info => { run = null; if (info.stopped) aborted = true; if (info.error) { aborted = true; toast('Nester stopped: ' + info.error, 'error'); } res(best); } });
+      } catch (err) { run = null; aborted = true; toast('The nester could not start in this browser: ' + (err as Error).message, 'error'); res(null); }
+    });
+  };
+  /**
+   * Nest the marker. Pieces marked for block fuse (Piece details) are first laid into fuse blocks no longer or wider than the limits:
+   * when they do not go into one block, two or more are made. Every block, and every block made by hand, is then laid with the
+   * other parts as one shape.
+   */
+  async function nestStart() {
+    const r = row(); if (busy() || !r) return;
     if (carry) dropCarry(true);
     if (!parts.length) { toast('This marker has no parts: give it a ratio in the cut plan', 'warn'); return; }
-    const w = wd();
+    const w = wd(), m = M(), gap = m.gap;
     const np = directedParts(parts, rule(), r180());
     const wide = np.find(p => p.angles.every(a => { const b = polyBox(placedPoly(p, { x: 0, y: 0, rot: a })); return b.y1 - b.y0 > w; }));
     if (wide) { toast(`${wide.name} (${wide.sizeName}) is wider than the fabric`, 'error'); return; }
-    const job = nestJob(np, w, { gap: M().gap, name: r.name });
-    runRow = r.id; live = null; runBest = 0;
+    type Stand = { part: MarkerPart; local: Placements; ids: string[]; block: MarkerBlock };
+    const stand: Stand[] = [];
+    // blocks made by hand stay as they are
+    const kept = (r.blocks ?? []).filter(b => !b.auto && b.ids.every(id => r.placements[id]));
+    kept.forEach((b, i) => { const bp = blockPart('#keep' + i, parts, r.placements, b); if (bp) stand.push({ ...bp, block: b }); });
+    const inKept = new Set(stand.flatMap(x => x.ids));
+    const fuse = np.filter(p => p.fuse && !inKept.has(p.id));
+    runRow = r.id; live = null; liveBlocks = null; runBest = 0; aborted = false;
+    if (fuse.length) {
+      const set = bset(), room = blockRoom(set, w, fuse);
+      if (room.tooBig) { toast(`${room.tooBig.name} (${room.tooBig.sizeName}) is larger than a fuse block may be: raise the limits in Piece details`, 'error'); return; }
+      const each = Math.max(2, Math.min(6, m.nestSeconds * 0.15));
+      let done: { bin: MarkerPart[]; pl: Placements }[] | null = null;
+      for (let k = room.least; k <= fuse.length && !done && !aborted; k++) {
+        const bins = blockBins(fuse, k), got: { bin: MarkerPart[]; pl: Placements }[] = [];
+        for (const bin of bins) {
+          phase = `fuse blocks: filling block ${got.length + 1} of ${bins.length}`; drawTools(); drawStatus();
+          const res = await nestOnce(nestJob(bin, room.width, { gap, name: 'block' }), bin, each, room);
+          if (aborted || !root) break;
+          if (!res || Object.keys(res.placements).length < bin.length || res.length > room.length + 0.5) break; // too much for this many blocks
+          got.push({ bin, pl: res.placements });
+        }
+        if (got.length === bins.length) done = got;
+      }
+      phase = '';
+      if (!root) return;
+      if (aborted || !done) { if (!aborted) toast('The fuse blocks could not be filled within their limits', 'error'); draw(); return; }
+      done.forEach((g, i) => { const block: MarkerBlock = { ids: g.bin.map(p => p.id), shape: set.shape, buffer: set.buffer, auto: true }; const bp = blockPart('#blk' + i, parts, g.pl, block); if (bp) stand.push({ ...bp, block }); });
+    }
+    const by = new Map(stand.map(x => [x.part.id, x])), inStand = new Set(stand.flatMap(x => x.ids));
+    const items = [...np.filter(p => !inStand.has(p.id)), ...stand.map(x => x.part)];
+    const expand = (pl: Placements): Placements => { const out: Placements = {}; for (const id in pl) { const x = by.get(id); if (!x) { out[id] = pl[id]; continue; } for (const q of x.ids) out[q] = { x: x.local[q].x + pl[id].x, y: x.local[q].y + pl[id].y, rot: x.local[q].rot }; } return out; };
+    const newBlocks: MarkerBlock[] = stand.map(x => ({ ...x.block, ids: x.ids }));
+    const job = nestJob(items, w, { gap, name: r.name });
     try {
-      run = startNest(job, M().nestSeconds, {
-        onBest: (pl, len) => { live = pl; runBest = len; draw(); },
+      run = startNest(job, m.nestSeconds, {
+        onBest: (pl, len) => { live = expand(pl); liveBlocks = newBlocks; runBest = len; draw(); },
         onDone: info => {
-          clearInterval(runTimer); const got = live; run = null; live = null;
+          clearInterval(runTimer); const got = live; run = null; live = null; liveBlocks = null;
           if (info.error) toast('Nester stopped: ' + info.error, 'error');
-          if (got) { const id = runRow; edit('Nest marker', m => { const x = m.rows.find(q => q.id === id); if (x) { x.placements = got; delete x.marry; } }); toast(`Nested: ${fmt(runBest)} ${unitLabel()} long${info.stopped ? ' (stopped early)' : ''}`, 'ok'); }
+          if (got) { const id = runRow; edit('Nest marker', d => { const x = d.rows.find(q => q.id === id); if (x) { x.placements = got; delete x.marry; if (newBlocks.length) x.blocks = newBlocks; else delete x.blocks; } }); toast(`Nested: ${fmt(runBest)} ${unitLabel()} long${newBlocks.length ? ` · ${newBlocks.length} fuse block${newBlocks.length > 1 ? 's' : ''}` : ''}${info.stopped ? ' (stopped early)' : ''}`, 'ok'); }
           else draw();
         },
       });
@@ -226,13 +330,13 @@ export function openMarker(app: App) {
     } catch (err) { run = null; toast('The nester could not start in this browser: ' + (err as Error).message, 'error'); }
     draw();
   }
-  const nestStop = () => run?.stop();
+  const nestStop = () => { aborted = true; run?.stop(); };
 
   // ── export / report
   const base = () => `${app.doc.style.name || 'style'}_${(row()?.name ?? 'marker').replace(/\s+/g, '_')}`;
   const annot = (): MarkerAnnot => ({ ...DEFAULT_ANNOT, ...(M().annot ?? {}) });
   const ratioText = (r: MarkerRow) => sizes().filter(s => r.ratio[s.id]).map(s => `${s.name} ${r.ratio[s.id]}`).join(' ');
-  const outOpt = (r: MarkerRow) => ({ annot: annot(), name: r.name, ratio: ratioText(r), styleName: app.doc.style.name });
+  const outOpt = (r: MarkerRow) => ({ annot: annot(), name: r.name, ratio: ratioText(r), styleName: app.doc.style.name, blocks: r.blocks, plies: r.plies, material: M().material });
   // ── files: a marker file (.pcm) holds the style with its cut plans and markers; a pattern file is .pcd; a plot is .plt
   let markerFile = (app.fileName || 'untitled').replace(/\.(pcd|pcm|prowd\.json|json|prowd)$/i, '') + '.pcm';
   async function saveMarker(as: boolean) {
@@ -266,23 +370,56 @@ export function openMarker(app: App) {
   }
   const exportDXF = () => { const r = row(); if (r) download(base() + '.dxf', new Blob([markerDXF(parts, r.placements, wd(r), r.name, outOpt(r))], { type: 'application/dxf' })); };
   const plot = () => { const r = row(); if (!r) return; if (!Object.keys(r.placements).length) { toast('Nothing is laid on this marker yet', 'warn'); return; } download(base() + '.plt', new Blob([markerHPGL(parts, r.placements, wd(r), outOpt(r))], { type: 'application/vnd.hp-hpgl' })); toast(`Plot file ${base()}.plt · pen 1 cuts, pen 2 draws`, 'ok'); };
-  async function settings() {
-    const a = annot();
-    const cb = (key: keyof MarkerAnnot, label: string) => ({ kind: 'checkbox' as const, key, label, value: a[key] as boolean });
-    const r = await showDialog({ title: 'Marker settings · annotation', message: 'What is written on every part and around the marker. It applies to the screen, the plot (.plt) and the DXF.', fields: [
-      cb('style', 'On the part: style name'), cb('piece', 'On the part: panel (piece) name'), cb('size', 'On the part: size'), cb('bundle', 'On the part: bundle code'), cb('desc', 'On the part: description'),
-      cb('grain', 'Grain line'), cb('seam', 'Seam (sew) line'),
-      { kind: 'select', key: 'internals', label: 'Internal lines', value: a.internals, options: [{ value: 'draw', label: 'Draw (pen)' }, { value: 'cut', label: 'Cut' }, { value: 'none', label: 'Leave out' }] },
-      cb('border', 'Marker border'), cb('bName', 'At the border: marker name'), cb('bRatio', 'At the border: ratio'), cb('bLength', 'At the border: marker length'), cb('bWidth', 'At the border: marker width'), cb('bEff', 'At the border: efficiency'), cb('bPerim', 'At the border: total perimeter'),
-    ] });
-    if (!r) return;
-    edit('Marker settings', d => { d.annot = Object.fromEntries(Object.keys(DEFAULT_ANNOT).map(k => [k, k === 'internals' ? r[k] : !!r[k]])) as unknown as MarkerAnnot; });
+  /** a window of the marker room (piece details, settings): Esc or Cancel closes it, the OK button runs `ok` (false = stay open) */
+  function modal(title: string, body: HTMLElement, okLabel: string, ok: () => boolean | void, cls = '') {
+    dlg?.close();
+    const back = h('div.mk-dlg-back'), close = () => { back.remove(); dlg = null; svg.focus(); };
+    const box = h('div.mk-dlg' + cls, { role: 'dialog', 'aria-label': title },
+      h('div.dlg-title', {}, title), body,
+      h('div.dlg-foot', {}, h('span.spacer'), h('button.btn', { type: 'button', 'data-mk-dlg': 'cancel', onclick: close }, 'Cancel'), h('button.btn.primary', { type: 'button', 'data-mk-dlg': 'ok', onclick: () => { if (ok() !== false) { close(); draw(); } } }, okLabel)));
+    back.append(box); back.addEventListener('pointerdown', e => { if (e.target === back) close(); });
+    root!.append(back); dlg = { close };
+    (box.querySelector('input,select,textarea') as HTMLElement | null)?.focus();
+  }
+  /** Settings · annotation: the text on the parts and at the marker is typed as it should be written (a new line breaks the line), with its unit and its place. */
+  function settings() {
+    const a = annot(), r = row();
+    const chips = (ta: HTMLTextAreaElement, toks: string[]) => h('div.mk-chips', {}, ...toks.map(t => h('button.mk-chip', { type: 'button', title: `Put ${t} in the text`, onclick: () => { const i = ta.selectionStart ?? ta.value.length, j = ta.selectionEnd ?? i; ta.value = ta.value.slice(0, i) + t + ta.value.slice(j); ta.focus(); ta.selectionStart = ta.selectionEnd = i + t.length; show(); } }, t)));
+    const pt = h('textarea.mk-ta', { rows: '4', 'data-mk-set': 'partText', spellcheck: 'false' }) as HTMLTextAreaElement; pt.value = partTemplate(a);
+    const mt = h('textarea.mk-ta', { rows: '4', 'data-mk-set': 'markerText', spellcheck: 'false' }) as HTMLTextAreaElement; mt.value = markerTemplate(a);
+    const cbx = (key: 'grain' | 'seam' | 'border', label: string) => { const i = h('input', { type: 'checkbox', 'data-mk-set': key, checked: a[key] }) as HTMLInputElement; i.addEventListener('change', show); return [h('label.mk-ck', {}, i, label), i] as const; };
+    const sel2 = <T extends string>(key: string, val: T, opts: [T, string][]) => { const e = h('select.mk-in', { 'data-mk-set': key }, ...opts.map(([v, l]) => h('option', { value: v, selected: v === val }, l))) as HTMLSelectElement; e.addEventListener('change', show); return e; };
+    const numIn = (key: string, v: number) => h('input.mk-n', { type: 'text', 'data-mk-set': key, value: String(v) }) as HTMLInputElement;
+    const [grainL, grain] = cbx('grain', 'Grain line'), [seamL, seam] = cbx('seam', 'Seam (sew) line'), [borderL, border] = cbx('border', 'Marker border and its text');
+    const internals = sel2('internals', a.internals, [['draw', 'Draw (pen)'], ['cut', 'Cut'], ['none', 'Leave out']]);
+    const unit = sel2<AnnotUnit>('unit', a.unit ?? 'mm', [['mm', 'Millimetres'], ['cm', 'Centimetres'], ['m', 'Metres'], ['in', 'Inches'], ['yd', 'Yards']]);
+    const place = sel2<AnnotPlace>('place', a.place ?? 'top', [['top', 'Above the marker, at its start'], ['bottom', 'Below the marker, at its start'], ['start', 'Before the start, written upward'], ['end', 'After the end, written upward']]);
+    const th = numIn('textH', a.textH ?? 8), bh = numIn('bTextH', a.bTextH ?? 12);
+    const prevP = h('pre.mk-prev', { 'data-mk-set': 'prevPart' }), prevM = h('pre.mk-prev', { 'data-mk-set': 'prevMarker' });
+    const read = (): MarkerAnnot => ({ ...a, grain: grain.checked, seam: seam.checked, border: border.checked, internals: internals.value as MarkerAnnot['internals'], partText: pt.value.replace(/\s+$/, ''), markerText: mt.value.replace(/\s+$/, ''),
+      unit: unit.value as AnnotUnit, place: place.value as AnnotPlace, textH: Math.max(1, Math.min(100, Number(th.value) || 8)), bTextH: Math.max(1, Math.min(200, Number(bh.value) || 12)) });
+    function show() {
+      const n = read(), p = parts.find(q => pls()[q.id]) ?? parts[0];
+      prevP.textContent = p ? partLabel(p, n, app.doc.style.name).join('\n') || '(nothing is written on the parts)' : '(this marker has no parts yet)';
+      prevM.textContent = !n.border ? '(no border, no marker text)' : r ? borderLines(parts, pls(), wd(r), n, outOpt(r)).join('\n') || '(nothing is written at the marker)' : '(no marker yet)';
+    }
+    pt.addEventListener('input', show); mt.addEventListener('input', show);
+    const body = h('div.dlg-body.mk-set', {},
+      h('p.dlg-msg', {}, 'Type the text as it should be written: every line you type is one written line. The words in { } are filled in. It applies to the screen, the plot (.plt) and the DXF.'),
+      h('div.mk-set-h', {}, 'On every part'), chips(pt, ['{style}', '{piece}', '{size}', '{bundle}', '{no}', '{desc}', '{material}']), pt,
+      h('div.mk-set-row', {}, h('label', {}, 'Text height', th, h('span.mk-dim', {}, 'mm')), grainL, seamL, h('label', {}, 'Internal lines', internals)),
+      h('div.mk-set-l', {}, 'Written like this'), prevP,
+      h('div.mk-set-h', {}, 'At the marker'), borderL, chips(mt, ['{name}', '{ratio}', '{length}', '{width}', '{eff}', '{perim}', '{style}', '{material}', '{plies}', '{parts}']), mt,
+      h('div.mk-set-row', {}, h('label', {}, 'Units', unit), h('label', {}, 'Place', place), h('label', {}, 'Text height', bh, h('span.mk-dim', {}, 'mm'))),
+      h('div.mk-set-l', {}, 'Written like this'), prevM);
+    modal('Marker settings · annotation', body, 'Apply', () => { const n = read(); edit('Marker settings', d => { d.annot = n; }); draw(true); });
+    show();
   }
   /** Buffer: the pieces of the selected parts keep a clear margin around their outline, in every size and marker. */
   async function buffer() {
-    if (run) return;
+    if (busy()) return;
     const ps = parts.filter(p => sel.has(p.id)); const pieceIds = [...new Set(ps.map(p => p.pieceId))];
-    if (!pieceIds.length) { toast('Buffer: select a part of the piece first (Shift+click)', 'warn'); return; }
+    if (!pieceIds.length) { toast('Buffer: select a part of the piece first (Shift+click), or set it for any piece in Piece details', 'warn'); return; }
     const r = await showDialog({ title: 'Buffer', message: `${[...new Set(ps.map(p => p.name))].join(', ')}\nThe piece keeps this much room clear all round, in every size and every marker. Only its own outline is cut. Margin 0 takes the buffer off.`,
       fields: [{ kind: 'length', key: 'm', label: 'Buffer margin', value: M().buffer?.[pieceIds[0]] ?? 3, min: 0 }] });
     if (!r) return;
@@ -291,10 +428,71 @@ export function openMarker(app: App) {
       const b = { ...(d.buffer ?? {}) };
       for (const id of pieceIds) { if (mg > 0) b[id] = mg; else delete b[id]; }
       if (Object.keys(b).length) d.buffer = b; else delete d.buffer;
-      if (mg > 0 && d.block) { for (const id of pieceIds) delete d.block[id]; if (!Object.keys(d.block).length) delete d.block; }
-      for (const row2 of d.rows) { for (const k of Object.keys(row2.placements)) if (pieceIds.some(id => k.startsWith(id + '|'))) delete row2.placements[k]; row2.marry = (row2.marry ?? []).map(g => g.filter(q => row2.placements[q])).filter(g => g.length > 1); if (!row2.marry.length) delete row2.marry; }
+      strip(d, pieceIds);
     });
     toast(mg > 0 ? `Buffer: ${fmt(mg)} ${unitLabel()} all round · the parts wait to be laid again` : 'Buffer removed', 'ok');
+  }
+  /**
+   * Piece details: every panel of the style in one window. Per panel: major piece, goes into fuse blocks, its own rotation, tilt
+   * and buffer. With a panel marked for block fuse the limits of the blocks are set here too: the nester fills blocks no longer or
+   * wider than that (two or more when one is not enough), every block with its own buffer, and lays them with the other panels.
+   */
+  function pieceDetails() {
+    if (busy()) return; if (carry) dropCarry(true);
+    const m = M(), set = bset();
+    const pieces = app.doc.style.pieces.filter(p => !m.material || (p.order?.material ?? '') === m.material);
+    if (!pieces.length) { toast('This style has no panels for this material', 'warn'); return; }
+    const ROT: [string, string][] = [['', 'Piece setting'], ['1way', '1 way'], ['2way', '2 way (180°)'], ['4way', '4 way (90°)']];
+    const rotName = (v?: string) => v === '1way' ? '1 way' : v === '4way' ? '4 way' : '2 way';
+    const rows = pieces.map(p => {
+      const d0: PieceDetail = { ...(m.detail?.[p.id] ?? {}) }; if (d0.block === undefined && m.block?.[p.id]) d0.block = true;
+      const ck = (k: string, on: boolean, title: string) => h('input', { type: 'checkbox', 'data-pd': `${k}:${p.name}`, checked: on, title }) as HTMLInputElement;
+      const major = ck('major', !!d0.major, 'Major piece: one of the big panels; it waits first to be laid'), block = ck('block', !!d0.block, 'Goes into fuse blocks when the marker is nested');
+      const rot = h('select.mk-in', { 'data-pd': `rot:${p.name}`, title: 'Turns this panel may take on the marker' }, ...ROT.map(([v, l]) => h('option', { value: v, selected: v === (d0.rotation ?? '') }, v ? l : `${l} (${rotName(p.order?.rotation)})`))) as HTMLSelectElement;
+      const tilt = h('input.mk-n', { type: 'text', 'data-pd': `tilt:${p.name}`, value: d0.tilt ? String(d0.tilt) : '', placeholder: '0', title: 'How far the panel may be tilted off the grain, either way (degrees, up to 15)' }) as HTMLInputElement;
+      const buf = h('input.mk-n', { type: 'text', 'data-pd': `buffer:${p.name}`, value: m.buffer?.[p.id] ? fmt(m.buffer[p.id]) : '', placeholder: '0', title: 'Room kept clear around this panel' }) as HTMLInputElement;
+      const pic = h('td.mk-pd-pic'); pic.innerHTML = pieceThumb(app, p, 34);
+      const tr = h('tr', {}, pic, h('td.mk-pd-name', {}, p.name, h('span.mk-sub', {}, [p.description?.trim(), `${Math.max(1, p.order?.qtyPerBundle ?? 1)}${p.order?.side === 'LR' ? ' pair' : ''} per bundle`, p.order?.material].filter(Boolean).join(' · '))),
+        h('td', {}, major), h('td', {}, block), h('td', {}, rot), h('td', {}, tilt, h('span.mk-dim', {}, ' °')), h('td', {}, buf, h('span.mk-dim', {}, ' ' + unitLabel())));
+      return { p, d0, major, block, rot, tilt, buf, tr };
+    });
+    const len = (k: string, v: number, title: string) => h('input.mk-n.mk-w', { type: 'text', 'data-pd': k, value: fmt(v), title }) as HTMLInputElement;
+    const maxL = len('maxLength', set.maxLength, 'No fuse block is longer than this (along the fabric)'), maxW = len('maxWidth', set.maxWidth, 'No fuse block is wider than this (across the fabric)'), bbuf = len('blockBuffer', set.buffer, 'Room kept around the panels inside every block');
+    const shape = h('select.mk-in', { 'data-pd': 'shape' }, h('option', { value: 'rect', selected: set.shape === 'rect' }, 'Rectangular'), h('option', { value: 'contour', selected: set.shape === 'contour' }, 'Contour (follows the panels)')) as HTMLSelectElement;
+    const note = h('span.mk-dim');
+    const blockBox = h('div.mk-pd-block', { 'data-pd': 'blockset' }, h('div.mk-set-h', {}, 'Fuse blocks'),
+      h('div.mk-set-row', {}, h('label', {}, 'Max length', maxL, h('span.mk-dim', {}, unitLabel())), h('label', {}, 'Max width', maxW, h('span.mk-dim', {}, unitLabel())), h('label', {}, 'Buffer', bbuf, h('span.mk-dim', {}, unitLabel())), h('label', {}, 'Outline', shape)), note);
+    const sync = () => { const n = rows.filter(x => x.block.checked).length; blockBox.classList.toggle('off', !n); for (const e of [maxL, maxW, bbuf, shape]) e.disabled = !n; note.textContent = n ? `${n} panel${n > 1 ? 's' : ''} go into fuse blocks. Nest ▶ fills blocks within these limits (two or more when one is not enough), each with its own buffer, then lays them with the other panels.` : 'Tick Block for the panels that are fused as a block; the limits of the blocks are then set here.'; };
+    rows.forEach(x => x.block.addEventListener('change', sync)); sync();
+    const all = (k: 'major' | 'block') => h('button.mk-chip', { type: 'button', title: `Tick or clear every panel`, onclick: () => { const on = !rows.every(x => x[k].checked); rows.forEach(x => { x[k].checked = on; }); sync(); } }, 'all');
+    const body = h('div.dlg-body', {},
+      h('div.mk-scroll.mk-pd-scroll', {}, h('table.mk-tbl.mk-pd', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'Panel'), h('th', {}, 'Major ', all('major')), h('th', {}, 'Block ', all('block')), h('th', {}, 'Rotation'), h('th', {}, 'Tilt'), h('th', {}, 'Buffer')), ...rows.map(x => x.tr))),
+      blockBox);
+    modal(`Piece details · ${pieces.length} panel${pieces.length > 1 ? 's' : ''}${m.material ? ' · ' + m.material : ''}`, body, 'Apply', () => {
+      const L = parseLen(maxL.value), Wd = parseLen(maxW.value), B = parseLen(bbuf.value), anyBlock = rows.some(x => x.block.checked);
+      if (anyBlock && !(Number.isFinite(L) && L > 20 && Number.isFinite(Wd) && Wd > 20 && Number.isFinite(B) && B >= 0 && L > 2 * B + 10 && Wd > 2 * B + 10)) { toast('Fuse blocks: type a max length and a max width larger than twice the buffer', 'error'); return false; }
+      const changed: string[] = []; let bad2 = '';
+      const next = rows.map(x => {
+        const t = x.tilt.value.trim() ? Number(x.tilt.value.replace(',', '.')) : 0, bf = x.buf.value.trim() ? parseLen(x.buf.value) : 0;
+        if (!Number.isFinite(t) || t < 0 || t > 15) bad2 = `${x.p.name}: the tilt is 0 to 15 degrees`;
+        if (!Number.isFinite(bf) || bf < 0) bad2 = `${x.p.name}: the buffer is not a length`;
+        const det: PieceDetail = { ...(x.major.checked ? { major: true } : {}), ...(x.block.checked ? { block: true } : {}), ...(x.rot.value ? { rotation: x.rot.value as PieceDetail['rotation'] } : {}), ...(t > 0 ? { tilt: t } : {}) };
+        const was = m.buffer?.[x.p.id] ?? 0;
+        if ((det.rotation ?? '') !== (x.d0.rotation ?? '') || (det.tilt ?? 0) !== (x.d0.tilt ?? 0) || !!det.block !== !!x.d0.block || Math.abs(bf - was) > 1e-6) changed.push(x.p.id);
+        return { id: x.p.id, det, bf };
+      });
+      if (bad2) { toast(bad2, 'error'); return false; }
+      edit('Piece details', d => {
+        const det = { ...(d.detail ?? {}) }, buf2 = { ...(d.buffer ?? {}) };
+        for (const n of next) { if (Object.keys(n.det).length) det[n.id] = n.det; else delete det[n.id]; if (n.bf > 0) buf2[n.id] = n.bf; else delete buf2[n.id]; if (d.block) delete d.block[n.id]; }
+        if (Object.keys(det).length) d.detail = det; else delete d.detail;
+        if (Object.keys(buf2).length) d.buffer = buf2; else delete d.buffer;
+        if (d.block && !Object.keys(d.block).length) delete d.block;
+        if (anyBlock) d.blockSet = { maxLength: L, maxWidth: Wd, buffer: B, shape: shape.value === 'contour' ? 'contour' : 'rect' };
+        if (changed.length) strip(d, changed);
+      });
+      toast(`Piece details kept${changed.length ? ` · the parts of ${changed.length} panel${changed.length > 1 ? 's' : ''} wait to be laid again: press ▶` : ''}`, 'ok');
+    }, '.wide');
   }
   const menu = (e: Event, items: { label: string; run: () => void }[]) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); openContextMenu(r.left, r.bottom + 2, [], items); };
   function report() {
@@ -302,7 +500,7 @@ export function openMarker(app: App) {
     const lines = [`Cut plan — ${app.doc.style.name}`, `Material: ${m.material || 'all materials'}`, ''];
     let fabric = 0;
     for (const r of m.rows) {
-      const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block, buffer: m.buffer }), st = markerStats(ps, r.placements, r.width ?? m.width);
+      const ps = mp(r.ratio, m), st = markerStats(ps, r.placements, r.width ?? m.width, r.blocks);
       const done = st.placed === st.parts && st.parts > 0; if (done) fabric += st.length * r.plies;
       lines.push(`${r.name}: ${sizes().filter(s => r.ratio[s.id]).map(s => `${s.name} ${r.ratio[s.id]}`).join(' · ') || 'no ratio'} · ${r.plies} plies · width ${fmt(r.width ?? m.width)} ${unitLabel()} · ${done ? `${fmt(st.length)} ${unitLabel()} long, ${(st.efficiency * 100).toFixed(1)} %` : `${st.placed} of ${st.parts} parts laid`}`);
     }
@@ -322,10 +520,11 @@ export function openMarker(app: App) {
       h('button.mk-menu', { type: 'button', 'data-mk': 'menu-file', onclick: (e: Event) => menu(e, [
         { label: 'Save marker (.pcm)', run: () => void saveMarker(false) }, { label: 'Save marker as…', run: () => void saveMarker(true) },
         { label: 'Import marker (.pcm)…', run: () => void importMarker() }, { label: 'Export this marker as DXF', run: exportDXF },
-        { label: 'Plot this marker (.plt)', run: plot }, { label: 'Settings · annotation…', run: () => void settings() },
+        { label: 'Plot this marker (.plt)', run: plot }, { label: 'Settings · annotation…', run: settings },
       ]) }, 'File ▾'),
       h('button.mk-menu', { type: 'button', 'data-mk': 'menu-marker', onclick: (e: Event) => menu(e, [
-        { label: 'Marry pieces', run: marry }, { label: 'Unmarry', run: unmarry }, { label: 'Block fuse…', run: () => void blockFuse() }, { label: 'Buffer…', run: () => void buffer() },
+        { label: 'Piece details…', run: pieceDetails }, { label: 'Marry pieces', run: marry }, { label: 'Unmarry', run: unmarry },
+        { label: 'Block fuse (selected parts)…', run: () => void blockFuse() }, { label: 'Unblock', run: unblock }, { label: 'Buffer…', run: () => void buffer() },
       ]) }, 'Marker ▾'),
       h('span.mk-dim', {}, app.doc.style.name || ''),
       h('label', {}, 'Fabric width', num(fmt(wd()), 'Usable fabric width of the marker on screen (every marker has its own; new markers start with the last width typed)', t => { const v = parseLen(t), id = row()?.id; if (Number.isFinite(v) && v > 50) { edit('Fabric width', d => { d.width = v; const x = d.rows.find(q => q.id === id); if (x) x.width = v; }); draw(true); } else draw(); }, 70), h('span.mk-dim', {}, unitLabel())),
@@ -358,7 +557,7 @@ export function openMarker(app: App) {
     const ordT = h('table.mk-tbl', {}, head,
       h('tr.mk-order', {}, h('td', {}, 'Order'), ...S2.map(s => h('td', {}, int(m.order[s.id] ?? 0, `Garments ordered in ${s.name}`, n => edit('Order quantity', d => { d.order[s.id] = n; }), { 'data-mk-order': s.name }))), h('td', {}, ''), h('td.mk-tot', {}, String(t.ordered)), h('td', {}, ''), h('td', {}, '')));
     for (const r of m.rows) {
-      const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block, buffer: m.buffer }), st = markerStats(ps, r.placements, r.width ?? m.width);
+      const ps = mp(r.ratio, m), st = markerStats(ps, r.placements, r.width ?? m.width, r.blocks);
       const bundles = S2.reduce((a, s) => a + (r.ratio[s.id] ?? 0), 0), done = st.parts > 0 && st.placed === st.parts;
       const tr = h('tr.mk-row' + (r.id === row()?.id ? '.on' : ''), { 'data-mk-row': r.id, title: 'Click to show this marker' },
         h('td.mk-name', {}, r.name, h('span.mk-sub', {}, done ? `${fmt(st.length)} ${unitLabel()} · ${(st.efficiency * 100).toFixed(1)} %` : st.parts ? `${st.placed}/${st.parts} laid` : 'no parts')),
@@ -386,7 +585,7 @@ export function openMarker(app: App) {
       // folded: the markers are tabs, one click shows a marker
       const tabs = h('div.mk-tabs', { role: 'tablist', 'aria-label': 'Markers' });
       for (const r of m.rows) {
-        const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block, buffer: m.buffer }), st = markerStats(ps, r.placements, r.width ?? m.width);
+        const ps = mp(r.ratio, m), st = markerStats(ps, r.placements, r.width ?? m.width, r.blocks);
         const done = st.parts > 0 && st.placed === st.parts, on = r.id === row()?.id;
         const ratio = S2.filter(s => r.ratio[s.id]).map(s => `${s.name} ${r.ratio[s.id]}`).join(' · ');
         const tab = h('button.mk-tab' + (on ? '.on' : '') + (done ? '.done' : ''), { type: 'button', role: 'tab', 'aria-selected': String(on), 'data-mk-tab': r.id,
@@ -414,11 +613,13 @@ export function openMarker(app: App) {
     const time = h('select.mk-time', { title: 'How long the nester searches' }, ...TIMES.map(([v, l]) => h('option', { value: String(v), selected: v === M().nestSeconds }, l))) as HTMLSelectElement;
     time.addEventListener('change', () => edit('Nesting time', d => { d.nestSeconds = Number(time.value); }));
     tools.append(
-      run ? b('stop', '■', 'Stop nesting and keep the best layout so far', nestStop, '.stop') : b('nest', '▶', 'Nest this marker automatically (N)', nestStart, '.play'),
+      busy() ? b('stop', '■', 'Stop nesting and keep the best layout so far', nestStop, '.stop') : b('nest', '▶', 'Nest this marker automatically (N). Panels marked Block in Piece details are laid into fuse blocks first.', () => void nestStart(), '.play'),
       time, h('div.mk-sep'),
       b('marry', '⚭', 'Marry the selected parts: they are picked up, thrown and turned as one (Shift+click selects several)', marry),
       b('unmarry', '⚮', 'Unmarry: the parts of the selected group move on their own again', unmarry),
-      b('block', '▣', 'Block fuse: lay the piece of the selected part as a block with a margin (for fusing), in every size', () => void blockFuse()),
+      b('details', '☰', 'Piece details: every panel with its major mark, block fuse, rotation, tilt and buffer; the limits of the fuse blocks', pieceDetails),
+      b('block', '▣', 'Block fuse: the selected laid parts become one fuse block, contour or rectangular, with a buffer (Shift+click or draw a box to select)', () => void blockFuse()),
+      b('unblock', '▢', 'Unblock: take away the fuse block of the selected part', unblock),
       b('buffer', '◌', 'Buffer: the piece of the selected part keeps a clear margin all round, in every size', () => void buffer()),
       h('div.mk-sep'),
       b('off', '⤴', 'Take the selected part off the marker (Delete)', unplaceSel),
@@ -431,29 +632,41 @@ export function openMarker(app: App) {
   function drawStatus() {
     const r = row(), m = M();
     if (!r) { stat.textContent = 'No marker yet: type the order on the left and press Auto plan, or add a marker with + Marker.'; return; }
-    const st = markerStats(parts, pls(), wd());
+    const st = markerStats(parts, pls(), wd(), blks());
     const el = run ? Math.min(run.seconds, (performance.now() - run.startedAt) / 1000) : 0;
     stat.textContent = [r.name, `${st.placed} of ${st.parts} parts laid`, `length ${fmt(st.length)} ${unitLabel()}`, `efficiency ${(st.efficiency * 100).toFixed(2)} %`,
-      `${r.plies} plies = ${(st.length * r.plies / 1000).toFixed(2)} m of fabric`, `perimeter ${(markerPerimeter(parts, pls()) / 1000).toFixed(2)} m`, bad.size ? `⚠ ${bad.size} part${bad.size > 1 ? 's' : ''} overlapping or off the fabric` : '',
-      run ? `nesting… ${el.toFixed(0)} / ${run.seconds} s on ${run.threads} thread${run.threads > 1 ? 's' : ''}` : carry ? 'Carrying: click = put down · press and pull = aim, let go = shoot · right-click = turn 180° · Esc = put back' : 'Click a part to pick it up · press and pull = aim, let go = shoot · right-click = turn 180° · Shift+click = select more'].filter(Boolean).join('  ·  ');
+      `${r.plies} plies = ${(st.length * r.plies / 1000).toFixed(2)} m of fabric`, `perimeter ${(markerPerimeter(parts, pls(), blks()) / 1000).toFixed(2)} m`, blks().length ? `${blks().length} fuse block${blks().length > 1 ? 's' : ''}` : '', bad.size ? `⚠ ${bad.size} part${bad.size > 1 ? 's' : ''} overlapping, inside a block or off the fabric` : '',
+      phase ? `nesting… ${phase}` : run ? `nesting… ${el.toFixed(0)} / ${run.seconds} s on ${run.threads} thread${run.threads > 1 ? 's' : ''}` : carry ? 'Carrying: click = put down · press and pull = aim, let go = shoot · right-click = turn 180° · Esc = put back' : 'Click a part to pick it up · press and pull = aim, let go = shoot · right-click = turn 180° · Shift+click or draw a box = select · [ ] = tilt'].filter(Boolean).join('  ·  ');
   }
   function drawSvg() {
-    const p0 = pls(), fw = wd(), st = markerStats(parts, p0, fw);
-    bad = run ? new Set() : markerProblems(parts, p0, fw);
+    const p0 = pls(), fw = wd(), bk = blks(), st = markerStats(parts, p0, fw, bk);
+    bad = busy() ? new Set() : markerProblems(parts, p0, fw, 0.6, bk);
     const f = (n: number) => n.toFixed(1);
     const len = Math.max(st.length, 1000), a = S({ x: 0, y: 0 }), b2 = S({ x: len, y: fw });
     const sIdx = new Map(sizes().map((s, k) => [s.id, k]));
     let out = `<rect x="${f(a.x)}" y="${f(a.y)}" width="${f(b2.x - a.x + 4000 * view.k)}" height="${f(b2.y - a.y)}" class="mk-fabric"/>`;
     if (st.length > 0) { const e = S({ x: st.length, y: 0 }); out += `<line x1="${f(e.x)}" y1="${f(a.y - 8)}" x2="${f(e.x)}" y2="${f(b2.y + 8)}" class="mk-end"/><text x="${f(e.x + 5)}" y="${f(a.y - 12)}" class="mk-lab">${fmt(st.length)} ${unitLabel()} · ${(st.efficiency * 100).toFixed(1)} %</text>`; }
     const wedSet = new Set((row()?.marry ?? []).flat());
-    const an = annot(), sname = app.doc.style.name;
+    const an = annot(), sname = app.doc.style.name, esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    // the text at the marker, where the settings put it (on screen it keeps a readable size)
+    const r0 = row();
+    if (an.border && r0) {
+      const bl = borderLines(parts, p0, fw, an, outOpt(r0)), up = borderLayout(an, bl.length, st.length, fw).up, pl2 = an.place ?? 'top', e = S({ x: Math.max(st.length, 0), y: 0 });
+      bl.forEach((t, i) => {
+        const x = pl2 === 'start' ? a.x - 8 - (bl.length - 1 - i) * 15 : pl2 === 'end' ? e.x + 18 + i * 15 : a.x, y = pl2 === 'top' ? a.y - 8 - (bl.length - 1 - i) * 15 - (st.length > 0 ? 16 : 0) : pl2 === 'bottom' ? b2.y + 18 + i * 15 : b2.y;
+        out += `<text x="${f(x)}" y="${f(y)}" class="mk-lab mk-btext"${up ? ` transform="rotate(-90 ${f(x)} ${f(y)})"` : ''}>${esc(t)}</text>`;
+      });
+    }
+    // fuse blocks: their outline, under their parts
+    const wp: Placements = {}; for (const p of parts) { const q = where(p); if (q) wp[p.id] = q; }
+    for (const b of bk) { const o = blockOutline(parts, wp, b); if (!o) continue; const held = !!carry && b.ids.some(id => carry!.base[id]); out += `<path class="mk-blk${b.shape === 'rect' ? ' rect' : ''}${held ? ' carry' : ''}${b.ids.some(id => sel.has(id)) ? ' sel' : ''}" d="${o.map(S).map((v, i) => `${i ? 'L' : 'M'}${f(v.x)} ${f(v.y)}`).join('')}Z"/>`; }
     const dl = (v: Vec[], q: Placement, closed: boolean) => v.map(x => S(placedPoint(q, x))).map((x, i) => `${i ? 'L' : 'M'}${f(x.x)} ${f(x.y)}`).join('') + (closed ? 'Z' : '');
     let top2 = '';
     for (const p of parts) {
       const q = where(p); if (!q) continue;
       const pts = placedPoly(p, q).map(S), col = SIZE_COL[(sIdx.get(p.sizeId) ?? 0) % SIZE_COL.length];
       const held = !!carry?.base[p.id];
-      const cls = 'mk-part' + (sel.has(p.id) ? ' sel' : '') + (bad.has(p.id) && !held ? ' bad' : '') + (p0[p.id] || held ? '' : ' wait') + (held ? ' carry' : '') + (wedSet.has(p.id) ? ' wed' : '') + (p.inner ? ' block' : '');
+      const cls = 'mk-part' + (sel.has(p.id) ? ' sel' : '') + (bad.has(p.id) && !held ? ' bad' : '') + (p0[p.id] || held ? '' : ' wait') + (held ? ' carry' : '') + (wedSet.has(p.id) ? ' wed' : '') + (p.inner ? ' block' : '') + (p.major ? ' major' : '') + (p.fuse ? ' fuse' : '');
       const g0 = S(placedPoint(q, p.grain[0])), g1 = S(placedPoint(q, p.grain[1]));
       const bx = polyBox(pts), big = (bx.x1 - bx.x0) > 46 && (bx.y1 - bx.y0) > 16;
       const one = `<g class="${cls}" data-part="${p.id}"><path d="${pts.map((v, i) => `${i ? 'L' : 'M'}${f(v.x)} ${f(v.y)}`).join('')}Z" style="--c:${col}"/>`
@@ -461,13 +674,13 @@ export function openMarker(app: App) {
         + (an.seam && p.sew ? `<path class="mk-seam" d="${dl(p.sew, q, true)}"/>` : '')
         + (an.internals !== 'none' && p.lines ? `<path class="mk-int${an.internals === 'cut' ? ' cut' : ''}" d="${p.lines.map(l => dl(l, q, false)).join('')}"/>` : '')
         + (an.grain ? `<line x1="${f(g0.x)}" y1="${f(g0.y)}" x2="${f(g1.x)}" y2="${f(g1.y)}" class="mk-grain"/>` : '')
-        + (big ? partLabel(p, an, sname).map((t, i) => `<text x="${f((bx.x0 + bx.x1) / 2)}" y="${f((bx.y0 + bx.y1) / 2 + 3 + i * 11)}" class="mk-pl">${t.slice(0, 40).replace(/&/g, '&amp;').replace(/</g, '&lt;')}</text>`).join('') : '') + '</g>';
+        + (big ? partLabel(p, an, sname).map((t, i) => `<text x="${f((bx.x0 + bx.x1) / 2)}" y="${f((bx.y0 + bx.y1) / 2 + 3 + i * 11)}" class="mk-pl">${esc(t.slice(0, 40))}</text>`).join('') : '') + '</g>';
       if (held) top2 += one; else out += one; // carried parts are drawn last, on top
     }
     out += top2 + '<g class="mk-over"></g>';
-    if (Object.keys(tray).length) { const t = S({ x: 0, y: -30 }); out += `<text x="${f(t.x)}" y="${f(t.y)}" class="mk-lab">Waiting to be laid: ${Object.keys(tray).length}</text>`; }
+    if (Object.keys(tray).length) { const t = S({ x: 0, y: -30 - trayShift }); out += `<text x="${f(t.x)}" y="${f(t.y)}" class="mk-lab">Waiting to be laid: ${Object.keys(tray).length}</text>`; }
     svg.innerHTML = out;
-    carryEls = carry ? carry.ids.map(id => svg.querySelector(`[data-part="${CSS.escape(id)}"]`)).filter(Boolean) as SVGGElement[] : [];
+    carryEls = carry ? [...carry.ids.map(id => svg.querySelector(`[data-part="${CSS.escape(id)}"]`)).filter(Boolean) as SVGGElement[], ...svg.querySelectorAll('.mk-blk.carry') as unknown as SVGGElement[]] : [];
     over = svg.querySelector('.mk-over');
     place(); drawAim();
   }
@@ -476,6 +689,7 @@ export function openMarker(app: App) {
   function place() { if (!carry) return; const t = `translate(${(carry.shift.x * view.k).toFixed(1)} ${(carry.shift.y * view.k).toFixed(1)})`; for (const el of carryEls) el.setAttribute('transform', t); }
   function drawAim() {
     if (!over) return;
+    if (mq) { const p = S(mq.a), q = S(mq.b); over.innerHTML = `<rect class="mk-mq${mq.b.x < mq.a.x ? ' touch' : ''}" x="${Math.min(p.x, q.x).toFixed(1)}" y="${Math.min(p.y, q.y).toFixed(1)}" width="${Math.abs(q.x - p.x).toFixed(1)}" height="${Math.abs(q.y - p.y).toFixed(1)}"/>`; return; }
     if (!aim) { over.innerHTML = ''; return; }
     const f = (n: number) => n.toFixed(1), a1 = S(aim.from), a2 = S(aim.to), ang = Math.atan2(a2.y - a1.y, a2.x - a1.x), hd = 11;
     const pt = (r: number, o: number) => `${f(a2.x + r * Math.cos(ang + o))} ${f(a2.y + r * Math.sin(ang + o))}`;
@@ -484,7 +698,7 @@ export function openMarker(app: App) {
   function draw(refit = false) {
     if (!root) return;
     refreshParts(); layTray();
-    if (refit) fit();
+    if (refit) { fit(); layTray(); }
     if (!root.contains(document.activeElement) || !isTyping()) { drawTop(); drawPlan(); }
     drawTools(); drawSvg(); drawStatus();
   }
@@ -519,11 +733,12 @@ export function openMarker(app: App) {
     for (const p of parts) if (from[p.id]) { const b = polyBox(placedPoly(p, from[p.id])); lo = Math.min(lo, b.y0); hi = Math.max(hi, b.y1); left = Math.min(left, b.x0); }
     const sy = lo < 0 ? -lo : hi > w ? w - hi : 0, sx = left < 0 ? -left : 0;
     for (const id of c.ids) start[id] = { ...from[id], x: from[id].x + sx, y: from[id].y + sy };
-    const res = throwParts(parts, start, w, c.ids, dir, { gap: M().gap }) ?? throwParts(parts, start, w, c.ids, { x: -dir.x, y: -dir.y }, { gap: M().gap });
+    const tb = (r.blocks ?? []).filter(b => b.ids.every(id => start[id]));
+    const res = throwParts(parts, start, w, c.ids, dir, { gap: M().gap, blocks: tb }) ?? throwParts(parts, start, w, c.ids, { x: -dir.x, y: -dir.y }, { gap: M().gap, blocks: tb });
     if (!res) { toast('No free place that way: the part stays on the cursor', 'warn'); drawSvg(); return; }
     carry = null; press = null;
     const ids = c.ids, t0 = performance.now(), dur = 140;
-    cancelAnimationFrame(anim); runRow = r.id;
+    cancelAnimationFrame(anim); runRow = r.id; liveBlocks = null;
     const tick = () => {
       if (!root) return;
       const k = Math.min(1, (performance.now() - t0) / dur), e = 1 - (1 - k) * (1 - k);
@@ -536,18 +751,20 @@ export function openMarker(app: App) {
   }
   svg.addEventListener('pointerdown', e => {
     svg.focus();
-    if (e.button === 2) return; // right-click: turn (see contextmenu)
-    if (e.button === 1 || e.altKey) { pan = { x: e.clientX, y: e.clientY }; svg.setPointerCapture(e.pointerId); return; }
+    const onPart = (e.target as Element).closest('[data-part]');
+    if (e.button === 2 && (onPart || carry)) return; // right-click on a part: turn (see contextmenu)
+    if (e.button === 1 || e.button === 2 || e.altKey) { pan = { x: e.clientX, y: e.clientY }; svg.setPointerCapture(e.pointerId); return; } // middle, right or Alt: move the view
     if (carry) { press = { x: e.clientX, y: e.clientY }; svg.setPointerCapture(e.pointerId); return; }
     const g = (e.target as Element).closest('[data-part]') as SVGElement | null;
-    if (!g) { if (!e.shiftKey && sel.size) { sel.clear(); draw(); } pan = { x: e.clientX, y: e.clientY }; svg.setPointerCapture(e.pointerId); return; }
-    if (run) { toast('Stop the nester (■) before moving parts by hand', 'warn'); return; }
+    if (!g) { const w = evW(e); mq = { a: w, b: w, add: e.shiftKey, px: { x: e.clientX, y: e.clientY } }; svg.setPointerCapture(e.pointerId); return; } // empty place: draw a box to select
+    if (busy()) { toast('Stop the nester (■) before moving parts by hand', 'warn'); return; }
     const id = g.dataset.part!;
     if (e.shiftKey) { if (sel.has(id)) sel.delete(id); else sel.add(id); draw(); return; }
     pickUp(id, evW(e)); press = { x: e.clientX, y: e.clientY }; svg.setPointerCapture(e.pointerId);
   });
   svg.addEventListener('pointermove', e => {
     if (pan) { view.ox += e.clientX - pan.x; view.oy += e.clientY - pan.y; pan = { x: e.clientX, y: e.clientY }; cancelAnimationFrame(raf); raf = requestAnimationFrame(() => drawSvg()); return; }
+    if (mq) { mq.b = evW(e); drawAim(); return; }
     if (!carry) return;
     const w = evW(e);
     if (press) {
@@ -563,6 +780,16 @@ export function openMarker(app: App) {
   const up = (e: PointerEvent) => {
     try { svg.releasePointerCapture(e.pointerId); } catch { /* */ }
     if (pan) { pan = null; return; }
+    if (mq) {
+      // a box drawn to the right takes the parts wholly inside it, a box drawn to the left every part it touches
+      const q = mq; mq = null;
+      const moved = Math.hypot(e.clientX - q.px.x, e.clientY - q.px.y) > 5, next = q.add ? new Set(sel) : new Set<string>();
+      if (moved) {
+        const x0 = Math.min(q.a.x, q.b.x), x1 = Math.max(q.a.x, q.b.x), y0 = Math.min(q.a.y, q.b.y), y1 = Math.max(q.a.y, q.b.y), touch = q.b.x < q.a.x;
+        for (const p of parts) { const pl = where(p); if (!pl) continue; const b = polyBox(placedPoly(p, pl)); if (touch ? b.x1 >= x0 && b.x0 <= x1 && b.y1 >= y0 && b.y0 <= y1 : b.x0 >= x0 && b.x1 <= x1 && b.y0 >= y0 && b.y1 <= y1) next.add(p.id); }
+      }
+      sel = next; draw(); return;
+    }
     if (!carry || !press) return;
     press = null;
     if (aim) { const a = aim; aim = null; drawAim(); shoot(a); return; }
@@ -581,6 +808,7 @@ export function openMarker(app: App) {
     const id = carry?.grab ?? ((e.target as Element).closest('[data-part]') as SVGElement | null)?.dataset.part;
     if (id) turn(id);
   });
+  svg.addEventListener('lostpointercapture', () => { if (mq) { mq = null; drawAim(); } });
   svg.addEventListener('wheel', e => {
     e.preventDefault();
     const r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top, w = W(mx, my);
@@ -591,16 +819,18 @@ export function openMarker(app: App) {
   const key = (e: KeyboardEvent) => {
     if (!root) return;
     if (dialogOpen() || document.querySelector('.ctx-menu')) return; // a dialog or an open menu handles its own keys
+    if (dlg) { if (e.key === 'Escape') { dlg.close(); e.preventDefault(); } e.stopImmediatePropagation(); return; } // a window of this room: typing stays in it
     const typing = isTyping();
     if (e.key === 'Escape' && (aim || carry)) { if (aim) { aim = null; press = null; drawAim(); } else dropCarry(true); e.preventDefault(); e.stopImmediatePropagation(); return; }
-    if (e.key === 'Escape') { if (typing) (document.activeElement as HTMLElement).blur(); else if (run) nestStop(); else if (sel.size) { sel.clear(); draw(); } else closeMarker(); e.preventDefault(); e.stopImmediatePropagation(); return; }
+    if (e.key === 'Escape') { if (typing) (document.activeElement as HTMLElement).blur(); else if (busy()) nestStop(); else if (sel.size) { sel.clear(); draw(); } else closeMarker(); e.preventDefault(); e.stopImmediatePropagation(); return; }
     if (typing) { e.stopImmediatePropagation(); return; }
     const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
-    if (mod && k === 'z') { if (carry) dropCarry(true); if (!run) { if (e.shiftKey) app.doc.redo(); else app.doc.undo(); partsKey = ''; draw(); } }
-    else if (mod && k === 'y') { if (!run) { app.doc.redo(); partsKey = ''; draw(); } }
+    if (mod && k === 'z') { if (carry) dropCarry(true); if (!busy()) { if (e.shiftKey) app.doc.redo(); else app.doc.undo(); partsKey = ''; draw(); } }
+    else if (mod && k === 'y') { if (!busy()) { app.doc.redo(); partsKey = ''; draw(); } }
     else if (mod && k === 'a') { sel = new Set(parts.filter(p => pls()[p.id]).map(p => p.id)); draw(); }
     else if (mod) return; // leave browser shortcuts (and Ctrl+S) alone
-    else if (k === 'n') nestStart();
+    else if (k === 'n') void nestStart();
+    else if (k === '[' || k === ']') tiltBy(k === '[' ? -0.5 : 0.5);
     else if (k === 'r') { const id = carry?.grab ?? [...sel][0]; if (id) turn(id); }
     else if (k === 'f') { fit(); draw(); }
     else if (k === 'delete' || k === 'backspace') unplaceSel();
@@ -613,7 +843,7 @@ export function openMarker(app: App) {
 
   function closeMarker() {
     if (!root) return;
-    run?.stop(); clearInterval(runTimer);
+    aborted = true; run?.stop(); clearInterval(runTimer); dlg?.close();
     window.removeEventListener('keydown', key, true); window.removeEventListener('resize', onResize);
     root.remove(); root = null; app.invalidate();
   }
