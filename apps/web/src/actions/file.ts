@@ -13,7 +13,7 @@ import { showDialog, confirmDialog, rememberedDialog, alertDialog } from '../ui/
 import { toast } from '../ui/toast';
 import { store } from '../settings';
 import { ops } from '../ops-bridge';
-import { reportError } from '../commands';
+import { reportError, runCommand } from '../commands';
 import { h } from '../ui/dom';
 import { pieceOrPick } from '../selection';
 
@@ -26,7 +26,7 @@ interface FSWindow {
   showSaveFilePicker?: (o: unknown) => Promise<FSHandle>;
 }
 const W = window as unknown as FSWindow;
-const PICKER_TYPES = [{ description: 'ProwdCAD style', accept: { 'application/json': ['.prowd.json', '.prowd', '.json'] } }];
+const PICKER_TYPES = [{ description: 'ProwdCAD pattern (.pcd) or marker (.pcm)', accept: { 'application/json': ['.pcd', '.pcm', '.prowd.json', '.prowd', '.json'] } }];
 
 /** Hook for tests / headless runs: when set, downloads are captured instead of clicked. */
 export const downloadSink: { capture?: (name: string, blob: Blob) => void } = {};
@@ -55,7 +55,7 @@ export async function newStyle(app: App) {
     p.grain = { a: { x: w / 2, y: hh * 0.2 }, b: { x: w / 2, y: hh * 0.8 }, gradeA: {}, gradeB: {}, centered: true };
     style.pieces.push(p);
   }
-  loadStyle(app, style, `${style.name}.prowd.json`, null);
+  loadStyle(app, style, `${style.name}.pcd`, null);
 }
 
 export function loadStyle(app: App, style: Style, name: string, handle: unknown) {
@@ -85,11 +85,11 @@ export async function openFile(app: App) {
       return readInto(app, await f.text(), f.name, hnd);
     } catch (err) { if ((err as Error).name === 'AbortError') return; console.warn('FS Access failed, falling back', err); }
   }
-  const [f] = await pickFiles('.json,.prowd,.prowd.json,.wptn,application/json');
+  const [f] = await pickFiles('.pcd,.pcm,.json,.prowd,.prowd.json,.wptn,application/json');
   if (f) readInto(app, await f.text(), f.name, null);
 }
 
-const NATIVE_RE = /\.(json|prowd|wptn)$/i;
+const NATIVE_RE = /\.(pcd|pcm|json|prowd|wptn)$/i;
 const IMPORT_RE = /\.(dxf|aama|astm|rul|svg|plt|hpgl|hpg)$/i;
 
 /**
@@ -101,7 +101,7 @@ export async function openDropped(app: App, files: File[]) {
   const native = files.filter(f => NATIVE_RE.test(f.name));
   const imports = files.filter(f => IMPORT_RE.test(f.name));
   if (!native.length && !imports.length) {
-    toast(`Cannot open ${files.map(f => f.name).join(', ') || 'that'} — drop a .prowd.json style, or DXF / RUL / SVG / PLT files to import`, 'warn', 4500);
+    toast(`Cannot open ${files.map(f => f.name).join(', ') || 'that'} — drop a .pcd pattern, a .pcm marker, or DXF / RUL / SVG / PLT files to import`, 'warn', 4500);
     return;
   }
   if (native.length) {
@@ -115,7 +115,10 @@ export async function openDropped(app: App, files: File[]) {
 export function readInto(app: App, text: string, name: string, handle: unknown) {
   try {
     const res = ops.loadNative(text);
-    loadStyle(app, res.style, name, handle);
+    // a marker file (.pcm) is the style with its markers: the pattern is saved as .pcd from here, and the marker room opens
+    const isMarker = /\.pcm$/i.test(name);
+    loadStyle(app, res.style, isMarker ? name.replace(/\.pcm$/i, '.pcd') : name, isMarker ? null : handle);
+    if (isMarker) requestAnimationFrame(() => void runCommand('marker.open'));
     toast(`Opened ${name}${res.migratedFrom ? ` (migrated from ${res.migratedFrom})` : ''}`, 'ok');
     if (res.warnings.length) void alertDialog('Open — warnings', res.warnings.join('\n'));
   } catch (err) {
@@ -143,8 +146,8 @@ export async function saveFile(app: App, saveAs = false) {
   if (saveAs || !W.showSaveFilePicker) {
     const r = await showDialog({ title: saveAs ? 'Save as' : 'Save', fields: [{ kind: 'text', key: 'n', label: 'File name', value: app.fileName }] });
     if (!r) return;
-    let n = String(r.n).trim() || 'untitled.prowd.json';
-    if (!/\.json$|\.prowd$/i.test(n)) n += '.prowd.json';
+    let n = String(r.n).trim() || 'untitled.pcd';
+    if (!/\.pcd$|\.json$|\.prowd$/i.test(n)) n = n.replace(/\.pcm$/i, '') + '.pcd';
     app.fileName = n;
   }
   download(app.fileName, new Blob([json], { type: 'application/json' }));
@@ -160,7 +163,7 @@ export function download(name: string, blob: Blob) {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
-const baseName = (app: App) => app.fileName.replace(/\.prowd\.json$|\.json$|\.prowd$/i, '');
+const baseName = (app: App) => app.fileName.replace(/\.pcd$|\.pcm$|\.prowd\.json$|\.json$|\.prowd$/i, '');
 
 // ───────────── preview thumbnail ─────────────
 
@@ -331,7 +334,7 @@ export async function exportStandalone(app: App) {
   const r = await showDialog({ title: 'Export size as standalone style', fields: [{ kind: 'select', key: 's', label: 'Size', value: app.activeSize, options: app.doc.sizesOf(p).map(id => ({ value: id, label: line.sizes.find(s => s.id === id)?.name ?? id })) }] });
   if (!r) return;
   const st = ops.exportSizeAsStandalone(app.doc, p.id, String(r.s));
-  const name = `${p.name}_${line.sizes.find(s => s.id === r.s)?.name}.prowd.json`;
+  const name = `${p.name}_${line.sizes.find(s => s.id === r.s)?.name}.pcd`;
   download(name, new Blob([ops.saveNative(st, { pretty: true })], { type: 'application/json' }));
   toast(`Exported ${name}`, 'ok');
 }
@@ -467,7 +470,7 @@ async function commitImport(app: App, name: string, rep: ImportReport) {
 // ───────────── merge from another style ─────────────
 
 export async function mergeFromFile(app: App) {
-  const [f] = await pickFiles('.json,.prowd,.prowd.json,.wptn,application/json');
+  const [f] = await pickFiles('.pcd,.pcm,.json,.prowd,.prowd.json,.wptn,application/json');
   if (!f) return;
   const other = ops.loadNative(await f.text()).style;
   if (!other.pieces.length) throw new Error('That style has no pieces');
