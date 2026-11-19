@@ -173,6 +173,37 @@ async function nested(h, fixtures) {
     await h.ev(() => { const E = window.__e2e; E.app.doc.transact('clear marker', s => { delete s.meta.marker; }); });
     return { got: `${plan.rows} markers, cut ${plan.cut} of ${plan.order}; off-plan cells ${ok0} → ${off} → ${back}; nested ${res.laid}/${res.parts} parts, ${res.bad} bad; closed ${closed === 0}`, pass: plan.rows >= 1 && plan.cut === plan.order && plan.big && ok0 === 0 && off === 1 && back === 0 && res.laid === res.parts && res.parts > 0 && res.bad === 0 && closed === 0 };
   });
+  await T('Marker making, classic throw: a waiting part aimed down lands on the fabric, a second one thrown left stops against it; Rotate 180° turns the whole bundle and is only live under "One bundle, one direction"; "All bundles one direction" takes turned parts off', async () => {
+    const P = h.page;
+    await h.ev(() => { const E = window.__e2e; E.app.doc.transact('2way', s => { for (const p of s.pieces) p.order.rotation = '2way'; }); void E.C.runCommand('marker.open'); }); await P.waitForSelector('.mk-root'); await h.settle(150);
+    for (const [k, n] of Object.entries({ M: 10, L: 10 })) { const i = P.locator(`[data-mk-order="${k}"]`); await i.fill(String(n)); await i.press('Tab'); await h.settle(60); }
+    await P.locator('[data-mk="auto"]').click(); await h.settle(250);
+    const st = () => h.ev(() => { const E = window.__e2e, m = E.app.style.meta.marker, r = m.rows[0]; return { n: Object.keys(r.placements).length, rots: Object.values(r.placements).map(q => q.rot).join(), bad: document.querySelectorAll('.mk-part.bad').length, dir: m.direction || 'bundle', r180: m.rot180 !== false, mode: document.querySelector('[data-mk="throw"]').classList.contains('on') }; });
+    const centre = async sel => { const b = await P.locator(sel).first().boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+    const fab = await P.locator('.mk-fabric').boundingBox();
+    const throwTo = async (sel, tx, ty) => { const c = await centre(sel); await P.mouse.move(c.x, c.y); await P.mouse.down(); await P.mouse.move((c.x + tx) / 2, (c.y + ty) / 2, { steps: 4 }); await P.mouse.move(tx, ty, { steps: 4 }); const aim = await P.locator('.mk-aim').count(); await P.mouse.up(); await P.waitForTimeout(420); await h.settle(80); return aim; };
+    const s0 = await st();
+    const aim1 = await throwTo('.mk-part.wait', fab.x + 260, fab.y + 120);
+    const s1 = await st();
+    const aim2 = await throwTo('.mk-part.wait', fab.x + 520, fab.y + 100);
+    const s2 = await st();
+    const bail = async why => { await h.ev(() => { document.querySelector('.mk-root')?.closeMarker?.(); const E = window.__e2e; E.app.doc.transact('clear marker', s => { delete s.meta.marker; }); }); return { got: why, pass: false }; };
+    if (s2.n < 2) return bail(`throws did not lay parts: aim ${aim1}/${aim2}, laid ${s0.n}→${s1.n}→${s2.n}, toasts ${JSON.stringify(await h.ev(() => window.__e2e.toasts.slice(-3)))}`);
+    // throw the 2nd laid part to the left: it must stop against the first without overlap
+    await throwTo('.mk-part:not(.wait) >> nth=1', fab.x + 5, (await centre('.mk-part:not(.wait) >> nth=1')).y);
+    const s3 = await st();
+    // turn the bundle of a laid part
+    const c = await centre('.mk-part:not(.wait)'); await P.mouse.click(c.x, c.y); await h.key('r'); await h.settle(120);
+    const s4 = await st();
+    await P.locator('[data-mk="rot180"]').uncheck(); await h.settle(150);
+    const s5 = await st();
+    await P.locator('[data-mk="direction"]').selectOption('all'); await h.settle(150);
+    const dis = await P.locator('[data-mk="rot180"]').isDisabled();
+    await h.key('Escape'); await h.key('Escape'); await h.settle(150);
+    await h.ev(() => { const E = window.__e2e; E.app.doc.transact('clear marker', s => { delete s.meta.marker; }); });
+    return { got: `throw mode ${s0.mode}; aim line ${aim1}/${aim2}; laid ${s0.n}→${s1.n}→${s2.n}, bad after throw-left ${s3.bad}; rots after R "${s4.rots}"; 180 off → laid ${s5.n}; all-one-direction: switch disabled ${dis}`,
+      pass: s0.mode && aim1 === 1 && aim2 === 1 && s0.n === 0 && s1.n === 1 && s2.n === 2 && s3.bad === 0 && /180/.test(s4.rots) && s5.n < s4.n && dis };
+  });
   await T('Size chip click switches active size; selection kept', async () => { await h.selectA('FRONT', 'UA'); await h.page.locator('.sz-chip', { hasText: 'XL' }).click(); await h.settle(); const s = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); const sel = await h.sel(); return { got: `${s}, sel ${sel.anchors}`, pass: s === 'XL' && sel.anchors[0] === 'FRONT/UA' }; });
   await T('Ctrl+] / Ctrl+[ step sizes', async () => { await h.key('Control+]'); await h.key('Control+]'); const a = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); await h.key('Control+['); const b = await h.ev(() => window.__e2e.app.sizeLine().sizes.find(x => x.id === window.__e2e.app.activeSize).name); return { got: `${a} then ${b}`, pass: a === 'XL' && b === 'L' }; });
   await T('Nested view: drag the L instance of UA → only L grading of UA changes', async () => {
