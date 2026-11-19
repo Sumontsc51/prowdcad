@@ -632,3 +632,31 @@ table.sg tr.out { display: none; }
 .mk-int { fill: none; stroke: rgba(0,0,0,.5); stroke-width: .8; stroke-dasharray: 2 2; pointer-events: none; }
 .mk-int.cut { stroke-dasharray: none; stroke: #b01e17; }
 .mk-part.wait .mk-seam, .mk-part.wait .mk-int { stroke: rgba(255,255,255,.4); }
+
+.mk-dlg-back { position: absolute; inset: 0; z-index: 5; background: rgba(0,0,0,.5); display: grid; place-items: center; }
+.mk-dlg { width: 560px; max-width: calc(100vw - 32px); max-height: calc(100vh - 48px); display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+.mk-dlg.wide { width: 780px; }
+.mk-set-h { font: 600 10px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); margin-top: 8px; }
+.mk-set-l { color: var(--dim); font-size: 11px; }
+.mk-set-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.mk-set-row label, .mk-ck { display: flex; align-items: center; gap: 6px; color: var(--dim); cursor: pointer; }
+.mk-ta { width: 100%; resize: vertical; font: 12px/1.5 var(--mono); padding: 6px 8px; }
+.mk-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.mk-chip { padding: 1px 7px; border: 1px solid var(--line); border-radius: 10px; background: none; color: var(--dim); font: 10px var(--mono); cursor: pointer; }
+.mk-chip:hover { color: var(--text); border-color: var(--accent); }
+.mk-prev { margin: 0; padding: 6px 8px; min-height: 30px; border: 1px dashed var(--line); border-radius: 5px; font: 11px/1.45 var(--mono); color: var(--text); white-space: pre-wrap; }
+.mk-pd-scroll { max-height: 46vh; overflow: auto; }
+.mk-pd { width: 100%; }
+.mk-pd th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.mk-pd td:first-child { width: 40px; }
+.mk-pd-name { text-align: left !important; font-family: var(--sans); }
+.mk-pd-name .mk-sub { display: block; }
+.mk-pd-block { border-top: 1px solid var(--line); padding-top: 4px; display: flex; flex-direction: column; gap: 6px; }
+.mk-pd-block.off .mk-set-row { opacity: .45; }
+.mk-blk { fill: rgba(255,170,40,.10); stroke: #e8830c; stroke-width: 1.6; stroke-dasharray: 10 4; pointer-events: none; }
+.mk-blk.sel { stroke-width: 2.4; fill: rgba(255,170,40,.18); }
+.mk-mq { fill: rgba(78,161,255,.12); stroke: #4ea1ff; stroke-width: 1; }
+.mk-mq.touch { stroke-dasharray: 5 3; fill: rgba(63,174,106,.12); stroke: #3fae6a; }
+.mk-part.major > path:first-child { stroke-width: 1.9; }
+.mk-part.fuse.wait > path:first-child { stroke-dasharray: 2 3; }
+.mk-btext { fill: #e9edf4; font: 11px var(--mono); }
