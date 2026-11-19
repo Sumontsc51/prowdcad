@@ -5,6 +5,7 @@ import { makeStyle, makePiece, rectangleContour, makeContour, gradePoint } from 
 import { switchMarkerMaterial, markerPerimeter, partLabel, borderText, borderLines, borderLayout, annotLength, cutOutline, DEFAULT_ANNOT, blockOutline, blockPart, blockBins, contourAround, blockRoom, facing, type MarkerDoc, type MarkerBlock } from '../src/marker/marker';
 import { pointInPolygon, distToPolygon, signedArea } from '../src/geom/poly';
 import { matchShifts, markerMismatch, matchPlan, sweptPart, settleMatch, sweepPoly, matchAt, lineWay } from '../src/marker/marker';
+import { shadeProblems, shadeBundles, columnHull } from '../src/marker/marker';
 import { setLineUse, setNotchProps, lineUseOf } from '../src/ops/props';
 import { addNotchAtPoint } from '../src/ops/notches';
 import { directedParts, obeyDirection, groupMayTurn, directionGroup, throwParts, autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placeAt, placedPoly, polyBox, nestJob, nestResult, markerDXF, markerHPGL, simplifyClosed } from '../src/marker/marker';
@@ -472,5 +473,49 @@ describe('line use, global edits and stripe / plaid matching', () => {
     const pl = settleMatch(parts, res.placements, f, plan);
     expect(markerMismatch(parts, pl, f, 0.01).size).toBe(0);
     expect(markerProblems(parts, pl, 1200, 1).size).toBe(0);
+  });
+});
+
+describe('shade zones', () => {
+  const d = style(), I = ids(d), body = d.style.pieces[0];
+  const parts = markerParts(d, { [I.M]: 2 }, { detail: { [body.id]: { major: true } } });
+  const B = (bn: number) => parts.filter(p => p.name === 'BODY' && p.bundle === bn);   // 2 bodies of 620 × 420 per bundle
+  const sh = { rows: 2, colBy: 'length' as const, colLength: 1300, rowOverlap: 0, colOverlap: 0 };
+  it('the major parts of a bundle lie within one row and one column length; overlap gives room', () => {
+    const ok = { [B(1)[0].id]: placeAt(B(1)[0], 0, 0, 0), [B(1)[1].id]: placeAt(B(1)[1], 620, 0, 0), [B(2)[0].id]: placeAt(B(2)[0], 0, 500, 0), [B(2)[1].id]: placeAt(B(2)[1], 620, 500, 0) };
+    expect(shadeBundles(parts, ok, 1000, sh).map(b => b.row)).toEqual([0, 1]);
+    expect(shadeProblems(parts, ok, 1000, sh).size).toBe(0);
+    expect(shadeProblems(parts, ok, 1000, undefined).size).toBe(0);
+    // a body of bundle 1 moved into the other row
+    const rowOff = { ...ok, [B(1)[1].id]: placeAt(B(1)[1], 1300, 500, 0) };
+    expect([...shadeProblems(parts, rowOff, 1000, sh)].sort()).toEqual(B(1).map(p => p.id).sort());
+    // 60 mm over the row line: not allowed, allowed with 15 % overlap (75 mm of a 500 mm row)
+    const over = { ...ok, [B(1)[0].id]: placeAt(B(1)[0], 0, 140, 0), [B(1)[1].id]: placeAt(B(1)[1], 620, 140, 0), [B(2)[0].id]: placeAt(B(2)[0], 1300, 560, 0), [B(2)[1].id]: placeAt(B(2)[1], 1920, 560, 0) };
+    expect(shadeProblems(parts, over, 1000, sh).size).toBe(2);
+    expect(shadeProblems(parts, over, 1000, { ...sh, rowOverlap: 15 }).size).toBe(0);
+    // spread over more than a column length
+    const far = { ...ok, [B(1)[1].id]: placeAt(B(1)[1], 900, 0, 0) };
+    expect(shadeProblems(parts, far, 1000, sh).size).toBe(2);                       // 1520 long > 1300
+    expect(shadeProblems(parts, far, 1000, { ...sh, colOverlap: 10 }).size).toBe(0); // 1300 + 2 × 130
+  });
+  it('columns by bundle end: bundles of a row follow each other, sharing at most the overlap', () => {
+    const one = { ...sh, rows: 1, colBy: 'bundle' as const };
+    const seq = { [B(1)[0].id]: placeAt(B(1)[0], 0, 0, 0), [B(1)[1].id]: placeAt(B(1)[1], 0, 420, 0), [B(2)[0].id]: placeAt(B(2)[0], 620, 0, 0), [B(2)[1].id]: placeAt(B(2)[1], 620, 420, 0) };
+    expect(shadeProblems(parts, seq, 1000, one).size).toBe(0);
+    const mixed = { [B(1)[0].id]: placeAt(B(1)[0], 0, 0, 0), [B(1)[1].id]: placeAt(B(1)[1], 620, 420, 0), [B(2)[0].id]: placeAt(B(2)[0], 620, 0, 0), [B(2)[1].id]: placeAt(B(2)[1], 0, 420, 0) };
+    expect(shadeProblems(parts, mixed, 1000, one).size).toBe(4);
+    const lap = { ...seq, [B(2)[0].id]: placeAt(B(2)[0], 560, 0, 0) };              // 60 of 620 shared
+    expect(shadeProblems(parts, lap, 1000, one).size).toBe(4); expect(shadeProblems(parts, lap, 1000, { ...one, colOverlap: 10 }).size).toBe(0);
+    // in two rows they may lie side by side
+    expect(shadeProblems(parts, { [B(1)[0].id]: placeAt(B(1)[0], 0, 0, 0), [B(1)[1].id]: placeAt(B(1)[1], 620, 0, 0), [B(2)[0].id]: placeAt(B(2)[0], 0, 500, 0), [B(2)[1].id]: placeAt(B(2)[1], 620, 500, 0) }, 1000, { ...one, rows: 2 }).size).toBe(0);
+  });
+  it('the shape around the major parts of a bundle holds them exactly; a spine closes the full height', () => {
+    const sl = markerParts(d, { [I.M]: 1 }).filter(p => p.name === 'SLEEVE');
+    const polys = [placedPoly(sl[0], placeAt(sl[0], 0, 0, 0)), placedPoly(sl[1], placeAt(sl[1], 230, 40, 0))];
+    const hull = columnHull(polys), hb = polyBox(hull), g = contourAround([hull], 1);
+    for (const q of polys.flat()) expect(pointInPolygon(q, g)).toBe(true);
+    expect([hb.x0, hb.y0, hb.x1, hb.y1].map(Math.round)).toEqual([0, 0, 430, 340]);
+    const sp = polyBox(columnHull(polys, { x0: 43, x1: 387, y0: 0, y1: 480 }));
+    expect(sp.y1).toBeCloseTo(480, 6); expect(Math.abs(signedArea(columnHull(polys, { x0: 43, x1: 387, y0: 0, y1: 480 })))).toBeGreaterThan(344 * 480 * 0.99);
   });
 });
