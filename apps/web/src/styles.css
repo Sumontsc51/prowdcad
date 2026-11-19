@@ -556,13 +556,19 @@ table.sg tr.out { display: none; }
 .mk-dim { color: var(--dim); }
 .mk-grow { flex: 1; }
 .mk-in { padding: 3px 6px; font: 12px var(--mono); }
-.mk-body { display: grid; grid-template-columns: minmax(300px, 30vw) 46px minmax(0, 1fr); min-height: 0; }
-.mk-plan { background: var(--panel); border-right: 1px solid var(--line); padding: 10px; overflow: auto; min-height: 0; }
-.mk-h { font: 600 10px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); margin-bottom: 8px; }
+.mk-body { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+.mk-work { display: grid; grid-template-columns: 46px minmax(0, 1fr); min-height: 0; }
+.mk-plan { background: var(--panel); border-bottom: 1px solid var(--line); padding: 8px 12px; overflow: auto; max-height: 42vh; }
+.mk-plan.folded { padding: 4px 12px; }
+.mk-h { display: flex; align-items: center; gap: 6px; background: none; border: 0; padding: 2px 0; cursor: pointer; font: 600 10px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+.mk-h:hover { color: var(--text); }
+.mk-h .mk-dim { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.mk-plan.folded .mk-h { margin-bottom: 0; }
+.mk-plan.folded .caret { transform: rotate(-90deg); display: inline-block; }
 .mk-lim { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0 10px; }
 .mk-lim label { display: flex; align-items: center; gap: 6px; color: var(--dim); }
 .mk-scroll { overflow-x: auto; }
-.mk-tbl { border-collapse: collapse; font: 11px var(--mono); width: 100%; }
+.mk-tbl { border-collapse: collapse; font: 11px var(--mono); width: auto; }
 .mk-tbl th { font-weight: 400; color: var(--dim); padding: 3px 4px; text-align: center; white-space: nowrap; }
 .mk-tbl td { padding: 2px 3px; text-align: center; border-top: 1px solid var(--line2); }
 .mk-tbl td:first-child { text-align: left; white-space: nowrap; font-family: var(--sans); }
@@ -605,3 +611,9 @@ table.sg tr.out { display: none; }
 .mk-tog.off { opacity: .45; cursor: default; }
 .mk-aim line { stroke: #ff5a1f; stroke-width: 2; stroke-dasharray: 7 4; }
 .mk-aim path, .mk-aim circle { fill: #ff5a1f; }
+.mk-part.carry path { cursor: grabbing; fill-opacity: .55; stroke-width: 2; filter: drop-shadow(0 3px 5px rgba(0,0,0,.35)); }
+.mk-part.carry { pointer-events: none; }
+.mk-part.wed > path:first-child { stroke-dasharray: 9 3 2 3; stroke-width: 1.8; }
+.mk-part.block > path:first-child { fill-opacity: .12; stroke-dasharray: 3 3; }
+.mk-inner { fill: var(--c); fill-opacity: .32; stroke: var(--c); stroke-width: 1; pointer-events: none; }
+.mk-hint { max-width: 900px; }
