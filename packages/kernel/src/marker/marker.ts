@@ -51,8 +51,8 @@ export interface FabricMatch { stripe?: number; stripe1?: number; plaid?: number
  * details ▸ Major) must lie within one zone, so that the panels of a garment have the same shade.
  *   rows       — the fabric width is divided into this many equal rows (1 = the whole width)
  *   colBy      — 'length': a zone is `colLength` long; 'bundle': a zone ends where its bundle ends (bundles follow each other)
- *   rowOverlap — how far a piece may reach into the next row, in % of the row height
- *   colOverlap — in % of the column length ('length'), or of the bundle length that may be shared with the next bundle ('bundle')
+ *   rowOverlap — the offset of every row line, in % of the row height: how far a piece may reach into the next row
+ *   colOverlap — in % of the column length ('length'), or of the (longer) bundle length that may be shared with the next bundle ('bundle')
  */
 export interface ShadeSet { rows: number; colBy: 'length' | 'bundle'; colLength: number; rowOverlap: number; colOverlap: number }
 /** A match line of a part, in the frame of the part: its code ('M1', 'P1' … 'P15'), middle and direction. */
@@ -898,7 +898,7 @@ export function shadeProblems(parts: MarkerPart[], pl: Placements, width: number
   if (sh.colBy === 'bundle') for (let i = 0; i < B.length; i++) for (let j = i + 1; j < B.length; j++) {
     const a = B[i], b = B[j]; if (a.row !== b.row) continue;
     const share = Math.min(a.box.x1, b.box.x1) - Math.max(a.box.x0, b.box.x0);
-    if (share > co * Math.min(a.box.x1 - a.box.x0, b.box.x1 - b.box.x0) + tol) { flag(a); flag(b); }
+    if (share > co * Math.max(a.box.x1 - a.box.x0, b.box.x1 - b.box.x0) + tol) { flag(a); flag(b); }
   }
   return bad;
 }
@@ -927,5 +927,62 @@ export function columnHull(polys: Vec[][], spine?: { x0: number; x1: number; y0:
   let out = [...lo, ...hi.reverse()];
   out = out.filter((q, i) => { const n = out[(i + 1) % out.length]; return Math.hypot(q.x - n.x, q.y - n.y) > 1e-6; });
   if (signedArea(out) < 0) out.reverse();
+  return out;
+}
+
+/**
+ * Lay parts into the room that fixed shapes leave on the fabric, as far towards the start as they go (then towards the first
+ * edge): the fabric is a grid of small cells, every shape takes the cells it touches (plus the gap), and each part goes to the
+ * first place where all its cells are free. The biggest parts go first. Nothing overlaps, because shapes never share a cell.
+ */
+export function fillAround(fixed: Vec[][], items: MarkerPart[], width: number, o: { gap?: number; cell?: number } = {}): Placements {
+  const out: Placements = {}; if (!items.length) return out;
+  const gap = Math.max(0, o.gap ?? 0);
+  const fx = fixed.length ? Math.max(...fixed.map(q => polyBox(q).x1)) : 0;
+  const room = fx + items.reduce((a, p) => { const b = polyBox(p.poly); return a + Math.max(b.x1 - b.x0, b.y1 - b.y0) + gap; }, 0) + 50;
+  const c = o.cell ?? Math.max(3, Math.sqrt(room * width / 500000)), nx = Math.ceil(room / c) + 2, ny = Math.floor(width / c + 1e-9);
+  if (ny < 1) return out;
+  const g = Math.ceil(gap / c - 1e-9);
+  const occ = new Uint8Array(nx * ny), pre = new Int32Array((nx + 1) * ny);
+  /** the cells a shape touches, row by row: [first, last] (null = none) */
+  const rows = (poly: Vec[], y0: number, n: number): ([number, number] | null)[] => {
+    const res: ([number, number] | null)[] = [];
+    for (let k = 0; k < n; k++) {
+      const lo = y0 + k * c, hi = lo + c; let a = Infinity, b = -Infinity;
+      for (let i = 0; i < poly.length; i++) {
+        const p = poly[i], q = poly[(i + 1) % poly.length];
+        if (Math.max(p.y, q.y) < lo || Math.min(p.y, q.y) > hi) continue;
+        for (const v of [p, q]) if (v.y >= lo && v.y <= hi) { if (v.x < a) a = v.x; if (v.x > b) b = v.x; }
+        if (Math.abs(q.y - p.y) > 1e-12) for (const yy of [lo, hi]) { const t = (yy - p.y) / (q.y - p.y); if (t >= 0 && t <= 1) { const x = p.x + t * (q.x - p.x); if (x < a) a = x; if (x > b) b = x; } }
+      }
+      res.push(a <= b ? [Math.floor(a / c + 1e-7), Math.max(Math.floor(a / c + 1e-7), Math.ceil(b / c - 1e-7) - 1)] : null);
+    }
+    return res;
+  };
+  const mark = (rs: ([number, number] | null)[], i0: number, j0: number) => {
+    for (let k = 0; k < rs.length; k++) { const r = rs[k]; if (!r) continue; for (let j = Math.max(0, j0 + k - g); j <= Math.min(ny - 1, j0 + k + g); j++) for (let i = Math.max(0, i0 + r[0] - g); i <= Math.min(nx - 1, i0 + r[1] + g); i++) occ[j * nx + i] = 1; }
+    for (let j = Math.max(0, j0 - g); j <= Math.min(ny - 1, j0 + rs.length - 1 + g); j++) { let acc = 0; const b0 = j * (nx + 1); pre[b0] = 0; for (let i = 0; i < nx; i++) { acc += occ[j * nx + i]; pre[b0 + i + 1] = acc; } }
+  };
+  for (const q of fixed) mark(rows(q, 0, ny), 0, 0);
+  const hint = new Map<string, number>();
+  for (const p of [...items].sort((a, b) => b.area - a.area)) {
+    let best: { i: number; j: number; rot: number; rs: ([number, number] | null)[] } | null = null;
+    for (const rot of p.angles) {
+      const base = placeAt(p, 0, 0, rot), poly = placedPoly(p, base), bb = polyBox(poly), n = Math.ceil((bb.y1 - 1e-7) / c), w = Math.ceil((bb.x1 - 1e-7) / c);
+      if (n > ny || n < 1) continue;
+      const rs = rows(poly, 0, n), key = [p.pieceId, p.sizeId, p.mirror ? 1 : 0, rot].join('|');
+      const order = [0, n - 1, n >> 1, ...Array.from({ length: n }, (_, k) => k)];
+      let found = -1, fj = 0;
+      for (let i = hint.get(key) ?? 0; i + w <= nx && found < 0 && (!best || i < best.i); i++) for (let j = 0; j + n <= ny; j++) {
+        let ok = true;
+        for (const k of order) { const r = rs[k]; if (!r) continue; const b0 = (j + k) * (nx + 1); if (pre[b0 + i + r[1] + 1] - pre[b0 + i + r[0]] > 0) { ok = false; break; } }
+        if (ok) { found = i; fj = j; break; }
+      }
+      if (found >= 0) { hint.set(key, found); if (!best || found < best.i) best = { i: found, j: fj, rot, rs }; }
+    }
+    if (!best) continue;
+    out[p.id] = placeAt(p, best.i * c, best.j * c, best.rot);
+    mark(best.rs, best.i, best.j);
+  }
   return out;
 }
