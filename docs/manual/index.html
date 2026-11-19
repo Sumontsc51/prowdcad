@@ -664,6 +664,18 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
         <li><strong>▶ Nest:</strong> every part that must match is given room for one repeat and is then slid onto its match, so nothing overlaps. This costs fabric, as matching does on the table. Such parts keep their direction (0° or 180°) and are not tilted.</li>
         <li>Parts inside a fuse block or a married group are not moved for the match; they are only checked.</li>
       </ul>
+      <h3>Shade zones (shade marker)</h3>
+      <p>For fabric that shades from side to centre or along the roll. <strong>▤ Shade zones</strong> (also Marker ▸ Shade zones…) divides the marker into zones, and the <strong>major pieces of a bundle</strong> (ticked <em>Major</em> in Piece details) are laid within one zone, so the panels of a garment get the same shade.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Setting</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>Rows</td><td>A number: 1, 2, 3… The fabric width is divided by it into equal rows.</td></tr>
+          <tr><td>Columns by</td><td><em>Bundle end</em>: a zone ends where its bundle ends, so the bundles of a row follow each other along the fabric. <em>Length</em>: the major pieces of a bundle lie within the column length you type.</td></tr>
+          <tr><td>Row overlap %</td><td>How far a major piece may reach into the next row, as a part of the row height.</td></tr>
+          <tr><td>Column overlap %</td><td>With <em>Length</em>: extra room on the column length. With <em>Bundle end</em>: how much of its length a bundle may share with the next bundle.</td></tr>
+        </tbody>
+      </table></div>
+      <p>On screen the rows are drawn with green lines (the overlap as a pale band), column lengths as dashed lines, and the major pieces of every bundle get a dotted box with the bundle code. <strong>▶ Nest</strong> lays the major pieces of each bundle together, gives every bundle a row, nests each row, and fills in the small pieces around them; a piece too wide for a row goes behind the rows on the full width. Laying by hand is free: major pieces outside one zone get a red dashed outline, their box turns red, and the status line counts them. If the major pieces of a size are wider than a row or longer than a column, the nester says so.</p>
       <h3>Marker direction</h3>
       <p>The <em>Direction</em> list at the top says which way the parts may face; it applies to laying by hand and to the nester.</p>
       <div class="tbl"><table>
