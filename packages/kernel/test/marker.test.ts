@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { Document } from '../src/model/doc';
 import { makeStyle, makePiece, rectangleContour, makeContour, gradePoint } from '../src/model/factory';
-import { switchMarkerMaterial, markerPerimeter, partLabel, borderText, cutOutline, DEFAULT_ANNOT, type MarkerDoc } from '../src/marker/marker';
+import { switchMarkerMaterial, markerPerimeter, partLabel, borderText, borderLines, borderLayout, annotLength, cutOutline, DEFAULT_ANNOT, blockOutline, blockPart, blockBins, blockRoom, facing, type MarkerDoc, type MarkerBlock } from '../src/marker/marker';
+import { pointInPolygon, distToPolygon, signedArea } from '../src/geom/poly';
 import { directedParts, obeyDirection, groupMayTurn, directionGroup, throwParts, autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placeAt, placedPoly, polyBox, nestJob, nestResult, markerDXF, markerHPGL, simplifyClosed } from '../src/marker/marker';
 
 describe('cut plan', () => {
@@ -187,20 +188,103 @@ describe('throwing a part', () => {
   });
 });
 
-describe('block fuse', () => {
-  it('lays the piece as its box grown by the margin and keeps the outline inside', () => {
+describe('fuse blocks and piece details', () => {
+  const sparrow = () => {
+    const glue = readFileSync(new URL('../../../apps/web/src/marker/sparrow-glue.txt', import.meta.url), 'utf8');
+    const wasm = Buffer.from(readFileSync(new URL('../../../apps/web/src/marker/sparrow-wasm.b64.txt', import.meta.url), 'utf8').trim(), 'base64');
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const wb = new Function(glue + '; return wasm_bindgen;')(); wb.initSync({ module: wasm });
+    return (job: ReturnType<typeof nestJob>, sec = 2) => nestResult(wb.nest(job.json, sec, BigInt(11), 1, job.gap, JSON.stringify({ noimp: 100, strikes: 2, csamp: 100, fsamp: 50 }), '', () => {}), job);
+  };
+  it('a block is made of the chosen laid parts only: their box grown by the margin, or their contour', () => {
     const d = style(), I = ids(d);
-    const slv = d.style.pieces.find(p => p.name === 'SLEEVE')!;
-    const plain = markerParts(d, { [I.M]: 1 }).find(p => p.name === 'SLEEVE')!;
-    const blk = markerParts(d, { [I.M]: 1 }, { block: { [slv.id]: 10 } }).find(p => p.name === 'SLEEVE')!;
-    const b0 = polyBox(plain.poly), b1 = polyBox(blk.poly);
-    expect(blk.poly.length).toBe(4);
-    expect(b1.x1).toBeCloseTo(b0.x1 + 20, 6); expect(b1.y1).toBeCloseTo(b0.y1 + 20, 6);
-    expect(polyBox(blk.inner!).x0).toBeCloseTo(10, 6); expect(blk.inner!.length).toBe(plain.poly.length);
-    expect(blk.area).toBeGreaterThan(plain.area);
-    expect(markerParts(d, { [I.M]: 1 }, { block: { [slv.id]: 10 } }).find(p => p.name === 'BODY')!.inner).toBeUndefined();
-    const dxf = markerDXF([blk], { [blk.id]: placeAt(blk, 0, 0, 0) }, 1000);
-    expect(dxf).toContain('BLOCK'); expect((dxf.match(/\nPOLYLINE\n8\nCUT/g) ?? []).length).toBe(1);
+    const parts = markerParts(d, { [I.M]: 2 }), sl = parts.filter(p => p.name === 'SLEEVE');
+    const pl = { [sl[0].id]: placeAt(sl[0], 100, 100, 0), [sl[1].id]: placeAt(sl[1], 100, 410, 0), [sl[2].id]: placeAt(sl[2], 900, 100, 0) };
+    const rect: MarkerBlock = { ids: [sl[0].id, sl[1].id], shape: 'rect', buffer: 10 };
+    const bo = polyBox(blockOutline(parts, pl, rect)!);
+    expect([bo.x0, bo.y0, bo.x1, bo.y1].map(v => Math.round(v))).toEqual([90, 90, 310, 720]); // a sleeve lies 200 long and 300 wide
+    const co = blockOutline(parts, pl, { ...rect, shape: 'contour' })!, cb = polyBox(co);
+    // the contour keeps at least the margin everywhere, stays close to it, and is smaller than the box (a sleeve is a trapezium)
+    for (const id of rect.ids) for (const q of placedPoly(parts.find(p => p.id === id)!, pl[id])) { expect(pointInPolygon(q, co)).toBe(true); expect(distToPolygon(q, co)).toBeGreaterThan(9); }
+    expect(cb.x0).toBeGreaterThan(84); expect(cb.x1).toBeLessThan(316);
+    expect(Math.abs(signedArea(co))).toBeLessThan(220 * 630 * 0.93);
+    // moving the block moves its contour with it
+    const moved = Object.fromEntries(Object.entries(pl).map(([k, v]) => [k, { ...v, x: v.x + 50 }]));
+    expect(polyBox(blockOutline(parts, moved, { ...rect, shape: 'contour' })!).x0).toBeCloseTo(cb.x0 + 50, 6);
+    // the third sleeve is not in the block; the block counts for the marker length and the cut length
+    expect(markerStats(parts, pl, 1000, [rect]).length).toBeCloseTo(1100, 4);
+    expect(markerStats(parts, { [sl[0].id]: pl[sl[0].id] }, 1000, [rect]).length).toBeCloseTo(310, 4);
+    expect(markerPerimeter(parts, pl, [rect]) - markerPerimeter(parts, pl)).toBeCloseTo(2 * (220 + 630), 3);
+    const dxf = markerDXF(parts, pl, 1000, 'M', { blocks: [rect] });
+    expect((dxf.match(/\nPOLYLINE\n8\nBLOCK/g) ?? []).length).toBe(1); expect((dxf.match(/\nPOLYLINE\n8\nCUT/g) ?? []).length).toBe(3);
+    expect(markerHPGL(parts, pl, 1000, { blocks: [rect] }).split('SP2;')[0].match(/^PD/gm)!.length).toBe(4);
+  });
+  it('parts far apart get their common hull as contour', () => {
+    const d = style(), I = ids(d), sl = markerParts(d, { [I.M]: 1 }).filter(p => p.name === 'SLEEVE');
+    const pl = { [sl[0].id]: placeAt(sl[0], 0, 0, 0), [sl[1].id]: placeAt(sl[1], 600, 0, 0) };
+    const co = blockOutline(sl, pl, { ids: sl.map(p => p.id), shape: 'contour', buffer: 5 })!;
+    for (const p of sl) for (const q of placedPoly(p, pl[p.id])) expect(pointInPolygon(q, co)).toBe(true);
+  });
+  it('another part may not lie inside a block, and stops at its edge when thrown; the block is thrown as one', () => {
+    const d = style(), I = ids(d);
+    const parts = markerParts(d, { [I.M]: 1 }), sl = parts.filter(p => p.name === 'SLEEVE'), body = parts.find(p => p.name === 'BODY')!;
+    const blk: MarkerBlock = { ids: sl.map(p => p.id), shape: 'rect', buffer: 20 };
+    const pl = { [sl[0].id]: placeAt(sl[0], 20, 20, 0), [sl[1].id]: placeAt(sl[1], 20, 340, 0), [body.id]: placeAt(body, 225, 0, 0) };
+    expect(markerProblems(parts, pl, 1000).size).toBe(0);                       // the outlines themselves do not touch
+    expect(markerProblems(parts, pl, 1000, 0.6, [blk]).size).toBe(3);           // but the body is inside the block's margin
+    const far = { ...pl, [body.id]: placeAt(body, 1500, 0, 0) };
+    const r = throwParts(parts, far, 1000, [body.id], { x: -1, y: 0 }, { blocks: [blk] })!;
+    expect(polyBox(placedPoly(body, r[body.id])).x0).toBeCloseTo(240, 0);       // 20 + 200 + 20
+    const t = throwParts(parts, { ...pl, [body.id]: placeAt(body, 0, 500, 0), [sl[0].id]: placeAt(sl[0], 1020, 20, 0), [sl[1].id]: placeAt(sl[1], 1020, 340, 0) }, 1000, [sl[0].id], { x: -1, y: 0 }, { blocks: [blk] })!;
+    expect(Object.keys(t).sort()).toEqual(sl.map(p => p.id).sort());            // both sleeves moved, by the same way
+    expect(polyBox(placedPoly(sl[0], t[sl[0].id])).x0).toBeCloseTo(640, 0);      // the block's edge stops at the body (620); the sleeve is its margin further
+    expect(t[sl[1].id].x - t[sl[0].id].x).toBeCloseTo(0, 6);
+  });
+  it('piece details: rotation and tilt of one piece, major and block marks', () => {
+    const d = style(), I = ids(d), body = d.style.pieces[0], slv = d.style.pieces[1];
+    const parts = markerParts(d, { [I.M]: 1 }, { detail: { [body.id]: { rotation: '1way', tilt: 2, major: true }, [slv.id]: { block: true } } });
+    const b = parts.find(p => p.name === 'BODY')!, s = parts.find(p => p.name === 'SLEEVE')!;
+    expect(b.angles).toEqual([0]); expect(b.tilt).toBe(2); expect(b.major).toBe(true); expect(s.fuse).toBe(true); expect(b.fuse).toBeUndefined();
+    const job = JSON.parse(nestJob(parts, 1000).json);
+    expect(job.items[0].orientation.rotation.angles).toEqual([0, 1, 359, 2, 358]);
+    expect(job.items[1].orientation.rotation.angles).toEqual([0]);
+    // a tilted part still faces its way for the direction rule
+    expect(facing(358.5)).toBe(0); expect(facing(181)).toBe(180);
+    const pl = Object.fromEntries(parts.map((p, i) => [p.id, { ...placeAt(p, i * 700, 0, 0), rot: p.tilt ? 1.5 : 0 }]));
+    expect(obeyDirection(parts, pl, 'all', true).removed).toBe(0);
+    // old files: a piece that was laid as a block reads as "goes into fuse blocks"
+    expect(markerParts(d, { [I.M]: 1 }, { block: { [slv.id]: 10 } }).find(p => p.name === 'SLEEVE')!.fuse).toBe(true);
+  });
+  it('the nester may tilt a part within its limit (real engine)', () => {
+    const d = style(), I = ids(d), body = d.style.pieces[0];
+    const parts = markerParts(d, { [I.M]: 1 }, { detail: { [body.id]: { tilt: 3 } } });
+    const res = sparrow()(nestJob(parts, 1000));
+    expect(Object.keys(res.placements).length).toBe(parts.length);
+    expect(markerProblems(parts, res.placements, 1000, 1).size).toBe(0);
+    for (const p of parts.filter(q => q.name === 'BODY')) { const r = res.placements[p.id].rot, off = Math.min(Math.abs(r - facing(r)), 360 - Math.abs(r - facing(r))); expect(off).toBeLessThanOrEqual(3.001); }
+  });
+  it('blocks are filled within their limits: too much for one block gives two or more, and the blocks nest with the rest (real engine)', () => {
+    const d = style(), I = ids(d), slv = d.style.pieces[1], nest = sparrow();
+    const parts = markerParts(d, { [I.M]: 2 }, { detail: { [slv.id]: { block: true } } });
+    const fuse = parts.filter(p => p.fuse), rest = parts.filter(p => !p.fuse);
+    expect(fuse.length).toBe(4);
+    const set = { maxLength: 700, maxWidth: 480, buffer: 10, shape: 'rect' as const };
+    const room = blockRoom(set, 1000, fuse);
+    expect(room.length).toBeCloseTo(677, 6); expect(room.width).toBeCloseTo(457, 6); expect(room.tooBig).toBeUndefined();
+    expect(blockRoom({ ...set, maxLength: 200 }, 1000, fuse).tooBig).toBeDefined();
+    // 4 sleeves of 200 × 300 do not go into 677 × 457 as one block
+    let k = room.least, bins: ReturnType<typeof blockBins> = [], laid: ReturnType<typeof nest>[] = [];
+    for (; k <= fuse.length; k++) { bins = blockBins(fuse, k); laid = bins.map(b => nest(nestJob(b, room.width), 1)); if (laid.every(r => r.length <= room.length + 0.5)) break; }
+    expect(bins.length).toBeGreaterThanOrEqual(2);
+    const stand = bins.map((b, i) => blockPart('#blk' + i, b, laid[i].placements, { ids: b.map(p => p.id), shape: set.shape, buffer: set.buffer })!);
+    for (const s of stand) { const bb = polyBox(s.part.poly); expect(bb.x1).toBeLessThanOrEqual(set.maxLength); expect(bb.y1).toBeLessThanOrEqual(set.maxWidth); expect(bb.x0).toBeCloseTo(0, 6); }
+    const res = nest(nestJob([...rest, ...stand.map(s => s.part)], 1000), 2);
+    const pl: Record<string, { x: number; y: number; rot: number }> = {};
+    for (const p of rest) pl[p.id] = res.placements[p.id];
+    for (const s of stand) { const at = res.placements[s.part.id]; expect(at.rot).toBe(0); for (const id of s.ids) pl[id] = { x: s.local[id].x + at.x, y: s.local[id].y + at.y, rot: s.local[id].rot }; }
+    const blocks: MarkerBlock[] = stand.map(s => ({ ids: s.ids, shape: set.shape, buffer: set.buffer, auto: true }));
+    expect(Object.keys(pl).length).toBe(parts.length);
+    expect(markerProblems(parts, pl, 1000, 1, blocks).size).toBe(0);
   });
 });
 
@@ -271,5 +355,25 @@ describe('annotation, buffer and plot', () => {
     const bare = markerHPGL(parts, pl, 1000, { annot: { piece: false, size: false, bundle: false, grain: false, border: false, internals: 'none' } });
     expect(bare).not.toContain('SP2;'); expect(bare).not.toContain('LB');
     expect(borderText(parts, pl, 1000, { ...DEFAULT_ANNOT, bPerim: false, bEff: false }, { name: 'M1', ratio: 'M 1' })).toBe('M1   M 1   L 1240 mm   W 1000 mm');
+  });
+  it('the text is written as it is typed: lines break where they are typed, lengths in the chosen unit, the marker text where it is put', () => {
+    const parts = markerParts(d, { [I.M]: 1 }).filter(q => q.name === 'BODY');
+    const pl = Object.fromEntries(parts.map((p, i) => [p.id, placeAt(p, i * 620, 0, 0)]));
+    const a = { ...DEFAULT_ANNOT, partText: '{style} / {piece}\n{size}   bundle {no}\n{desc}\n{material}', markerText: '{name} ({ratio})\nLength {length} · Width {width}\n{eff} · {perim} · {plies} plies · {parts}', unit: 'cm' as const };
+    expect(partLabel(parts[0], a, 'ST-1')).toEqual(['ST-1 / BODY', 'M   bundle 1', 'Front body', 'SELF']);
+    expect(partLabel(markerParts(d, { [I.M]: 1 }).find(q => q.name === 'SLEEVE' && !q.mirror)!, { ...a, partText: '{desc}\n{piece} {size}' })).toEqual(['SLEEVE M']); // a line with nothing on it is left out
+    expect(borderLines(parts, pl, 1000, a, { name: 'M1', ratio: 'M 1', plies: 20 })).toEqual(['M1 (M 1)', 'Length 124.0 cm · Width 100.0 cm', '42.00% · 4.16 m · 20 plies · 2/2']);
+    expect(annotLength(914.4, 'yd')).toBe('1.000 yd'); expect(annotLength(254, 'in')).toBe('10.00 in'); expect(annotLength(1500, 'm')).toBe('1.500 m');
+    expect(borderLines(parts, pl, 1000, { ...a, unit: 'in', markerText: '{length} {perim}' })).toEqual(['48.82 in 4.55 yd']);
+    // where the marker text goes
+    const top = borderLayout(a, 3, 1240, 1000), bottom = borderLayout({ ...a, place: 'bottom' }, 3, 1240, 1000), end = borderLayout({ ...a, place: 'end' }, 3, 1240, 1000), start = borderLayout({ ...a, place: 'start' }, 3, 1240, 1000);
+    expect(top.up).toBe(false); expect(top.at.every(v => v.y < 0)).toBe(true); expect(top.at[0].y).toBeLessThan(top.at[2].y);
+    expect(bottom.at.every(v => v.y > 1000)).toBe(true); expect(end.up).toBe(true); expect(end.at.every(v => v.x > 1240)).toBe(true); expect(start.at.every(v => v.x < 0)).toBe(true);
+    // DXF: text turned 90° after the end; plot: text before the start moves the plot along so that nothing is negative
+    const dxf = markerDXF(parts, pl, 1000, 'M1', { annot: { ...a, place: 'end' }, ratio: 'M 1' });
+    expect(dxf).toContain('M1 (M 1)\n50\n90');
+    const plt = markerHPGL(parts, pl, 1000, { annot: { ...a, place: 'start' }, name: 'M1', ratio: 'M 1' });
+    expect(plt).toContain('DI0,1;'); expect(plt).not.toMatch(/P[UD]-|,-/);
+    expect(markerHPGL(parts, pl, 1000, { annot: { ...a, place: 'bottom' }, name: 'M1' })).not.toMatch(/P[UD]-|,-/);
   });
 });
