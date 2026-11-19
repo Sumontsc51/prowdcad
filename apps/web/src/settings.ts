@@ -45,6 +45,8 @@ export interface Settings {
   sideWidth: 'hidden' | 'normal' | 'wide';
   /** property groups of the side panel the user opened / closed (absent = the group's default) */
   propGroups: Record<string, boolean>;
+  /** property editor: a change to an internal line / a notch goes to every one in the work area */
+  propGlobal: boolean;
   /** grading table view; the last one chosen is the default next time (first time: small → large) */
   gradeView: 'inc' | 'step' | 'total';
   guides: Guide[];
@@ -99,7 +101,7 @@ export const DEFAULT_SETTINGS: Settings = {
   gridMm: 10, nudgeMm: 1, polygonSides: 6, roundRadiusMm: 20,
   panels: { pieces: true, sizes: true, inspector: true, grading: false },
   sideWidth: 'normal',
-  propGroups: {},
+  propGroups: {}, propGlobal: false,
   gradeView: 'inc',
   guides: [],
   showCutCorners: false, showRuleNames: false, ruleBadges: false, showReference: true,

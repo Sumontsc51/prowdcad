@@ -660,3 +660,11 @@ table.sg tr.out { display: none; }
 .mk-part.major > path:first-child { stroke-width: 1.9; }
 .mk-part.fuse.wait > path:first-child { stroke-dasharray: 2 3; }
 .mk-btext { fill: #e9edf4; font: 11px var(--mono); }
+.luse { font: 600 10px var(--mono); fill: #30343c; paint-order: stroke; stroke: #fff; stroke-width: 3px; pointer-events: none; }
+.luse.match { fill: #b3329e; }
+.mk-grid line { stroke: #2b7cc9; stroke-width: 1; opacity: .45; pointer-events: none; }
+.mk-grid line.pl { stroke: #c9572b; }
+.mk-grid line.first { opacity: .9; stroke-width: 1.6; }
+.mk-mline { fill: none; stroke: #b3329e; stroke-width: 1.8; pointer-events: none; }
+.mk-mcode { fill: #8a1f78; font: 600 9px var(--mono); pointer-events: none; }
+.mk-part.off > path:first-child { stroke: #b3329e; stroke-width: 2.6; stroke-dasharray: 3 2; }
