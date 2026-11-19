@@ -5,7 +5,7 @@ import { makeStyle, makePiece, rectangleContour, makeContour, gradePoint } from 
 import { switchMarkerMaterial, markerPerimeter, partLabel, borderText, borderLines, borderLayout, annotLength, cutOutline, DEFAULT_ANNOT, blockOutline, blockPart, blockBins, contourAround, blockRoom, facing, type MarkerDoc, type MarkerBlock } from '../src/marker/marker';
 import { pointInPolygon, distToPolygon, signedArea } from '../src/geom/poly';
 import { matchShifts, markerMismatch, matchPlan, sweptPart, settleMatch, sweepPoly, matchAt, lineWay } from '../src/marker/marker';
-import { shadeProblems, shadeBundles, columnHull } from '../src/marker/marker';
+import { shadeProblems, shadeBundles, columnHull, fillAround } from '../src/marker/marker';
 import { setLineUse, setNotchProps, lineUseOf } from '../src/ops/props';
 import { addNotchAtPoint } from '../src/ops/notches';
 import { directedParts, obeyDirection, groupMayTurn, directionGroup, throwParts, autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placeAt, placedPoly, polyBox, nestJob, nestResult, markerDXF, markerHPGL, simplifyClosed } from '../src/marker/marker';
@@ -508,6 +508,23 @@ describe('shade zones', () => {
     expect(shadeProblems(parts, lap, 1000, one).size).toBe(4); expect(shadeProblems(parts, lap, 1000, { ...one, colOverlap: 10 }).size).toBe(0);
     // in two rows they may lie side by side
     expect(shadeProblems(parts, { [B(1)[0].id]: placeAt(B(1)[0], 0, 0, 0), [B(1)[1].id]: placeAt(B(1)[1], 620, 0, 0), [B(2)[0].id]: placeAt(B(2)[0], 0, 500, 0), [B(2)[1].id]: placeAt(B(2)[1], 620, 500, 0) }, 1000, { ...one, rows: 2 }).size).toBe(0);
+  });
+  it('the other pieces fill the room the major pieces leave, also the gaps between them, without overlap', () => {
+    const all = markerParts(d, { [I.M]: 2 }, { detail: { [body.id]: { major: true } } }), maj = all.filter(p => p.major), rest = all.filter(p => !p.major);
+    // four bodies (620 × 420) with a 330 wide lane between the two columns, on a 1000 wide fabric; sleeves are 200 × 300
+    const pl: Record<string, { x: number; y: number; rot: number }> = { [maj[0].id]: placeAt(maj[0], 0, 0, 0), [maj[1].id]: placeAt(maj[1], 0, 420, 0), [maj[2].id]: placeAt(maj[2], 950, 0, 0), [maj[3].id]: placeAt(maj[3], 950, 420, 0) };
+    const got = fillAround(maj.map(p => placedPoly(p, pl[p.id])), rest, 1000, { gap: 2 });
+    expect(Object.keys(got).length).toBe(rest.length);
+    const fin = { ...pl, ...got };
+    expect(markerProblems(all, fin, 1000, 0.6).size).toBe(0);
+    // three sleeves fit the lane (3 × 300 high), the fourth goes behind the bodies; the marker is no longer than it has to be
+    const xs = rest.map(p => polyBox(placedPoly(p, got[p.id]))).sort((a, b) => a.x0 - b.x0);
+    expect(xs.filter(b => b.x0 >= 620 && b.x1 <= 950).length).toBe(3);
+    expect(xs[3].x0).toBeGreaterThanOrEqual(1570); expect(xs[3].x0).toBeLessThan(1590);
+    for (const b of xs) { expect(b.y0).toBeGreaterThanOrEqual(0); expect(b.y1).toBeLessThanOrEqual(1000); }
+    // the gap is kept
+    for (const b of xs.slice(0, 3)) { expect(b.x0 - 620).toBeGreaterThanOrEqual(2); expect(950 - b.x1).toBeGreaterThanOrEqual(2); }
+    expect(fillAround([], [], 1000)).toEqual({});
   });
   it('the shape around the major parts of a bundle holds them exactly; a spine closes the full height', () => {
     const sl = markerParts(d, { [I.M]: 1 }).filter(p => p.name === 'SLEEVE');
