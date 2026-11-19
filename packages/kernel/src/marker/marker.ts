@@ -38,6 +38,16 @@ export interface MarkerAnnot {
 }
 export type AnnotUnit = 'mm' | 'cm' | 'm' | 'in' | 'yd';
 export type AnnotPlace = 'top' | 'bottom' | 'start' | 'end';
+/**
+ * Stripe and plaid of the fabric (mm; 0 or absent = none).
+ *   stripe — bars across the fabric width that repeat along its length every `stripe`; the first one lies `stripe1` from the marker start.
+ *            A match line across the grain of a piece lies on a bar.
+ *   plaid  — bars along the fabric length that repeat across its width every `plaid`; the first one lies `plaid1` from the fabric edge.
+ *            A match line along the grain of a piece lies on a bar.
+ */
+export interface FabricMatch { stripe?: number; stripe1?: number; plaid?: number; plaid1?: number }
+/** A match line of a part, in the frame of the part: its code ('M1', 'P1' … 'P15'), middle and direction. */
+export interface MatchLine { code: string; mid: Vec; dir: Vec }
 /** How a piece is treated in marker making (Piece details). */
 export interface PieceDetail {
   /** goes into fuse blocks when the marker is nested */
@@ -91,6 +101,8 @@ export interface MarkerDoc {
   block?: Record<Id, number>;
   /** piece details: block, major, rotation, tilt, keyed by piece id */
   detail?: Record<Id, PieceDetail>;
+  /** stripe and plaid of the fabric, for the match lines of the pieces */
+  match?: FabricMatch;
   /** limits and shape of the fuse blocks the nester builds; absent = DEFAULT_BLOCKSET */
   blockSet?: Partial<BlockSet>;
   rows: MarkerRow[];
@@ -173,8 +185,10 @@ export interface MarkerPart {
   hold?: 'block' | 'buffer';
   /** piece details: tilt allowed either way (degrees), major piece, goes into fuse blocks */
   tilt?: number; major?: boolean; fuse?: boolean;
-  /** sew line and internal lines of the piece, in the frame of the part */
-  sew?: Vec[]; lines?: Vec[][];
+  /** sew line and internal lines of the piece, in the frame of the part; `uses` (same order as `lines`): 'draw', 'cut' or a match code */
+  sew?: Vec[]; lines?: Vec[][]; uses?: string[];
+  /** match lines (to the fabric, or piece to piece) */
+  match?: MatchLine[];
   /** piece description, and the bundle code (size and bundle number) */
   desc?: string; code: string;
 }
@@ -237,11 +251,16 @@ export function markerParts(doc: Document, ratio: Record<SizeId, number>, o: { m
         const T = (q: Vec): Vec => { const r = T0(q); return { x: r.x + sh.x, y: r.y + sh.y }; };
         const grain: [Vec, Vec] = [T(g.a), T(g.b)];
         const sew = rp.cut.length > 2 && rp.sew.pts.length > 2 ? rp.sew.pts.map(T) : undefined;
-        const lines = rp.internals.filter(c => c.pts.length > 1).map(c => (c.closed ? [...c.pts, c.pts[0]] : c.pts).map(T));
+        const eff = doc.effectivePiece(piece.id, true).internals;
+        const kept = rp.internals.map((c, i) => ({ c, use: eff[i]?.match ? eff[i].match! : eff[i]?.mode === 'cut' ? 'cut' : 'draw' })).filter(x => x.c.pts.length > 1);
+        const lines = kept.map(x => (x.c.closed ? [...x.c.pts, x.c.pts[0]] : x.c.pts).map(T));
+        const uses = kept.map(x => x.use);
+        const match: MatchLine[] = [];
+        kept.forEach((x, i) => { if (!/^[MP]\d+$/.test(x.use)) return; const l = lines[i], a = l[0], b = l[l.length - 1]; match.push({ code: x.use, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, dir: { x: b.x - a.x, y: b.y - a.y } }); });
         const desc = piece.description?.trim() || undefined;
         const area = Math.abs(signedArea(pts));
         for (let bn = 1; bn <= n; bn++) for (let k = 1; k <= qty; k++) {
-          out.push({ id: [piece.id, sid, bn, k, mirror ? 'm' : 'n'].join('|'), pieceId: piece.id, name: piece.name, sizeId: sid, sizeName, bundle: bn, mirror, angles, poly: pts, grain, area, material: mat, code: `${sizeName}-${bn}`, ...(inner ? { inner, hold } : {}), ...(sew ? { sew } : {}), ...(lines.length ? { lines } : {}), ...(desc ? { desc } : {}), ...(tilt ? { tilt } : {}), ...(det.major ? { major: true } : {}), ...(fuse ? { fuse: true } : {}) });
+          out.push({ id: [piece.id, sid, bn, k, mirror ? 'm' : 'n'].join('|'), pieceId: piece.id, name: piece.name, sizeId: sid, sizeName, bundle: bn, mirror, angles, poly: pts, grain, area, material: mat, code: `${sizeName}-${bn}`, ...(inner ? { inner, hold } : {}), ...(sew ? { sew } : {}), ...(lines.length ? { lines } : {}), ...(uses.some(u => u !== 'draw') ? { uses } : {}), ...(match.length ? { match } : {}), ...(desc ? { desc } : {}), ...(tilt ? { tilt } : {}), ...(det.major ? { major: true } : {}), ...(fuse ? { fuse: true } : {}) });
         }
       }
     }
@@ -617,6 +636,16 @@ const fill = (tpl: string, v: Record<string, string>): string[] =>
 export function annotLength(mm: number, unit: AnnotUnit = 'mm'): string {
   return unit === 'cm' ? `${(mm / 10).toFixed(1)} cm` : unit === 'm' ? `${(mm / 1000).toFixed(3)} m` : unit === 'in' ? `${(mm / 25.4).toFixed(2)} in` : unit === 'yd' ? `${(mm / 914.4).toFixed(3)} yd` : `${mm.toFixed(0)} mm`;
 }
+/**
+ * What happens to an internal line of a part on the marker: a line set to Cut is cut; a match line is drawn; a plain (Draw) line
+ * follows the annotation setting (drawn, cut, or left out — null).
+ */
+export function lineWay(p: MarkerPart, i: number, a: MarkerAnnot): 'draw' | 'cut' | 'match' | null {
+  const u = p.uses?.[i] ?? 'draw';
+  if (u === 'cut') return 'cut';
+  if (u !== 'draw') return a.internals === 'none' ? null : 'match';
+  return a.internals === 'none' ? null : a.internals;
+}
 /** The lines written on a part, by the annotation settings. */
 export function partLabel(p: MarkerPart, a: MarkerAnnot, styleName = ''): string[] {
   return fill(partTemplate(a), { style: styleName, piece: p.name + (p.mirror ? ' (M)' : ''), size: p.sizeName, bundle: p.code, no: String(p.bundle), desc: p.desc ?? '', material: p.material });
@@ -663,7 +692,7 @@ export function markerDXF(parts: MarkerPart[], pl: Placements, width: number, na
     const at = (v: Vec) => placedPoint(q, v), b = polyBox(placedPoly(p, q));
     poly(cutOutline(p).map(at), 'CUT', true);
     if (a.seam && p.sew) poly(p.sew.map(at), 'SEAM', true);
-    if (a.internals !== 'none') for (const ln of p.lines ?? []) poly(ln.map(at), a.internals === 'cut' ? 'INTCUT' : 'INTERNAL', false);
+    (p.lines ?? []).forEach((ln, i) => { const w = lineWay(p, i, a); if (w) poly(ln.map(at), w === 'cut' ? 'INTCUT' : w === 'match' ? 'MATCH' : 'INTERNAL', false); });
     if (a.grain) poly([at(p.grain[0]), at(p.grain[1])], 'GRAIN', false);
     partLabel(p, a, o.styleName).forEach((t, i) => text({ x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 + i * th * 1.4 }, th, t));
   }
@@ -696,7 +725,7 @@ export function markerHPGL(parts: MarkerPart[], pl: Placements, width = 0, o: Ma
     const q = pl[p.id]; if (!q) continue;
     const at = (v: Vec) => placedPoint(q, v), b = polyBox(placedPoly(p, q));
     cut.push(...path(cutOutline(p).map(at), true));
-    if (a.internals !== 'none') for (const ln of p.lines ?? []) (a.internals === 'cut' ? cut : draw).push(...path(ln.map(at), false));
+    (p.lines ?? []).forEach((ln, i) => { const w = lineWay(p, i, a); if (w) (w === 'cut' ? cut : draw).push(...path(ln.map(at), false)); });
     if (a.seam && p.sew) draw.push(...path(p.sew.map(at), true));
     if (a.grain) draw.push(...path([at(p.grain[0]), at(p.grain[1])], false));
     partLabel(p, a, o.styleName).forEach((t, i) => draw.push(...label({ x: b.x0 + (b.x1 - b.x0) * 0.25, y: (b.y0 + b.y1) / 2 + th + i * th * 1.5 }, th, t)));
@@ -706,4 +735,126 @@ export function markerHPGL(parts: MarkerPart[], pl: Placements, width = 0, o: Ma
     bl.forEach((t, i) => draw.push(...label(lay.at[i], a.bTextH ?? 9, t, lay.up)));
   }
   return ['IN;', 'SP1;', ...cut, ...(draw.length ? ['SP2;', ...draw] : []), 'PU0,0;', 'SP0;'].join('\n') + '\n';
+}
+
+// ───────────────────────── stripe and plaid matching ─────────────────────────
+
+/** Where the match lines of a laid part lie: 'x' = the line runs across the width and has a place along the fabric (stripe), 'y' = along the length (plaid). */
+export function matchAt(p: MarkerPart, pl: Placement): { code: string; axis: 'x' | 'y'; v: number }[] {
+  return (p.match ?? []).map(m => { const d = rotP(m.dir, pl.rot), q = placedPoint(pl, m.mid), axis = Math.abs(d.y) >= Math.abs(d.x) ? 'x' as const : 'y' as const; return { code: m.code, axis, v: axis === 'x' ? q.x : q.y }; });
+}
+const repeatOf = (f: FabricMatch, axis: 'x' | 'y') => (axis === 'x' ? { d: Math.max(0, f.stripe ?? 0), first: f.stripe1 ?? 0 } : { d: Math.max(0, f.plaid ?? 0), first: f.plaid1 ?? 0 });
+/** Is any repeat set, and does any part have a match line? */
+export function matchActive(parts: MarkerPart[], f: FabricMatch | undefined): boolean { return !!f && ((f.stripe ?? 0) > 0 || (f.plaid ?? 0) > 0) && parts.some(p => p.match?.length); }
+/**
+ * How far every laid part with a match line is from its match (the shift that would put it right; 0 0 = matched).
+ * M lines go onto the bars of the fabric. P lines of the same code in a bundle go onto the same place of the repeat: the first
+ * laid part of the bundle that carries the code is where the others follow (after its own M match).
+ * `way` (optional): only shift this way along each axis (+1 / −1) instead of to the nearest place — used after a throw, to step
+ * back along the path. `only`: work out these parts only (the others count as they lie).
+ */
+export function matchShifts(parts: MarkerPart[], pl: Placements, f: FabricMatch | undefined, o: { way?: { x?: number; y?: number }; only?: Set<string> } = {}): Map<string, Vec> {
+  const out = new Map<string, Vec>(); if (!f) return out;
+  const need = (v: number, target: number, d: number, way = 0) => { let r = (((target - v) % d) + d) % d; if (r < 1e-7 || d - r < 1e-7) r = 0; return way > 0 ? r : way < 0 ? (r ? r - d : 0) : r > d / 2 ? r - d : r; };
+  const laid = parts.filter(p => pl[p.id] && p.match?.length).map(p => ({ p, m: matchAt(p, pl[p.id]) }));
+  const done = new Set<string>(); // part|axis settled
+  for (const { p, m } of laid) for (const axis of ['x', 'y'] as const) {
+    const rp = repeatOf(f, axis); if (!rp.d) continue;
+    const l = m.find(x => x.axis === axis && x.code[0] === 'M'); if (!l) continue;
+    done.add(p.id + axis);
+    if (o.only && !o.only.has(p.id)) continue;
+    const s = out.get(p.id) ?? { x: 0, y: 0 }; s[axis] = need(l.v, rp.first, rp.d, o.way?.[axis]); out.set(p.id, s);
+  }
+  const lead = new Map<string, number>(); // code|axis|bundle → where the first part's line lies (after its own shift)
+  for (const { p, m } of laid) for (const axis of ['x', 'y'] as const) {
+    const rp = repeatOf(f, axis); if (!rp.d) continue;
+    for (const l of m) {
+      if (l.axis !== axis || l.code[0] !== 'P') continue;
+      const key = [l.code, axis, p.sizeId, p.bundle].join('|');
+      if (!lead.has(key)) { lead.set(key, l.v + (out.get(p.id)?.[axis] ?? 0)); if (!out.has(p.id)) out.set(p.id, { x: 0, y: 0 }); done.add(p.id + axis); continue; } // the first part leads: it is not moved for a P line
+      if (done.has(p.id + axis)) continue; // already bound on this axis (an M line, or another P line)
+      done.add(p.id + axis);
+      if (o.only && !o.only.has(p.id)) continue;
+      const s = out.get(p.id) ?? { x: 0, y: 0 }; s[axis] = need(l.v, lead.get(key)!, rp.d, o.way?.[axis]); out.set(p.id, s);
+    }
+  }
+  return out;
+}
+/** Laid parts that are off their match by more than `tol` mm. */
+export function markerMismatch(parts: MarkerPart[], pl: Placements, f: FabricMatch | undefined, tol = 1): Set<string> {
+  const bad = new Set<string>();
+  for (const [id, s] of matchShifts(parts, pl, f)) if (Math.abs(s.x) > tol || Math.abs(s.y) > tol) bad.add(id);
+  return bad;
+}
+/** A shape swept by `sx` along x and `sy` along y (every row and column filled): the room a part needs to be slid that far. */
+export function sweepPoly(poly: Vec[], sx: number, sy: number): Vec[] {
+  const along = (pts: Vec[], s: number): Vec[] => {
+    const b = polyBox(pts), ys = new Set<number>(pts.map(q => q.y));
+    for (let y = b.y0; y < b.y1; y += 3) ys.add(y);
+    const rows = [...ys].sort((p, q) => p - q), L: Vec[] = [], R: Vec[] = [];
+    for (const y of rows) {
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], c = pts[(i + 1) % pts.length];
+        if (y < Math.min(a.y, c.y) - 1e-9 || y > Math.max(a.y, c.y) + 1e-9) continue;
+        for (const x of Math.abs(c.y - a.y) < 1e-9 ? [a.x, c.x] : [a.x + (y - a.y) / (c.y - a.y) * (c.x - a.x)]) { if (x < lo) lo = x; if (x > hi) hi = x; }
+      }
+      if (lo <= hi) { L.push({ x: lo, y }); R.push({ x: hi + s, y }); }
+    }
+    return [...R, ...L.reverse()];
+  };
+  const sw = (q: Vec): Vec => ({ x: q.y, y: q.x });
+  let p = poly;
+  if (sx > 0) p = along(p, sx);
+  if (sy > 0) p = along(p.map(sw), sy).map(sw);
+  p = p.filter((q, i) => { const n = p[(i + 1) % p.length]; return Math.hypot(q.x - n.x, q.y - n.y) > 1e-6; });
+  if (signedArea(p) < 0) p.reverse();
+  return p;
+}
+/**
+ * Nesting with match lines: which parts need room to be slid onto their match afterwards, and how much (a whole repeat). A part
+ * with an M line needs it; of the parts of a bundle that share a P code, all but the first do. Only `free` parts are planned
+ * (not the parts of blocks or married groups).
+ */
+export function matchPlan(parts: MarkerPart[], f: FabricMatch | undefined, free?: Set<string>): Map<string, { sx: number; sy: number }> {
+  const out = new Map<string, { sx: number; sy: number }>(); if (!f) return out;
+  const lead = new Set<string>();
+  for (const p of parts) {
+    if (!p.match?.length) continue;
+    const m = matchAt(p, { x: 0, y: 0, rot: 0 }), mine = { sx: 0, sy: 0 };
+    for (const axis of ['x', 'y'] as const) {
+      const d = repeatOf(f, axis).d; if (!d) continue;
+      let bound = m.some(l => l.axis === axis && l.code[0] === 'M');
+      for (const l of m) { if (l.axis !== axis || l.code[0] !== 'P') continue; const key = [l.code, axis, p.sizeId, p.bundle].join('|'); if (lead.has(key)) bound = true; else lead.add(key); }
+      if (bound) mine[axis === 'x' ? 'sx' : 'sy'] = d;
+    }
+    if ((mine.sx || mine.sy) && (!free || free.has(p.id))) out.set(p.id, mine);
+  }
+  return out;
+}
+/** The part as the nester lays it when it must be slid onto its match afterwards: its outline swept by the repeat; it keeps its direction (0° / 180°). */
+export function sweptPart(p: MarkerPart, sw: { sx: number; sy: number }): MarkerPart {
+  const angles = p.angles.filter(a => a % 180 === 0);
+  const { tilt: _t, ...rest } = p; void _t;
+  return { ...rest, pieceId: `${p.pieceId}~${sw.sx}~${sw.sy}`, poly: sweepPoly(p.poly, sw.sx, sw.sy), angles: angles.length ? angles : [0] };
+}
+/**
+ * After nesting with swept parts: every planned part is slid inside its room onto its match (M lines first, then the P lines after
+ * the first part of their bundle). Returns the placements with those parts moved.
+ */
+export function settleMatch(parts: MarkerPart[], pl: Placements, f: FabricMatch | undefined, plan: Map<string, { sx: number; sy: number }>): Placements {
+  const out: Placements = { ...pl }; if (!f || !plan.size) return out;
+  // a part laid at 0° slides forward in its room, one laid at 180° backward
+  const settle = (ids: Set<string>) => {
+    for (const id of ids) {
+      const p = parts.find(q => q.id === id), q = out[id]; if (!p || !q) continue;
+      const sign = facing(q.rot) === 180 ? -1 : 1, sw = plan.get(id)!;
+      const s = matchShifts(parts, out, f, { way: { x: sign, y: sign }, only: new Set([id]) }).get(id); if (!s) continue;
+      out[id] = { ...q, x: q.x + (sw.sx ? s.x : 0), y: q.y + (sw.sy ? s.y : 0) };
+    }
+  };
+  const ids = [...plan.keys()].filter(id => out[id]);
+  settle(new Set(ids.filter(id => parts.find(p => p.id === id)?.match?.some(m => m.code[0] === 'M'))));
+  settle(new Set(ids));
+  return out;
 }
