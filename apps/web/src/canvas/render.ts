@@ -148,7 +148,7 @@ export function renderWorld(app: App): string {
       // live-object axes are drawn (graded) from the live geometry below
       if ((c.type === 'dartAxis' && p.darts.some(d => d.axisContourId === c.id)) || (c.type === 'pleatAxis' && p.pleats.some(q => q.axisContourId === c.id))) return;
       const dash = c.style === 'dashed' || c.type === 'fold' || c.type === 'mirror' ? ' stroke-dasharray="6 4"' : c.style === 'dotted' ? ' stroke-dasharray="1.5 3"' : '';
-      g.push(`<path d="${pathD(ic.pts, ic.closed)}" class="ns" stroke="${isSel ? '#2f6fb8' : '#30343c'}" stroke-width="1.1" fill="none"${dash}/>`);
+      g.push(`<path d="${pathD(ic.pts, ic.closed)}" class="ns" stroke="${c.match ? '#b3329e' : isSel ? '#2f6fb8' : '#30343c'}" stroke-width="${c.match || c.mode === 'cut' ? 1.6 : 1.1}" fill="none"${dash}/>`);
     });
     // darts / pleats / fullness (live objects) in every displayed size
     const liveSizes = app.nested ? [active, ...app.doc.sizesOf(p).filter(x => x !== active && !app.nestedHidden.has(x))] : [active];
@@ -287,6 +287,12 @@ export function renderOverlay(app: App): string {
     const sizeName = line.sizes.find(s => s.id === active)?.name ?? '';
     out.push(`<text x="${fs(cen.x)}" y="${fs(cen.y)}" class="plabel${isSel ? ' sel' : ''}" text-anchor="middle">${esc(p.name)}</text>` +
       `<text x="${fs(cen.x)}" y="${fs(cen.y + 13)}" class="psub" text-anchor="middle">${esc(sizeName)}${p.locked ? ' · locked' : ''}</text>`);
+    // what an internal line is for, when it is not a plain drawn line: its match code, or CUT
+    p.internals.forEach((c, ci) => {
+      const ic = r.internals[ci]; if (!ic || ic.pts.length < 2 || (!c.match && c.mode !== 'cut')) return;
+      const m = v.toScreen(toWorld(p, pointAtLength(ic.closed ? [...ic.pts, ic.pts[0]] : ic.pts, (ic.cum[ic.cum.length - 1] ?? 0) / 2).pt));
+      out.push(`<text x="${fs(m.x + 6)}" y="${fs(m.y - 6)}" class="luse${c.match ? ' match' : ''}" data-luse="${c.id}">${c.match ? esc(c.match) : 'CUT'}</text>`);
+    });
     if (settings.showPieceInfo) {
       const per = r.sew.cum[r.sew.cum.length - 1] ?? 0;
       const info = [`${esc(p.order.material || '—')} · qty ${p.order.qtyPerBundle}${p.order.side && p.order.side !== 'none' ? ' ' + p.order.side : ''}`, `${p.sew.points.length} pts · outline ${fmt(per)} ${unitLabel()}`, p.description ? esc(p.description) : ''].filter(Boolean);
@@ -399,7 +405,7 @@ export function renderOverlay(app: App): string {
           // ~9 px anchor hit target
           hitAnchors.push(`<circle cx="${fs(s.x)}" cy="${fs(s.y)}" r="9" fill="transparent" data-hit="anchor" data-piece="${p.id}" data-contour="${c.id}" data-anchor="${a.id}" data-size="${sid}" style="cursor:move"><title>${esc(anchorTip(a, ai))}</title></circle>`);
           // handles for selected anchors (active size, smooth or explicit)
-          if (selA && primaryAnchor === a.id && (a.smooth || a.hIn || a.hOut)) {
+          if (selA && (primaryAnchor === a.id || app.tool?.id === 'curve') && (a.smooth || a.hIn || a.hOut)) { // Curve tool: every selected point shows its handles
             const hh = rc.handles[ai];
             const n = c.points.length;
             const hasIn = c.closed || ai > 0, hasOut = c.closed || ai < n - 1;
