@@ -313,6 +313,80 @@ async function nested(h, fixtures) {
           && !!reopened && reopened.room && /\.pcd$/.test(reopened.file) && reopened.rows >= 1 });
     } catch (err) { return done({ got: `after ${stage}: ${String(err.message || err).split('\n')[0]}`, pass: false }); }
   });
+  await T('Property editor: a selected internal line can be set to Draw, Cut, Match to fabric (M1) or piece to piece (P1 … P15) and shows its code on the sheet; a selected notch has its own editor; with Global ticked the change goes to every line / every notch of the work area', async () => {
+    const P = h.page;
+    try {
+      const ids = await h.ev(() => { const E = window.__e2e, d = E.app.doc, [a, b] = d.style.pieces;
+        d.transact('more', s => { const src = s.pieces[0].internals.find(c => c.type === 'internal'); const cp = JSON.parse(JSON.stringify(src)); cp.id = 'e2e_line2'; cp.points.forEach((q, i) => { q.id = 'e2e_l2_' + i; }); delete cp.lock; s.pieces[1].internals.push(cp); });
+        const pt = d.resolvePiece(b.id).sew.pts[1]; E.ops.addNotchAtPoint(d, d.piece(b.id), pt);
+        const line = d.piece(a.id).internals.find(c => c.type === 'internal');
+        E.app.applySel({ k: 'internal', c: { pieceId: a.id, contourId: line.id } }, 'replace'); E.app.invalidate();
+        return { a: a.id, b: b.id, line: line.id, notch: d.piece(a.id).notches[0]?.id }; });
+      await h.settle(120);
+      const uses = () => h.ev(() => window.__e2e.app.doc.style.pieces.flatMap(p => p.internals.filter(c => c.type === 'internal').map(c => c.match || c.mode || 'draw')).join());
+      const opts = await P.locator('[data-k="lineUse"] option').count();
+      await P.locator('[data-k="lineUse"]').selectOption('M1'); await h.settle(120);
+      const u1 = await uses(), tag1 = await P.locator('[data-luse]').allTextContents();
+      await P.locator('[data-k="lineUse"]').selectOption('P7'); await h.settle(120); const u2 = await uses();
+      await P.locator('[data-k="propGlobal"]').check(); await h.settle(120);
+      await P.locator('[data-k="lineUse"]').selectOption('cut'); await h.settle(120);
+      const u3 = await uses(), tag3 = await P.locator('[data-luse]').allTextContents();
+      await P.locator('[data-k="propGlobal"]').uncheck(); await h.settle(100);
+      await P.locator('[data-k="lineUse"]').selectOption('draw'); await h.settle(120); const u4 = await uses();
+      // notch
+      if (!ids.notch) return { got: 'the fixture has no notch on the first piece', pass: false };
+      await h.ev(o => { const E = window.__e2e; E.app.applySel({ k: 'notch', n: { pieceId: o.a, notchId: o.notch } }, 'replace'); E.app.invalidate(); }, ids); await h.settle(120);
+      const notches = () => h.ev(() => window.__e2e.app.doc.style.pieces.flatMap(p => p.notches.map(n => n.type)).join());
+      const n0 = await notches();
+      await P.locator('[data-k="notchType"]').selectOption('V'); await h.settle(120); const n1 = await notches();
+      await P.locator('[data-k="propGlobal"]').check(); await h.settle(120);
+      await P.locator('[data-k="notchType"]').selectOption('U'); await h.settle(120); const n2 = await notches();
+      const allBtn = await P.locator('[data-k="applyAll"]').count();
+      await P.locator('[data-k="propGlobal"]').uncheck(); await h.settle(100);
+      return { got: `line use choices ${opts}; M1 → "${u1}" (sheet shows ${JSON.stringify(tag1)}); P7 → "${u2}"; Global + Cut → "${u3}" (${JSON.stringify(tag3)}); Global off + Draw → "${u4}"; notches "${n0}" → V on the chosen one "${n1}" → Global U "${n2}"; Apply-to-all button ${allBtn}`,
+        pass: opts === 18 && u1 === 'M1,draw' && tag1.includes('M1') && u2 === 'P7,draw' && u3 === 'cut,cut' && tag3.length === 2 && tag3.every(t => t === 'CUT') && u4 === 'draw,cut'
+          && n1.split(',')[0] === 'V' && n1.split(',').slice(1).every(t => t !== 'V' || n0.split(',').slice(1).includes('V')) && n2.split(',').length >= 2 && n2.split(',').every(t => t === 'U') && allBtn === 1 };
+    } catch (err) { await h.ev(() => { const c = document.querySelector('[data-k="propGlobal"]'); if (c && c.checked) c.click(); }); return { got: String(err.message || err).split('\n')[0], pass: false }; }
+  });
+  await T('Box selection of handles: in Move Point (any mode) and in Curve / Handle a box drawn on the empty sheet selects the points inside; several points put Move Point on Group; in Curve every selected point shows its handles', async () => {
+    const P = h.page;
+    const boxDrag = async () => { const a = await h.toClient({ x: -40, y: -35 }), b = await h.toClient({ x: 300, y: 750 }); await P.mouse.move(a.x, a.y); await P.mouse.down(); await P.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 3 }); const seen = await P.locator('svg.sheet rect[stroke="#4ea1ff"]').count(); await P.mouse.move(b.x, b.y, { steps: 3 }); await P.mouse.up(); await h.settle(120); return seen; };
+    await h.ev(() => { const E = window.__e2e; E.app.sel = { pieces: [], anchors: [] }; E.app.setTool('movePoint'); E.app.tool.setMode(E.app, 'single'); }); await h.settle(80);
+    const seen1 = await boxDrag();
+    const mp = await h.ev(() => { const E = window.__e2e; return { n: E.app.sel.anchors.length, mode: E.app.tool.mode() }; });
+    await h.ev(() => { const E = window.__e2e; E.app.tool.setMode(E.app, 'single'); E.app.sel = { pieces: [], anchors: [] }; E.app.setTool('curve'); }); await h.settle(80);
+    const seen2 = await boxDrag();
+    const cv = await h.ev(() => { const E = window.__e2e; return { n: E.app.sel.anchors.length, handles: document.querySelectorAll('svg.sheet line[stroke="#d6309b"]').length }; });
+    await h.ev(() => { const E = window.__e2e; E.app.sel = { pieces: [], anchors: [] }; E.app.setTool('select'); });
+    return { got: `Move Point (Single): box drawn ${seen1}, ${mp.n} points selected, mode now ${mp.mode}; Curve: box drawn ${seen2}, ${cv.n} points selected, ${cv.handles} handle lines shown`, pass: seen1 === 1 && mp.n > 3 && mp.mode === 'group' && seen2 === 1 && cv.n > 3 && cv.handles >= 4 };
+  });
+  await T('Marker making: stripe and plaid distance with a 1st stripe and 1st plaid; the bars show on the fabric; a part with a match line steps onto the match when it is put down, and ▶ nests every such part onto its match with no overlap', async () => {
+    const P = h.page;
+    await h.ev(() => { const E = window.__e2e, d = E.app.doc; d.transact('match line', s => { const c = s.pieces[0].internals.find(x => x.type === 'internal'); c.match = 'M1'; delete c.mode; }); void E.C.runCommand('marker.open'); }); await P.waitForSelector('.mk-root'); await h.settle(150);
+    const done = async r => { await h.ev(() => { document.querySelector('.mk-root')?.closeMarker?.(); const E = window.__e2e; E.app.doc.transact('clear marker', s => { delete s.meta.marker; }); }); return r; };
+    let stage = 'open';
+    try {
+      for (const [k, n] of Object.entries({ M: 10, L: 10 })) { const i = P.locator(`[data-mk-order="${k}"]`); await i.fill(String(n)); await i.press('Tab'); await h.settle(60); }
+      await P.locator('[data-mk="auto"]').click(); await h.settle(250);
+      const f = Number(await h.ev(() => document.querySelector('[data-mk-width]').value)) / 1500; // display units per mm
+      const g0 = await P.locator('.mk-grid line').count();
+      await P.locator('[data-mk="match"]').click(); await h.waitDialog();
+      await h.fields({ stripe: (130 * f).toFixed(3), stripe1: (40 * f).toFixed(3), plaid: (170 * f).toFixed(3), plaid1: (25 * f).toFixed(3) }); await h.ok(); await h.settle(250); stage = 'set';
+      const st = () => h.ev(() => { const m = window.__e2e.app.style.meta.marker, r = m.rows[0]; return { match: JSON.stringify(m.match || {}), laid: Object.keys(r.placements).length, parts: document.querySelectorAll('.mk-part').length, grid: document.querySelectorAll('.mk-grid line').length, first: document.querySelectorAll('.mk-grid line.first').length, mlines: document.querySelectorAll('.mk-mline').length, codes: [...new Set([...document.querySelectorAll('.mk-mcode')].map(t => t.textContent))].join(), off: document.querySelectorAll('.mk-part.off').length, bad: document.querySelectorAll('.mk-part.bad').length, status: document.querySelector('.mk-status').textContent }; });
+      const a = await st();
+      // put the part with the match line down anywhere: it steps onto the match
+      const fab = await P.locator('.mk-fabric').boundingBox();
+      const el = P.locator('.mk-part.wait:has(.mk-mline)').first(), bb = await el.boundingBox();
+      await P.mouse.click(bb.x + bb.width / 2, bb.y + bb.height / 2); await h.settle(60); await P.mouse.move(fab.x + 333, fab.y + fab.height / 2 + 7, { steps: 4 }); await P.mouse.click(fab.x + 333, fab.y + fab.height / 2 + 7); await h.settle(200);
+      const b = await st(); stage = 'put down';
+      await P.locator('[data-mk="nest"]').click(); await P.waitForTimeout(3500); if (await P.locator('[data-mk="stop"]').count()) await P.locator('[data-mk="stop"]').click(); await P.waitForSelector('[data-mk="nest"]', { timeout: 30000 }); await h.settle(300);
+      const c = await st(), toasts = await h.ev(() => window.__e2e.toasts.slice(-2).map(t => t.text || t.msg || String(t)).join(' | ')); stage = 'nest';
+      await P.locator('[data-mk="match"]').click(); await h.waitDialog(); await h.fields({ stripe: '0', plaid: '0' }); await h.ok(); await h.settle(200);
+      const d = await st();
+      return done({ got: `bars before ${g0}; set ${a.match}: ${a.grid} bars (${a.first} first), ${a.mlines} match lines "${a.codes}"; put down: laid ${b.laid}, off the match ${b.off}; nest: laid ${c.laid}/${c.parts}, off ${c.off}, bad ${c.bad} · ${toasts}; switched off: ${d.grid} bars, ${d.match}`,
+        pass: g0 === 0 && /"stripe":130/.test(a.match) && /"plaid1":25/.test(a.match) && a.grid > 4 && a.first === 2 && a.mlines === 2 && a.codes === 'M1' && b.laid === 1 && b.off === 0 && c.laid === c.parts && c.off === 0 && c.bad === 0 && /match/.test(toasts) && d.grid === 0 && d.match === '{}' });
+    } catch (err) { return done({ got: `after ${stage}: ${String(err.message || err).split('\n')[0]} · toasts ${JSON.stringify(await h.ev(() => window.__e2e.toasts.slice(-3)))}`, pass: false }); }
+  });
   await T('Marker making: Piece details lists every panel with its picture (major, block, rotation, tilt, buffer); Nest lays the panels marked Block into fuse blocks within the max length and width and makes two blocks when one is not enough; a box drawn on the marker selects parts, Unblock and Block fuse work on the selection only; married parts stay married through a nest', async () => {
     const P = h.page;
     await h.ev(() => { const E = window.__e2e; E.downloads.length = 0; void E.C.runCommand('marker.open'); }); await P.waitForSelector('.mk-root'); await h.settle(150);
