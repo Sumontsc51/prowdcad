@@ -159,7 +159,7 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
         <li><div>Open <code>prowdcad-v2.html</code> in Chrome or Edge. It works offline. Keep the file somewhere permanent, for example a <em>ProwdCAD</em> folder on your desktop.</div></li>
         <li><div>The first time, ProwdCAD opens with a 400 × 600 mm practice block in sizes XS–XL. To start real work use <span class="menu">File ▸ New</span> (<kbd>Ctrl+Alt+N</kbd>).</div></li>
         <li><div>In the <em>New style</em> dialog type the style name, the size range separated by commas (<code>S, M, L, XL, 2XL</code>) and the base size (<code>M</code>). Untick <em>Start with a rectangle block</em> if you want an empty sheet.</div></li>
-        <li><div>Save with <kbd>Ctrl+S</kbd>. A style is one <code>.prowd.json</code> file that holds every piece, size and grade rule.</div></li>
+        <li><div>Save with <kbd>Ctrl+S</kbd>. A pattern is one <code>.pcd</code> file that holds every piece, size and grade rule.</div></li>
       </ol>
       <div class="note"><strong>Developers</strong>From the GitHub repo (branch <code>v2</code>): <code>npm install</code>, then <code>npm run dev</code>. <code>npm run build:single</code> rebuilds the one-file version.</div>
     </section>
@@ -624,6 +624,20 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
           <tr><td>Report</td><td>Every marker with its ratio, plies, length and efficiency, the garments cut against the order, and the fabric needed in total and per garment.</td></tr>
         </tbody>
       </table></div>
+      <h3>File menu and settings</h3>
+      <p>The marker room has its own <strong>File</strong> menu at the top: <em>Save marker</em> and <em>Save marker as…</em> write a <code>.pcm</code> file (the style with its cut plans and markers); <em>Import marker…</em> reads one (into this style when it is the same style, otherwise it offers to open that style); <em>Export</em> writes the marker on screen as DXF; <em>Plot</em> writes it as a <code>.plt</code> file.</p>
+      <p><strong>File ▸ Settings · annotation</strong> decides what is written, on the screen, in the plot and in the DXF:</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Setting</th><th>What it adds</th></tr></thead>
+        <tbody>
+          <tr><td>On the part</td><td>Style name, panel (piece) name, size, bundle code (size and bundle number, for example <code>M-2</code>), description.</td></tr>
+          <tr><td>Lines of the piece</td><td>Grain line, seam (sew) line, and the internal lines: drawn with the pen, cut, or left out.</td></tr>
+          <tr><td>Marker border</td><td>The border of the fabric used, with the marker name, ratio, marker length, marker width, efficiency and total perimeter (the length that is cut).</td></tr>
+        </tbody>
+      </table></div>
+      <p>In the plot, pen 1 cuts (outlines, and internal lines set to <em>Cut</em>) and pen 2 draws everything else.</p>
+      <h3>Marker menu</h3>
+      <p><strong>Marker ▸ Marry pieces / Unmarry</strong>, <strong>Block fuse…</strong> and <strong>Buffer…</strong> are the same as the buttons in the tool strip. <em>Buffer</em> gives the piece of the selected part a clear margin all round, in every size and marker: nothing is laid inside it, and only the piece's own outline is cut (the buffer is drawn dashed). A piece has either a buffer or a block, not both.</p>
       <h3>Marker direction</h3>
       <p>The <em>Direction</em> list at the top says which way the parts may face; it applies to laying by hand and to the nester.</p>
       <div class="tbl"><table>
@@ -645,7 +659,9 @@ footer{border-top:1px solid var(--rule);color:var(--muted);font-size:14px;paddin
       <div class="tbl"><table>
         <thead><tr><th>Format</th><th>Menu</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td>ProwdCAD style <code>.prowd.json</code></td><td>File ▸ Save / Open</td><td>Everything in one file. Older ProwdCAD files are converted when opened.</td></tr>
+          <tr><td>Pattern <code>.pcd</code></td><td>File ▸ Save / Open</td><td>Everything in one file. Older files (<code>.prowd.json</code>) still open and are converted.</td></tr>
+          <tr><td>Marker <code>.pcm</code></td><td>Marker room ▸ File ▸ Save marker / Import marker</td><td>The style together with its cut plans and markers. Opening a <code>.pcm</code> with File ▸ Open goes straight to the marker room; saving the pattern from there gives a <code>.pcd</code>.</td></tr>
+          <tr><td>Plot <code>.plt</code></td><td>Marker room ▸ File ▸ Plot</td><td>The marker for a plotter or cutter (HPGL): pen 1 cuts, pen 2 draws the annotation.</td></tr>
           <tr><td>DXF AAMA / ASTM + <code>.rul</code></td><td>File ▸ Import / Export</td><td>For Gerber, Lectra, Optitex, TUKAcad and others. Grading travels in the <code>.rul</code> file; select the DXF and its <code>.rul</code> together in the file chooser, because the sizes and the grading are in the <code>.rul</code>. The import report shows the sizes it found; when they differ from the style's, choose there whether the style takes the file's sizes or the pieces take the style's (matched by size name). A DXF on its own has one size: its pieces join the style's sizes ungraded.</td></tr>
           <tr><td>Tiled PDF</td><td>File ▸ Export ▸ PDF · <kbd>Ctrl+P</kbd></td><td>A4, Letter, A0 and more at exactly 1:1, with registration crosses, glue overlap, page labels and a 100 mm check square.</td></tr>
           <tr><td>SVG</td><td>File ▸ Import / Export</td><td>1:1 in millimetres. Import asks for the DPI when the file has none.</td></tr>
