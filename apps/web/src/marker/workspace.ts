@@ -7,13 +7,15 @@
  */
 import {
   autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placedPoly, placedPoint, polyBox, placeAt, nestJob,
-  markerDXF, markerHPGL, switchMarkerMaterial, directedParts, obeyDirection, directionGroup, groupMayTurn, throwParts, type MarkerDirection, type MarkerDoc, type MarkerRow, type MarkerPart, type Placements, type Vec,
+  markerDXF, markerHPGL, partLabel, markerPerimeter, DEFAULT_ANNOT, type MarkerAnnot, switchMarkerMaterial, directedParts, obeyDirection, directionGroup, groupMayTurn, throwParts, type MarkerDirection, type MarkerDoc, type MarkerRow, type MarkerPart, type Placements, type Placement, type Vec,
 } from '@prowdcad/kernel';
 import type { App } from '../app';
 import { h, clear, isTyping } from '../ui/dom';
 import { toast } from '../ui/toast';
 import { confirmDialog, alertDialog, dialogOpen, showDialog } from '../ui/dialog';
-import { download } from '../actions/file';
+import { download, pickFiles, loadStyle } from '../actions/file';
+import { ops } from '../ops-bridge';
+import { openContextMenu } from '../ui/menu';
 import { fmt, unitLabel, parseLen } from '../units-ui';
 import { startNest, type NestRun } from './nester';
 
@@ -61,7 +63,7 @@ export function openMarker(app: App) {
       if (next.direction) d.direction = next.direction;
       if (next.rot180 !== undefined) d.rot180 = next.rot180;
       for (const r of d.rows) {
-        const ps = markerParts(app.doc, r.ratio, { material: d.material || undefined, block: d.block });
+        const ps = markerParts(app.doc, r.ratio, { material: d.material || undefined, block: d.block, buffer: d.buffer });
         const res = obeyDirection(ps, r.placements, d.direction ?? 'bundle', d.rot180 ?? true);
         r.placements = res.placements; off += res.removed;
       }
@@ -93,10 +95,10 @@ export function openMarker(app: App) {
   // ── geometry helpers
   function refreshParts() {
     const r = row(), m = M();
-    const key = r ? JSON.stringify([r.id, r.ratio, m.material, m.block ?? null]) : '-';
+    const key = r ? JSON.stringify([r.id, r.ratio, m.material, m.block ?? null, m.buffer ?? null]) : '-';
     if (key === partsKey) return;
     partsKey = key;
-    parts = r ? markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block }) : [];
+    parts = r ? markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block, buffer: m.buffer }) : [];
     sel = new Set([...sel].filter(id => parts.some(p => p.id === id)));
   }
   /** parts not laid yet wait in rows above the fabric (negative y) */
@@ -193,6 +195,7 @@ export function openMarker(app: App) {
       const b = { ...(d.block ?? {}) };
       for (const id of pieceIds) { if (mg > 0) b[id] = mg; else delete b[id]; }
       if (Object.keys(b).length) d.block = b; else delete d.block;
+      if (mg > 0 && d.buffer) { for (const id of pieceIds) delete d.buffer[id]; if (!Object.keys(d.buffer).length) delete d.buffer; }
       // the shape of these parts changed: they go back to waiting in every marker
       for (const row2 of d.rows) { for (const k of Object.keys(row2.placements)) if (pieceIds.some(id => k.startsWith(id + '|'))) delete row2.placements[k]; row2.marry = (row2.marry ?? []).map(g => g.filter(q => row2.placements[q])).filter(g => g.length > 1); if (!row2.marry.length) delete row2.marry; }
     });
@@ -227,12 +230,79 @@ export function openMarker(app: App) {
 
   // ── export / report
   const base = () => `${app.doc.style.name || 'style'}_${(row()?.name ?? 'marker').replace(/\s+/g, '_')}`;
+  const annot = (): MarkerAnnot => ({ ...DEFAULT_ANNOT, ...(M().annot ?? {}) });
+  const ratioText = (r: MarkerRow) => sizes().filter(s => r.ratio[s.id]).map(s => `${s.name} ${r.ratio[s.id]}`).join(' ');
+  const outOpt = (r: MarkerRow) => ({ annot: annot(), name: r.name, ratio: ratioText(r), styleName: app.doc.style.name });
+  // ── files: a marker file (.pcm) holds the style with its cut plans and markers; a pattern file is .pcd; a plot is .plt
+  let markerFile = (app.fileName || 'untitled').replace(/\.(pcd|pcm|prowd\.json|json|prowd)$/i, '') + '.pcm';
+  async function saveMarker(as: boolean) {
+    if (carry) dropCarry(true);
+    if (as) {
+      const r = await showDialog({ title: 'Save marker as', fields: [{ kind: 'text', key: 'n', label: 'File name', value: markerFile }] });
+      if (!r) return;
+      markerFile = (String(r.n).trim() || 'untitled').replace(/\.pcm$/i, '') + '.pcm';
+    }
+    download(markerFile, new Blob([ops.saveNative(app.doc, { pretty: true })], { type: 'application/json' }));
+    toast(`Saved ${markerFile} (the style with its cut plans and markers)`, 'ok');
+  }
+  async function importMarker() {
+    if (carry) dropCarry(true);
+    const [f] = await pickFiles('.pcm,.pcd,.json'); if (!f) return;
+    let st; try { st = ops.loadNative(await f.text()).style; } catch (err) { toast('Cannot read that file: ' + (err as Error).message, 'error'); return; }
+    const mk = st.meta?.marker;
+    if (!mk) { toast(`${f.name} has no marker in it`, 'warn'); return; }
+    const mine = new Set(app.doc.style.pieces.map(p => p.id));
+    const same = st.pieces.length > 0 && st.pieces.every(p => mine.has(p.id));
+    if (same) {
+      if (!(await confirmDialog('Import marker', `Take the cut plans and markers of ${f.name} into this style? The ones here are replaced (Ctrl+Z brings them back).`, 'Import'))) return;
+      try { app.doc.transact('Import marker', s2 => { s2.meta.marker = JSON.parse(JSON.stringify(mk)); }); } catch (err) { toast((err as Error).message, 'error'); return; }
+    } else {
+      if (!(await confirmDialog('Import marker', `${f.name} belongs to another style (${st.name}). Open that style with its markers? Unsaved changes of the open style are lost.`, 'Open it'))) return;
+      loadStyle(app, st, f.name.replace(/\.pcm$/i, '.pcd'), null);
+    }
+    markerFile = f.name.replace(/\.(pcd|json)$/i, '.pcm');
+    cur = M().rows[0]?.id ?? ''; sel.clear(); partsKey = ''; draw(true);
+    toast(`Marker file ${f.name} loaded`, 'ok');
+  }
+  const exportDXF = () => { const r = row(); if (r) download(base() + '.dxf', new Blob([markerDXF(parts, r.placements, wd(r), r.name, outOpt(r))], { type: 'application/dxf' })); };
+  const plot = () => { const r = row(); if (!r) return; if (!Object.keys(r.placements).length) { toast('Nothing is laid on this marker yet', 'warn'); return; } download(base() + '.plt', new Blob([markerHPGL(parts, r.placements, wd(r), outOpt(r))], { type: 'application/vnd.hp-hpgl' })); toast(`Plot file ${base()}.plt · pen 1 cuts, pen 2 draws`, 'ok'); };
+  async function settings() {
+    const a = annot();
+    const cb = (key: keyof MarkerAnnot, label: string) => ({ kind: 'checkbox' as const, key, label, value: a[key] as boolean });
+    const r = await showDialog({ title: 'Marker settings · annotation', message: 'What is written on every part and around the marker. It applies to the screen, the plot (.plt) and the DXF.', fields: [
+      cb('style', 'On the part: style name'), cb('piece', 'On the part: panel (piece) name'), cb('size', 'On the part: size'), cb('bundle', 'On the part: bundle code'), cb('desc', 'On the part: description'),
+      cb('grain', 'Grain line'), cb('seam', 'Seam (sew) line'),
+      { kind: 'select', key: 'internals', label: 'Internal lines', value: a.internals, options: [{ value: 'draw', label: 'Draw (pen)' }, { value: 'cut', label: 'Cut' }, { value: 'none', label: 'Leave out' }] },
+      cb('border', 'Marker border'), cb('bName', 'At the border: marker name'), cb('bRatio', 'At the border: ratio'), cb('bLength', 'At the border: marker length'), cb('bWidth', 'At the border: marker width'), cb('bEff', 'At the border: efficiency'), cb('bPerim', 'At the border: total perimeter'),
+    ] });
+    if (!r) return;
+    edit('Marker settings', d => { d.annot = Object.fromEntries(Object.keys(DEFAULT_ANNOT).map(k => [k, k === 'internals' ? r[k] : !!r[k]])) as unknown as MarkerAnnot; });
+  }
+  /** Buffer: the pieces of the selected parts keep a clear margin around their outline, in every size and marker. */
+  async function buffer() {
+    if (run) return;
+    const ps = parts.filter(p => sel.has(p.id)); const pieceIds = [...new Set(ps.map(p => p.pieceId))];
+    if (!pieceIds.length) { toast('Buffer: select a part of the piece first (Shift+click)', 'warn'); return; }
+    const r = await showDialog({ title: 'Buffer', message: `${[...new Set(ps.map(p => p.name))].join(', ')}\nThe piece keeps this much room clear all round, in every size and every marker. Only its own outline is cut. Margin 0 takes the buffer off.`,
+      fields: [{ kind: 'length', key: 'm', label: 'Buffer margin', value: M().buffer?.[pieceIds[0]] ?? 3, min: 0 }] });
+    if (!r) return;
+    const mg = Math.max(0, r.m as number);
+    edit(mg > 0 ? 'Buffer' : 'Remove buffer', d => {
+      const b = { ...(d.buffer ?? {}) };
+      for (const id of pieceIds) { if (mg > 0) b[id] = mg; else delete b[id]; }
+      if (Object.keys(b).length) d.buffer = b; else delete d.buffer;
+      if (mg > 0 && d.block) { for (const id of pieceIds) delete d.block[id]; if (!Object.keys(d.block).length) delete d.block; }
+      for (const row2 of d.rows) { for (const k of Object.keys(row2.placements)) if (pieceIds.some(id => k.startsWith(id + '|'))) delete row2.placements[k]; row2.marry = (row2.marry ?? []).map(g => g.filter(q => row2.placements[q])).filter(g => g.length > 1); if (!row2.marry.length) delete row2.marry; }
+    });
+    toast(mg > 0 ? `Buffer: ${fmt(mg)} ${unitLabel()} all round · the parts wait to be laid again` : 'Buffer removed', 'ok');
+  }
+  const menu = (e: Event, items: { label: string; run: () => void }[]) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); openContextMenu(r.left, r.bottom + 2, [], items); };
   function report() {
     const m = M(), t = planTotals(sid(), m.order, m.rows);
     const lines = [`Cut plan — ${app.doc.style.name}`, `Material: ${m.material || 'all materials'}`, ''];
     let fabric = 0;
     for (const r of m.rows) {
-      const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block }), st = markerStats(ps, r.placements, r.width ?? m.width);
+      const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block, buffer: m.buffer }), st = markerStats(ps, r.placements, r.width ?? m.width);
       const done = st.placed === st.parts && st.parts > 0; if (done) fabric += st.length * r.plies;
       lines.push(`${r.name}: ${sizes().filter(s => r.ratio[s.id]).map(s => `${s.name} ${r.ratio[s.id]}`).join(' · ') || 'no ratio'} · ${r.plies} plies · width ${fmt(r.width ?? m.width)} ${unitLabel()} · ${done ? `${fmt(st.length)} ${unitLabel()} long, ${(st.efficiency * 100).toFixed(1)} %` : `${st.placed} of ${st.parts} parts laid`}`);
     }
@@ -248,7 +318,16 @@ export function openMarker(app: App) {
     const mats = [...new Set(app.doc.style.pieces.map(p => p.order?.material ?? '').filter(Boolean))];
     const mat = h('select.mk-in', { 'data-mk': 'material', title: 'Every material has its own cut plan and markers; the order is the same for all' }, h('option', { value: '' }, 'All materials'), ...mats.map(x => h('option', { value: x, selected: x === m.material }, x))) as HTMLSelectElement;
     mat.addEventListener('change', () => { if (carry) dropCarry(true); edit('Marker material', d => switchMarkerMaterial(d, mat.value)); cur = M().rows[0]?.id ?? ''; sel.clear(); partsKey = ''; draw(true); toast(`${mat.value || 'All materials'}: ${M().rows.length ? `${M().rows.length} marker${M().rows.length === 1 ? '' : 's'} in its cut plan` : 'no cut plan yet · press Auto plan'}`, 'ok'); });
-    top.append(h('strong.mk-title', {}, 'Marker making'), h('span.mk-dim', {}, app.doc.style.name || ''),
+    top.append(h('strong.mk-title', {}, 'Marker making'),
+      h('button.mk-menu', { type: 'button', 'data-mk': 'menu-file', onclick: (e: Event) => menu(e, [
+        { label: 'Save marker (.pcm)', run: () => void saveMarker(false) }, { label: 'Save marker as…', run: () => void saveMarker(true) },
+        { label: 'Import marker (.pcm)…', run: () => void importMarker() }, { label: 'Export this marker as DXF', run: exportDXF },
+        { label: 'Plot this marker (.plt)', run: plot }, { label: 'Settings · annotation…', run: () => void settings() },
+      ]) }, 'File ▾'),
+      h('button.mk-menu', { type: 'button', 'data-mk': 'menu-marker', onclick: (e: Event) => menu(e, [
+        { label: 'Marry pieces', run: marry }, { label: 'Unmarry', run: unmarry }, { label: 'Block fuse…', run: () => void blockFuse() }, { label: 'Buffer…', run: () => void buffer() },
+      ]) }, 'Marker ▾'),
+      h('span.mk-dim', {}, app.doc.style.name || ''),
       h('label', {}, 'Fabric width', num(fmt(wd()), 'Usable fabric width of the marker on screen (every marker has its own; new markers start with the last width typed)', t => { const v = parseLen(t), id = row()?.id; if (Number.isFinite(v) && v > 50) { edit('Fabric width', d => { d.width = v; const x = d.rows.find(q => q.id === id); if (x) x.width = v; }); draw(true); } else draw(); }, 70), h('span.mk-dim', {}, unitLabel())),
       h('label', {}, 'Gap', num(fmt(m.gap), 'Smallest gap between parts', t => { const v = parseLen(t); if (Number.isFinite(v) && v >= 0) edit('Marker gap', d => { d.gap = v; }); else draw(); }, 54), h('span.mk-dim', {}, unitLabel())),
       h('label', {}, 'Material', mat),
@@ -279,7 +358,7 @@ export function openMarker(app: App) {
     const ordT = h('table.mk-tbl', {}, head,
       h('tr.mk-order', {}, h('td', {}, 'Order'), ...S2.map(s => h('td', {}, int(m.order[s.id] ?? 0, `Garments ordered in ${s.name}`, n => edit('Order quantity', d => { d.order[s.id] = n; }), { 'data-mk-order': s.name }))), h('td', {}, ''), h('td.mk-tot', {}, String(t.ordered)), h('td', {}, ''), h('td', {}, '')));
     for (const r of m.rows) {
-      const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block }), st = markerStats(ps, r.placements, r.width ?? m.width);
+      const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block, buffer: m.buffer }), st = markerStats(ps, r.placements, r.width ?? m.width);
       const bundles = S2.reduce((a, s) => a + (r.ratio[s.id] ?? 0), 0), done = st.parts > 0 && st.placed === st.parts;
       const tr = h('tr.mk-row' + (r.id === row()?.id ? '.on' : ''), { 'data-mk-row': r.id, title: 'Click to show this marker' },
         h('td.mk-name', {}, r.name, h('span.mk-sub', {}, done ? `${fmt(st.length)} ${unitLabel()} · ${(st.efficiency * 100).toFixed(1)} %` : st.parts ? `${st.placed}/${st.parts} laid` : 'no parts')),
@@ -307,7 +386,7 @@ export function openMarker(app: App) {
       // folded: the markers are tabs, one click shows a marker
       const tabs = h('div.mk-tabs', { role: 'tablist', 'aria-label': 'Markers' });
       for (const r of m.rows) {
-        const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block }), st = markerStats(ps, r.placements, r.width ?? m.width);
+        const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block, buffer: m.buffer }), st = markerStats(ps, r.placements, r.width ?? m.width);
         const done = st.parts > 0 && st.placed === st.parts, on = r.id === row()?.id;
         const ratio = S2.filter(s => r.ratio[s.id]).map(s => `${s.name} ${r.ratio[s.id]}`).join(' · ');
         const tab = h('button.mk-tab' + (on ? '.on' : '') + (done ? '.done' : ''), { type: 'button', role: 'tab', 'aria-selected': String(on), 'data-mk-tab': r.id,
@@ -340,13 +419,14 @@ export function openMarker(app: App) {
       b('marry', '⚭', 'Marry the selected parts: they are picked up, thrown and turned as one (Shift+click selects several)', marry),
       b('unmarry', '⚮', 'Unmarry: the parts of the selected group move on their own again', unmarry),
       b('block', '▣', 'Block fuse: lay the piece of the selected part as a block with a margin (for fusing), in every size', () => void blockFuse()),
+      b('buffer', '◌', 'Buffer: the piece of the selected part keeps a clear margin all round, in every size', () => void buffer()),
       h('div.mk-sep'),
       b('off', '⤴', 'Take the selected part off the marker (Delete)', unplaceSel),
       b('clear', '⌫', 'Take every part off this marker', () => { if (carry) dropCarry(true); if (Object.keys(pls()).length) keep('Clear marker', {}); }),
       h('div.mk-sep'),
       b('fit', '⤢', 'Show the whole marker (F)', () => { fit(); draw(); }),
-      b('dxf', 'DXF', 'Save this marker as DXF', () => { const r = row(); if (r) download(base() + '.dxf', new Blob([markerDXF(parts, r.placements, wd(r), r.name)], { type: 'application/dxf' })); }, '.txt'),
-      b('plt', 'PLT', 'Save this marker as a plotter file (HPGL)', () => { const r = row(); if (r) download(base() + '.plt', new Blob([markerHPGL(parts, r.placements)], { type: 'application/vnd.hp-hpgl' })); }, '.txt'));
+      b('dxf', 'DXF', 'Export this marker as DXF', exportDXF, '.txt'),
+      b('plt', 'PLT', 'Plot this marker: a .plt file, written as set in File ▸ Settings', plot, '.txt'));
   }
   function drawStatus() {
     const r = row(), m = M();
@@ -354,7 +434,7 @@ export function openMarker(app: App) {
     const st = markerStats(parts, pls(), wd());
     const el = run ? Math.min(run.seconds, (performance.now() - run.startedAt) / 1000) : 0;
     stat.textContent = [r.name, `${st.placed} of ${st.parts} parts laid`, `length ${fmt(st.length)} ${unitLabel()}`, `efficiency ${(st.efficiency * 100).toFixed(2)} %`,
-      `${r.plies} plies = ${(st.length * r.plies / 1000).toFixed(2)} m of fabric`, bad.size ? `⚠ ${bad.size} part${bad.size > 1 ? 's' : ''} overlapping or off the fabric` : '',
+      `${r.plies} plies = ${(st.length * r.plies / 1000).toFixed(2)} m of fabric`, `perimeter ${(markerPerimeter(parts, pls()) / 1000).toFixed(2)} m`, bad.size ? `⚠ ${bad.size} part${bad.size > 1 ? 's' : ''} overlapping or off the fabric` : '',
       run ? `nesting… ${el.toFixed(0)} / ${run.seconds} s on ${run.threads} thread${run.threads > 1 ? 's' : ''}` : carry ? 'Carrying: click = put down · press and pull = aim, let go = shoot · right-click = turn 180° · Esc = put back' : 'Click a part to pick it up · press and pull = aim, let go = shoot · right-click = turn 180° · Shift+click = select more'].filter(Boolean).join('  ·  ');
   }
   function drawSvg() {
@@ -366,6 +446,8 @@ export function openMarker(app: App) {
     let out = `<rect x="${f(a.x)}" y="${f(a.y)}" width="${f(b2.x - a.x + 4000 * view.k)}" height="${f(b2.y - a.y)}" class="mk-fabric"/>`;
     if (st.length > 0) { const e = S({ x: st.length, y: 0 }); out += `<line x1="${f(e.x)}" y1="${f(a.y - 8)}" x2="${f(e.x)}" y2="${f(b2.y + 8)}" class="mk-end"/><text x="${f(e.x + 5)}" y="${f(a.y - 12)}" class="mk-lab">${fmt(st.length)} ${unitLabel()} · ${(st.efficiency * 100).toFixed(1)} %</text>`; }
     const wedSet = new Set((row()?.marry ?? []).flat());
+    const an = annot(), sname = app.doc.style.name;
+    const dl = (v: Vec[], q: Placement, closed: boolean) => v.map(x => S(placedPoint(q, x))).map((x, i) => `${i ? 'L' : 'M'}${f(x.x)} ${f(x.y)}`).join('') + (closed ? 'Z' : '');
     let top2 = '';
     for (const p of parts) {
       const q = where(p); if (!q) continue;
@@ -375,9 +457,11 @@ export function openMarker(app: App) {
       const g0 = S(placedPoint(q, p.grain[0])), g1 = S(placedPoint(q, p.grain[1]));
       const bx = polyBox(pts), big = (bx.x1 - bx.x0) > 46 && (bx.y1 - bx.y0) > 16;
       const one = `<g class="${cls}" data-part="${p.id}"><path d="${pts.map((v, i) => `${i ? 'L' : 'M'}${f(v.x)} ${f(v.y)}`).join('')}Z" style="--c:${col}"/>`
-        + (p.inner ? `<path class="mk-inner" d="${p.inner.map(v => S(placedPoint(q, v))).map((v, i) => `${i ? 'L' : 'M'}${f(v.x)} ${f(v.y)}`).join('')}Z" style="--c:${col}"/>` : '')
-        + `<line x1="${f(g0.x)}" y1="${f(g0.y)}" x2="${f(g1.x)}" y2="${f(g1.y)}" class="mk-grain"/>`
-        + (big ? `<text x="${f((bx.x0 + bx.x1) / 2)}" y="${f((bx.y0 + bx.y1) / 2 + 3)}" class="mk-pl">${p.name.slice(0, 14)} ${p.sizeName}${p.mirror ? '·M' : ''}</text>` : '') + '</g>';
+        + (p.inner ? `<path class="mk-inner" d="${dl(p.inner, q, true)}" style="--c:${col}"/>` : '')
+        + (an.seam && p.sew ? `<path class="mk-seam" d="${dl(p.sew, q, true)}"/>` : '')
+        + (an.internals !== 'none' && p.lines ? `<path class="mk-int${an.internals === 'cut' ? ' cut' : ''}" d="${p.lines.map(l => dl(l, q, false)).join('')}"/>` : '')
+        + (an.grain ? `<line x1="${f(g0.x)}" y1="${f(g0.y)}" x2="${f(g1.x)}" y2="${f(g1.y)}" class="mk-grain"/>` : '')
+        + (big ? partLabel(p, an, sname).map((t, i) => `<text x="${f((bx.x0 + bx.x1) / 2)}" y="${f((bx.y0 + bx.y1) / 2 + 3 + i * 11)}" class="mk-pl">${t.slice(0, 40).replace(/&/g, '&amp;').replace(/</g, '&lt;')}</text>`).join('') : '') + '</g>';
       if (held) top2 += one; else out += one; // carried parts are drawn last, on top
     }
     out += top2 + '<g class="mk-over"></g>';
@@ -506,7 +590,7 @@ export function openMarker(app: App) {
   // ── keys (the pattern editor's shortcuts are held back while this room is open)
   const key = (e: KeyboardEvent) => {
     if (!root) return;
-    if (dialogOpen()) return;
+    if (dialogOpen() || document.querySelector('.ctx-menu')) return; // a dialog or an open menu handles its own keys
     const typing = isTyping();
     if (e.key === 'Escape' && (aim || carry)) { if (aim) { aim = null; press = null; drawAim(); } else dropCarry(true); e.preventDefault(); e.stopImmediatePropagation(); return; }
     if (e.key === 'Escape') { if (typing) (document.activeElement as HTMLElement).blur(); else if (run) nestStop(); else if (sel.size) { sel.clear(); draw(); } else closeMarker(); e.preventDefault(); e.stopImmediatePropagation(); return; }
