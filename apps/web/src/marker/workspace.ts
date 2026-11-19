@@ -297,10 +297,24 @@ export function openMarker(app: App) {
       cur = M().rows[0]?.id ?? ''; partsKey = ''; draw(true);
       toast(`${M().rows.length} marker${M().rows.length === 1 ? '' : 's'} planned · press ▶ to nest`, 'ok');
     };
-    const fold = h('button.mk-h', { type: 'button', 'data-mk': 'plan-fold', 'aria-expanded': String(planOpen), title: planOpen ? 'Fold the cut plan away (more room for the marker)' : 'Show the cut plan' }, h('span.caret', {}, '▾'), 'Cut plan', h('span.mk-dim', {}, planOpen ? '' : `  ${m.rows.length} marker${m.rows.length === 1 ? '' : 's'} · ${t.garments} of ${t.ordered} garments${t.exact ? ' ✓' : ''}`));
+    const fold = h('button.mk-h', { type: 'button', 'data-mk': 'plan-fold', 'aria-expanded': String(planOpen), title: planOpen ? 'Fold the cut plan away (more room for the marker)' : 'Show the cut plan' }, h('span.caret', {}, '▾'), 'Cut plan', h('span.mk-dim', {}, planOpen ? '' : `  ${t.garments} of ${t.ordered} garments${t.exact ? ' ✓' : ''}`));
     fold.addEventListener('click', () => { planOpen = !planOpen; draw(); requestAnimationFrame(() => { fit(); draw(); }); });
     planBox.classList.toggle('folded', !planOpen);
-    if (!planOpen) { planBox.append(fold); return; }
+    if (!planOpen) {
+      // folded: the markers are tabs, one click shows a marker
+      const tabs = h('div.mk-tabs', { role: 'tablist', 'aria-label': 'Markers' });
+      for (const r of m.rows) {
+        const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block }), st = markerStats(ps, r.placements, m.width);
+        const done = st.parts > 0 && st.placed === st.parts, on = r.id === row()?.id;
+        const ratio = S2.filter(s => r.ratio[s.id]).map(s => `${s.name} ${r.ratio[s.id]}`).join(' · ');
+        const tab = h('button.mk-tab' + (on ? '.on' : '') + (done ? '.done' : ''), { type: 'button', role: 'tab', 'aria-selected': String(on), 'data-mk-tab': r.id,
+          title: `${r.name}: ${ratio || 'no ratio'} · ${r.plies} plies · ${done ? `${fmt(st.length)} ${unitLabel()}, ${(st.efficiency * 100).toFixed(1)} %` : `${st.placed} of ${st.parts} parts laid`}` },
+          r.name, h('span.mk-tab-s', {}, done ? `${(st.efficiency * 100).toFixed(0)} %` : st.parts ? `${st.placed}/${st.parts}` : '–'));
+        tab.addEventListener('click', () => { if (carry) dropCarry(true); cur = r.id; sel.clear(); partsKey = ''; draw(true); });
+        tabs.append(tab);
+      }
+      planBox.append(h('div.mk-foldrow', {}, fold, tabs)); return;
+    }
     planBox.append(fold,
       h('div.mk-lim', {},
         h('label', {}, 'Max plies', int(m.maxPlies, 'Most plies in one spread', n => edit('Max plies', d => { d.maxPlies = Math.max(1, n); }))),
