@@ -7,7 +7,7 @@
  * A placement turns a part's outline by `rot` degrees about its own origin and then moves it by (x, y).
  */
 import type { Vec } from '../geom/vec';
-import { signedArea, pointInPolygon, distToPolygon } from '../geom/poly';
+import { signedArea, pointInPolygon, distToPolygon, offsetOutward } from '../geom/poly';
 import type { Document } from '../model/doc';
 import type { Id, SizeId } from '../model/types';
 
@@ -15,6 +15,16 @@ import type { Id, SizeId } from '../model/types';
 
 export interface CutPlanRow { id: string; name: string; ratio: Record<SizeId, number>; plies: number }
 export interface CutPlanOptions { maxPlies: number; maxBundles: number }
+/** Annotation of a marker: what is written on every part, which lines of the piece are shown, and the marker border with its facts. */
+export interface MarkerAnnot {
+  style: boolean; piece: boolean; size: boolean; bundle: boolean; desc: boolean;
+  grain: boolean; seam: boolean;
+  /** internal lines of the pieces: left out, drawn (pen), or cut */
+  internals: 'none' | 'draw' | 'cut';
+  border: boolean; bName: boolean; bRatio: boolean; bLength: boolean; bWidth: boolean; bEff: boolean; bPerim: boolean;
+}
+export const DEFAULT_ANNOT: MarkerAnnot = { style: false, piece: true, size: true, bundle: true, desc: false, grain: true, seam: false, internals: 'draw', border: true, bName: true, bRatio: true, bLength: true, bWidth: true, bEff: true, bPerim: true };
+
 /**
  * Marker direction rule (lay limits):
  *   'bundle' — one bundle, one direction: every part of a bundle faces the same way; with the 180° switch on a bundle may be turned as a whole
@@ -40,6 +50,10 @@ export interface MarkerDoc {
   direction?: MarkerDirection; rot180?: boolean;
   /** the cut plans of the other materials (the top-level limits and rows are those of `material`), keyed by material */
   others?: Record<string, { maxPlies: number; maxBundles: number; rows: MarkerRow[] }>;
+  /** buffer: pieces that keep a clear margin (mm) around their outline, keyed by piece id */
+  buffer?: Record<Id, number>;
+  /** what is written on the parts and around the marker (plot, DXF and screen); absent = DEFAULT_ANNOT */
+  annot?: Partial<MarkerAnnot>;
   /** block fuse: pieces cut as a block, their outline replaced by its box grown by this margin (mm), keyed by piece id */
   block?: Record<Id, number>;
   rows: MarkerRow[];
@@ -116,8 +130,14 @@ export interface MarkerPart {
   grain: [Vec, Vec];
   area: number;
   material: string;
-  /** block fuse: the piece's own outline inside the block (`poly` is then the block) */
+  /** block fuse / buffer: the piece's own cut outline inside `poly` (which is then the block, or the outline grown by the buffer) */
   inner?: Vec[];
+  /** 'block' = cut as a block (the block is cut, the outline is cut after fusing); 'buffer' = only room kept around the part */
+  hold?: 'block' | 'buffer';
+  /** sew line and internal lines of the piece, in the frame of the part */
+  sew?: Vec[]; lines?: Vec[][];
+  /** piece description, and the bundle code (size and bundle number) */
+  desc?: string; code: string;
 }
 export interface Placement { x: number; y: number; rot: number }
 export type Placements = Record<string, Placement>;
@@ -137,7 +157,7 @@ export function placeAt(part: MarkerPart, x: number, y: number, rot: number): Pl
  * ratio, once per bundle and per quantity; a piece cut as a pair (side L + R) gives a mirrored part as well.
  * `material` keeps only the pieces of that material (empty = all).
  */
-export function markerParts(doc: Document, ratio: Record<SizeId, number>, o: { material?: string; block?: Record<Id, number> } = {}): MarkerPart[] {
+export function markerParts(doc: Document, ratio: Record<SizeId, number>, o: { material?: string; block?: Record<Id, number>; buffer?: Record<Id, number> } = {}): MarkerPart[] {
   const out: MarkerPart[] = [];
   for (const piece of doc.style.pieces) {
     const mat = piece.order?.material ?? '';
@@ -154,24 +174,38 @@ export function markerParts(doc: Document, ratio: Record<SizeId, number>, o: { m
       const qty = Math.max(1, Math.floor(piece.order?.qtyPerBundle ?? 1));
       const pair = piece.order?.side === 'LR';
       for (const mirror of pair ? [false, true] : [false]) {
-        let pts = src.map(q => rotP(q, ang)), gl = [rotP(g.a, ang), rotP(g.b, ang)];
-        if (mirror) { pts = pts.map(q => ({ x: q.x, y: -q.y })); gl = gl.map(q => ({ x: q.x, y: -q.y })); }
+        // the marker is seen from above with y running down the fabric width: an unmirrored part is turned over in y so that it looks
+        // as it does on the pattern sheet (y up there); the other part of a pair is its mirror image
+        const fy = mirror ? 1 : -1;
+        const T0 = (q: Vec): Vec => { const r = rotP(q, ang); return { x: r.x, y: r.y * fy }; };
+        let pts = src.map(T0);
         const b = polyBox(pts);
-        pts = pts.map(q => ({ x: q.x - b.x0, y: q.y - b.y0 }));
-        if (signedArea(pts) < 0) pts.reverse();
-        let grain: [Vec, Vec] = [{ x: gl[0].x - b.x0, y: gl[0].y - b.y0 }, { x: gl[1].x - b.x0, y: gl[1].y - b.y0 }];
-        // block fuse: the part is laid as a block (its box grown by the margin); the outline is kept for the drawing
-        const bm = Math.max(0, o.block?.[piece.id] ?? 0);
-        let inner: Vec[] | undefined;
+        let sh = { x: -b.x0, y: -b.y0 };
+        // block fuse: the part is laid as a block (its box grown by the margin). Buffer: the outline grown by the margin keeps the
+        // room around the part clear. In both the real outline is kept inside.
+        const bm = Math.max(0, o.block?.[piece.id] ?? 0), bf = bm > 0 ? 0 : Math.max(0, o.buffer?.[piece.id] ?? 0);
+        let inner: Vec[] | undefined, hold: 'block' | 'buffer' | undefined;
         if (bm > 0) {
+          sh = { x: bm - b.x0, y: bm - b.y0 }; inner = pts.map(q => ({ x: q.x + sh.x, y: q.y + sh.y })); hold = 'block';
           const w = b.x1 - b.x0 + 2 * bm, hh = b.y1 - b.y0 + 2 * bm;
-          inner = pts.map(q => ({ x: q.x + bm, y: q.y + bm }));
-          grain = [{ x: grain[0].x + bm, y: grain[0].y + bm }, { x: grain[1].x + bm, y: grain[1].y + bm }];
           pts = [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: hh }, { x: 0, y: hh }];
-        }
+        } else if (bf > 0) {
+          let grown: Vec[] = []; try { grown = offsetOutward(pts, bf, 'miter'); } catch { grown = []; }
+          if (grown.length > 2) {
+            const gb = polyBox(grown); sh = { x: -gb.x0, y: -gb.y0 };
+            inner = pts.map(q => ({ x: q.x + sh.x, y: q.y + sh.y })); hold = 'buffer';
+            pts = grown.map(q => ({ x: q.x + sh.x, y: q.y + sh.y }));
+          } else pts = pts.map(q => ({ x: q.x + sh.x, y: q.y + sh.y }));
+        } else pts = pts.map(q => ({ x: q.x + sh.x, y: q.y + sh.y }));
+        if (signedArea(pts) < 0) pts.reverse();
+        const T = (q: Vec): Vec => { const r = T0(q); return { x: r.x + sh.x, y: r.y + sh.y }; };
+        const grain: [Vec, Vec] = [T(g.a), T(g.b)];
+        const sew = rp.cut.length > 2 && rp.sew.pts.length > 2 ? rp.sew.pts.map(T) : undefined;
+        const lines = rp.internals.filter(c => c.pts.length > 1).map(c => (c.closed ? [...c.pts, c.pts[0]] : c.pts).map(T));
+        const desc = piece.description?.trim() || undefined;
         const area = Math.abs(signedArea(pts));
         for (let bn = 1; bn <= n; bn++) for (let k = 1; k <= qty; k++) {
-          out.push({ id: [piece.id, sid, bn, k, mirror ? 'm' : 'n'].join('|'), pieceId: piece.id, name: piece.name, sizeId: sid, sizeName, bundle: bn, mirror, angles, poly: pts, grain, area, material: mat, ...(inner ? { inner } : {}) });
+          out.push({ id: [piece.id, sid, bn, k, mirror ? 'm' : 'n'].join('|'), pieceId: piece.id, name: piece.name, sizeId: sid, sizeName, bundle: bn, mirror, angles, poly: pts, grain, area, material: mat, code: `${sizeName}-${bn}`, ...(inner ? { inner, hold } : {}), ...(sew ? { sew } : {}), ...(lines.length ? { lines } : {}), ...(desc ? { desc } : {}) });
         }
       }
     }
@@ -363,37 +397,84 @@ export function nestResult(sol: string | { strip_width: number; layout: { placed
 
 // ───────────────────────── export ─────────────────────────
 
-/** Marker as DXF (R12, mm): fabric outline on layer FABRIC, every part as a closed polyline on CUT, its name and size on TEXT, grain on GRAIN. */
-export function markerDXF(parts: MarkerPart[], pl: Placements, width: number, name = 'MARKER'): string {
+/** The outline that is cut for a part: the block of a block-fuse part, otherwise its own outline. */
+export function cutOutline(p: MarkerPart): Vec[] { return p.hold === 'buffer' && p.inner ? p.inner : p.poly; }
+/** Total length cut on the marker: the cut outlines of every laid part (mm). */
+export function markerPerimeter(parts: MarkerPart[], pl: Placements): number {
+  let L = 0;
+  for (const p of parts) { if (!pl[p.id]) continue; const o = cutOutline(p); for (let i = 0; i < o.length; i++) { const a = o[i], b = o[(i + 1) % o.length]; L += Math.hypot(b.x - a.x, b.y - a.y); } }
+  return L;
+}
+/** The lines written on a part, by the annotation settings. */
+export function partLabel(p: MarkerPart, a: MarkerAnnot, styleName = ''): string[] {
+  const one = [a.style && styleName ? styleName : '', a.piece ? p.name + (p.mirror ? ' (M)' : '') : '', a.size ? p.sizeName : '', a.bundle ? p.code : ''].filter(Boolean).join(' ');
+  return [one, a.desc && p.desc ? p.desc : ''].filter(Boolean);
+}
+/** The facts written at the marker border, by the annotation settings. */
+export function borderText(parts: MarkerPart[], pl: Placements, width: number, a: MarkerAnnot, o: { name?: string; ratio?: string } = {}): string {
   const st = markerStats(parts, pl, width);
+  return [a.bName && o.name ? o.name : '', a.bRatio && o.ratio ? o.ratio : '', a.bLength ? `L ${st.length.toFixed(0)} mm` : '', a.bWidth ? `W ${width.toFixed(0)} mm` : '',
+    a.bEff ? `EFF ${(st.efficiency * 100).toFixed(2)}%` : '', a.bPerim ? `PERIM ${(markerPerimeter(parts, pl) / 1000).toFixed(2)} m` : ''].filter(Boolean).join('   ');
+}
+export interface MarkerOut { annot?: Partial<MarkerAnnot>; name?: string; ratio?: string; styleName?: string }
+
+/**
+ * Marker as DXF (R12, mm, y up as on a plotter). Layers: FABRIC (border), CUT (outlines to cut), BLOCK (block-fuse blocks), SEAM (sew
+ * lines), INTERNAL / INTCUT (internal lines drawn / cut), GRAIN, TEXT. What is written follows the annotation settings.
+ */
+export function markerDXF(parts: MarkerPart[], pl: Placements, width: number, name = 'MARKER', o: MarkerOut = {}): string {
+  const a = { ...DEFAULT_ANNOT, ...(o.annot ?? {}) }, st = markerStats(parts, pl, width);
+  const Y = (v: Vec): Vec => ({ x: v.x, y: width - v.y });
   const L: (string | number)[] = [0, 'SECTION', 2, 'HEADER', 9, '$INSUNITS', 70, 4, 0, 'ENDSEC', 0, 'SECTION', 2, 'ENTITIES'];
   const poly = (pts: Vec[], layer: string, closed: boolean) => {
     L.push(0, 'POLYLINE', 8, layer, 66, 1, 70, closed ? 1 : 0);
-    for (const q of pts) L.push(0, 'VERTEX', 8, layer, 10, q.x.toFixed(3), 20, q.y.toFixed(3));
+    for (const q of pts.map(Y)) L.push(0, 'VERTEX', 8, layer, 10, q.x.toFixed(3), 20, q.y.toFixed(3));
     L.push(0, 'SEQEND');
   };
-  poly([{ x: 0, y: 0 }, { x: st.length, y: 0 }, { x: st.length, y: width }, { x: 0, y: width }], 'FABRIC', true);
+  const text = (at: Vec, hgt: number, t: string) => { const q = Y(at); L.push(0, 'TEXT', 8, 'TEXT', 10, q.x.toFixed(3), 20, q.y.toFixed(3), 40, hgt, 1, t); };
+  if (a.border) poly([{ x: 0, y: 0 }, { x: st.length, y: 0 }, { x: st.length, y: width }, { x: 0, y: width }], 'FABRIC', true);
   for (const p of parts) {
     const q = pl[p.id]; if (!q) continue;
-    const pts = placedPoly(p, q), b = polyBox(pts);
-    poly(pts, p.inner ? 'BLOCK' : 'CUT', true);
-    if (p.inner) poly(p.inner.map(v => placedPoint(q, v)), 'CUT', true);
-    poly([placedPoint(q, p.grain[0]), placedPoint(q, p.grain[1])], 'GRAIN', false);
-    L.push(0, 'TEXT', 8, 'TEXT', 10, ((b.x0 + b.x1) / 2).toFixed(3), 20, ((b.y0 + b.y1) / 2).toFixed(3), 40, 8, 1, `${p.name} ${p.sizeName}${p.mirror ? ' (M)' : ''}`);
+    const at = (v: Vec) => placedPoint(q, v), b = polyBox(placedPoly(p, q));
+    if (p.hold === 'block') { poly(p.poly.map(at), 'BLOCK', true); if (p.inner) poly(p.inner.map(at), 'CUT', true); }
+    else poly(cutOutline(p).map(at), 'CUT', true);
+    if (a.seam && p.sew) poly(p.sew.map(at), 'SEAM', true);
+    if (a.internals !== 'none') for (const ln of p.lines ?? []) poly(ln.map(at), a.internals === 'cut' ? 'INTCUT' : 'INTERNAL', false);
+    if (a.grain) poly([at(p.grain[0]), at(p.grain[1])], 'GRAIN', false);
+    partLabel(p, a, o.styleName).forEach((t, i) => text({ x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 + i * 11 }, 8, t));
   }
-  L.push(0, 'TEXT', 8, 'TEXT', 10, 0, 20, (width + 12).toFixed(3), 40, 12, 1, `${name}  W ${width.toFixed(0)} mm  L ${st.length.toFixed(0)} mm  EFF ${(st.efficiency * 100).toFixed(2)}%`);
+  const bt = a.border ? borderText(parts, pl, width, a, { name: o.name ?? name, ratio: o.ratio }) : '';
+  if (bt) text({ x: 0, y: -12 }, 12, bt);
   L.push(0, 'ENDSEC', 0, 'EOF');
   return L.join('\n') + '\n';
 }
-/** Marker as HPGL / PLT (40 units per mm): every placed part as one closed pen path. */
-export function markerHPGL(parts: MarkerPart[], pl: Placements): string {
-  const u = (v: number) => Math.round(v * 40);
-  const out = ['IN;', 'SP1;'];
+/**
+ * Marker as a plot file (HPGL / .plt, 40 units per mm, y up). Pen 1 cuts: the outline of every laid part (the block of a block-fuse
+ * part, and its outline), and the internal lines when they are set to cut. Pen 2 draws: seam lines, drawn internal lines, grain lines,
+ * the text on the parts, the marker border and its facts, as far as the annotation settings ask for them.
+ */
+export function markerHPGL(parts: MarkerPart[], pl: Placements, width = 0, o: MarkerOut = {}): string {
+  const a = { ...DEFAULT_ANNOT, ...(o.annot ?? {}) };
+  const st = markerStats(parts, pl, width || 1);
+  const H = width || parts.reduce((m, p) => { const q = pl[p.id]; return q ? Math.max(m, polyBox(placedPoly(p, q)).y1) : m; }, 0);
+  const u = (v: number) => Math.round(v * 40), Y = (v: Vec): Vec => ({ x: v.x, y: H - v.y });
+  const path = (pts: Vec[], closed: boolean) => { const q = pts.map(Y); return [`PU${u(q[0].x)},${u(q[0].y)};`, 'PD' + [...q.slice(1), ...(closed ? [q[0]] : [])].map(v => `${u(v.x)},${u(v.y)}`).join(',') + ';']; };
+  const label = (at: Vec, mm: number, t: string) => { const q = Y(at); return [`PU${u(q.x)},${u(q.y)};`, 'DI1,0;', `SI${(mm * 0.07).toFixed(3)},${(mm * 0.1).toFixed(3)};`, `LB${t.replace(/[\x00-\x1f;]/g, ' ')}\x03`]; };
+  const cut: string[] = [], draw: string[] = [];
   for (const p of parts) {
     const q = pl[p.id]; if (!q) continue;
-    const pts = placedPoly(p, q);
-    out.push(`PU${u(pts[0].x)},${u(pts[0].y)};`, 'PD' + [...pts.slice(1), pts[0]].map(v => `${u(v.x)},${u(v.y)}`).join(',') + ';');
+    const at = (v: Vec) => placedPoint(q, v), b = polyBox(placedPoly(p, q));
+    if (p.hold === 'block') { cut.push(...path(p.poly.map(at), true)); if (p.inner) cut.push(...path(p.inner.map(at), true)); }
+    else cut.push(...path(cutOutline(p).map(at), true));
+    if (a.internals !== 'none') for (const ln of p.lines ?? []) (a.internals === 'cut' ? cut : draw).push(...path(ln.map(at), false));
+    if (a.seam && p.sew) draw.push(...path(p.sew.map(at), true));
+    if (a.grain) draw.push(...path([at(p.grain[0]), at(p.grain[1])], false));
+    partLabel(p, a, o.styleName).forEach((t, i) => draw.push(...label({ x: b.x0 + (b.x1 - b.x0) * 0.25, y: (b.y0 + b.y1) / 2 + 6 + i * 9 }, 6, t)));
   }
-  out.push('PU0,0;', 'SP0;');
-  return out.join('\n') + '\n';
+  if (a.border && width) {
+    draw.push(...path([{ x: 0, y: 0 }, { x: st.length, y: 0 }, { x: st.length, y: width }, { x: 0, y: width }], true));
+    const bt = borderText(parts, pl, width, a, { name: o.name, ratio: o.ratio });
+    if (bt) draw.push(...label({ x: 0, y: -4 }, 9, bt));
+  }
+  return ['IN;', 'SP1;', ...cut, ...(draw.length ? ['SP2;', ...draw] : []), 'PU0,0;', 'SP0;'].join('\n') + '\n';
 }
