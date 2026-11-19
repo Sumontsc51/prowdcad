@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { Document } from '../src/model/doc';
 import { makeStyle, makePiece, rectangleContour, makeContour, gradePoint } from '../src/model/factory';
+import { switchMarkerMaterial, type MarkerDoc } from '../src/marker/marker';
 import { directedParts, obeyDirection, groupMayTurn, directionGroup, throwParts, autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placeAt, placedPoly, polyBox, nestJob, nestResult, markerDXF, markerHPGL, simplifyClosed } from '../src/marker/marker';
 
 describe('cut plan', () => {
@@ -215,5 +216,19 @@ describe('parts lying exactly on top of each other', () => {
     const r = throwParts([a, b], pl, 1000, [b.id], { x: 1, y: 0.3 })!;
     expect(r).not.toBeNull();
     expect(markerProblems([a, b], { ...pl, ...r }, 1000).size).toBe(0);
+  });
+});
+
+describe('a cut plan per material', () => {
+  it('switching the material keeps each plan apart and brings it back', () => {
+    const d: MarkerDoc = { order: { M: 10 }, maxPlies: 50, maxBundles: 6, width: 1500, gap: 0, material: 'SELF', nestSeconds: 30, rows: [{ id: 'a', name: 'Marker 1', ratio: { M: 2 }, plies: 5, placements: {}, width: 1500 }] };
+    switchMarkerMaterial(d, 'LINING');
+    expect(d.material).toBe('LINING'); expect(d.rows).toEqual([]); expect(d.maxPlies).toBe(50); expect(d.order).toEqual({ M: 10 });
+    d.rows.push({ id: 'b', name: 'Marker 1', ratio: { M: 1 }, plies: 10, placements: {}, width: 1400 }); d.maxPlies = 80;
+    switchMarkerMaterial(d, 'SELF');
+    expect(d.rows.map(r => r.id)).toEqual(['a']); expect(d.maxPlies).toBe(50);
+    expect(d.others!.LINING.rows[0].width).toBe(1400);
+    switchMarkerMaterial(d, 'LINING');
+    expect(d.rows.map(r => r.id)).toEqual(['b']); expect(d.maxPlies).toBe(80); expect(d.others!.LINING).toBeUndefined();
   });
 });
