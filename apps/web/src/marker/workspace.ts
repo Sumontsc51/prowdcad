@@ -162,9 +162,11 @@ export function openMarker(app: App) {
   };
   const centre = (b: { x0: number; y0: number; x1: number; y1: number }): Vec => ({ x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 });
   /** the parts married to a part (itself included) */
-  const marriedTo = (id: string): Set<string> => {
+  const marriedTo = (id: string, solo = false): Set<string> => {
     // married parts and the parts of a fuse block move as one
     const out = new Set([id]), groups = [...(row()?.marry ?? []), ...(row()?.blocks ?? []).map(b => b.ids)];
+    // shade zones: the laid major pieces of a bundle move together, so the bundle can be taken to another zone as it lies (Ctrl+click = one piece alone)
+    if (shade() && !solo) { const laid = row()?.placements ?? {}, by = new Map<string, string[]>(); for (const p of parts) if (p.major && !p.fuse && laid[p.id]) { const k = p.sizeId + '|' + p.bundle; by.set(k, [...(by.get(k) ?? []), p.id]); } groups.push(...by.values()); }
     for (let grew = true; grew;) { grew = false; for (const g of groups) if (g.some(q => out.has(q)) && g.some(q => !out.has(q))) { g.forEach(q => out.add(q)); grew = true; } }
     return out;
   };
@@ -177,7 +179,7 @@ export function openMarker(app: App) {
     const ru = rule(), p = parts.find(q => q.id === id); if (!p) return;
     if (ru !== 'bundle' && ru !== 'piece') { toast(`"${RULES.find(x => x[0] === ru)![1]}" does not let parts be turned`, 'warn'); return; }
     if (ru === 'bundle' && !r180()) { toast('Rotate 180° is off: tick it at the top to turn parts with a right-click', 'warn'); return; }
-    const wed = marriedTo(id), rigid = parts.filter(q => wed.has(q.id));
+    const wed = carry ? new Set(carry.ids) : marriedTo(id), rigid = parts.filter(q => wed.has(q.id));
     let group = rigid.slice();
     if (ru === 'bundle') {
       const gs = new Set(rigid.map(q => directionGroup(q, ru)));
@@ -777,7 +779,7 @@ export function openMarker(app: App) {
     const el = run ? Math.min(run.seconds, (performance.now() - run.startedAt) / 1000) : 0;
     stat.textContent = [r.name, `${st.placed} of ${st.parts} parts laid`, `length ${fmt(st.length)} ${unitLabel()}`, `efficiency ${(st.efficiency * 100).toFixed(2)} %`,
       `${r.plies} plies = ${(st.length * r.plies / 1000).toFixed(2)} m of fabric`, `perimeter ${(markerPerimeter(parts, pls(), blks()) / 1000).toFixed(2)} m`, blks().length ? `${blks().length} fuse block${blks().length > 1 ? 's' : ''}` : '', bad.size ? `⚠ ${bad.size} part${bad.size > 1 ? 's' : ''} overlapping, inside a block or off the fabric` : '', off.size ? `⚠ ${off.size} part${off.size > 1 ? 's' : ''} off the stripe / plaid match` : '', shadeOff.size ? `⚠ ${shadeOff.size} major part${shadeOff.size > 1 ? 's' : ''} outside one shade zone` : '',
-      phase ? `nesting… ${phase}${run ? ` · ${Math.min(run.seconds, (performance.now() - run.startedAt) / 1000).toFixed(0)} / ${run.seconds.toFixed(0)} s` : ''}` : run ? `nesting… ${el.toFixed(0)} / ${run.seconds} s on ${run.threads} thread${run.threads > 1 ? 's' : ''}` : carry ? 'Carrying: click = put down · press and pull = aim, let go = shoot · right-click = turn 180° · Esc = put back' : 'Click a part to pick it up · press and pull = aim, let go = shoot · right-click = turn 180° · Shift+click or draw a box = select · [ ] = tilt'].filter(Boolean).join('  ·  ');
+      phase ? `nesting… ${phase}${run ? ` · ${Math.min(run.seconds, (performance.now() - run.startedAt) / 1000).toFixed(0)} / ${run.seconds.toFixed(0)} s` : ''}` : run ? `nesting… ${el.toFixed(0)} / ${run.seconds} s on ${run.threads} thread${run.threads > 1 ? 's' : ''}` : carry ? 'Carrying: click = put down · press and pull = aim, let go = shoot · right-click = turn 180° · Esc = put back' : `Click a part to pick it up${shade() ? ' (the major pieces of its bundle come with it · Ctrl+click = that piece alone)' : ''} · press and pull = aim, let go = shoot · right-click = turn 180° · Shift+click or draw a box = select · [ ] = tilt`].filter(Boolean).join('  ·  ');
   }
   function drawSvg() {
     const p0 = pls(), fw = wd(), bk = blks(), st = markerStats(parts, p0, fw, bk);
@@ -868,8 +870,8 @@ export function openMarker(app: App) {
   // ── pointer: pick up, carry, aim and shoot, put down; pan and zoom
   /** where the carried parts are right now */
   const carried = (): Placements => { const o: Placements = {}; if (carry) for (const id of carry.ids) o[id] = { ...carry.base[id], x: carry.base[id].x + carry.shift.x, y: carry.base[id].y + carry.shift.y }; return o; };
-  function pickUp(id: string, at: Vec) {
-    const wed = marriedTo(id), baseP: Placements = {};
+  function pickUp(id: string, at: Vec, solo = false) {
+    const wed = marriedTo(id, solo), baseP: Placements = {};
     for (const p of parts) if (wed.has(p.id)) { const q = pls()[p.id] ?? tray[p.id]; if (q) baseP[p.id] = { ...q, ...(pls()[p.id] ? {} : { rot: groupRot(p, pls()) }) }; }
     if (!baseP[id]) return;
     sel = new Set(Object.keys(baseP));
@@ -928,7 +930,7 @@ export function openMarker(app: App) {
     if (busy()) { toast('Stop the nester (■) before moving parts by hand', 'warn'); return; }
     const id = g.dataset.part!;
     if (e.shiftKey) { if (sel.has(id)) sel.delete(id); else sel.add(id); draw(); return; }
-    pickUp(id, evW(e)); press = { x: e.clientX, y: e.clientY }; svg.setPointerCapture(e.pointerId);
+    pickUp(id, evW(e), e.ctrlKey || e.metaKey); press = { x: e.clientX, y: e.clientY }; svg.setPointerCapture(e.pointerId);
   });
   svg.addEventListener('pointermove', e => {
     if (pan) { view.ox += e.clientX - pan.x; view.oy += e.clientY - pan.y; pan = { x: e.clientX, y: e.clientY }; cancelAnimationFrame(raf); raf = requestAnimationFrame(() => drawSvg()); return; }
