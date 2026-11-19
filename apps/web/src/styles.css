@@ -617,3 +617,11 @@ table.sg tr.out { display: none; }
 .mk-part.block > path:first-child { fill-opacity: .12; stroke-dasharray: 3 3; }
 .mk-inner { fill: var(--c); fill-opacity: .32; stroke: var(--c); stroke-width: 1; pointer-events: none; }
 .mk-hint { max-width: 900px; }
+.mk-foldrow { display: flex; align-items: center; gap: 14px; }
+.mk-foldrow .mk-h { flex: none; white-space: nowrap; }
+.mk-tabs { display: flex; gap: 3px; overflow-x: auto; min-width: 0; padding: 1px 0; }
+.mk-tab { flex: none; display: flex; align-items: center; gap: 7px; padding: 4px 11px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px 6px 0 0; background: none; color: var(--dim); font: 11px var(--sans); cursor: pointer; white-space: nowrap; }
+.mk-tab:hover { color: var(--text); background: var(--panel2); }
+.mk-tab.on { color: var(--text); border-bottom-color: var(--accent); background: rgba(78,161,255,.14); font-weight: 600; }
+.mk-tab-s { font: 10px var(--mono); font-weight: 400; color: var(--dim); }
+.mk-tab.done .mk-tab-s { color: #3fae6a; }
