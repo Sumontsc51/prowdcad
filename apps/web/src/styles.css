@@ -668,3 +668,12 @@ table.sg tr.out { display: none; }
 .mk-mline { fill: none; stroke: #b3329e; stroke-width: 1.8; pointer-events: none; }
 .mk-mcode { fill: #8a1f78; font: 600 9px var(--mono); pointer-events: none; }
 .mk-part.off > path:first-child { stroke: #b3329e; stroke-width: 2.6; stroke-dasharray: 3 2; }
+.mk-shade { pointer-events: none; }
+.mk-shade line { stroke: #0e8f7e; stroke-width: 1.6; }
+.mk-shade line.col { stroke-dasharray: 8 5; stroke-width: 1.1; opacity: .8; }
+.mk-shade rect.ov { fill: rgba(14,143,126,.10); }
+.mk-shade rect.bz { fill: none; stroke: #0e8f7e; stroke-width: 1.2; stroke-dasharray: 2 3; }
+.mk-shade rect.bz.bad { stroke: #d1242f; stroke-width: 2; }
+.mk-shade text { fill: #0b6f62; font: 600 10px var(--mono); }
+.mk-shade text.bad { fill: #d1242f; }
+.mk-part.shadeoff > path:first-child { stroke: #d1242f; stroke-width: 2.6; stroke-dasharray: 8 3; }
