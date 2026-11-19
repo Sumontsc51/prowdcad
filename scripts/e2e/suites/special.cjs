@@ -387,7 +387,7 @@ async function nested(h, fixtures) {
         pass: g0 === 0 && /"stripe":130/.test(a.match) && /"plaid1":25/.test(a.match) && a.grid > 4 && a.first === 2 && a.mlines === 2 && a.codes === 'M1' && b.laid === 1 && b.off === 0 && c.laid === c.parts && c.off === 0 && c.bad === 0 && /match/.test(toasts) && d.grid === 0 && d.match === '{}' });
     } catch (err) { return done({ got: `after ${stage}: ${String(err.message || err).split('\n')[0]} · toasts ${JSON.stringify(await h.ev(() => window.__e2e.toasts.slice(-3)))}`, pass: false }); }
   });
-  await T('Marker making: shade zones by rows (the width divided by a number) and columns (bundle end or a length) with overlaps; ▶ lays the major pieces of every bundle within one zone; the major pieces of a bundle are picked up and moved together (Ctrl+click = one alone); a major piece moved out of its zone is flagged; a column too short for a bundle is reported', async () => {
+  await T('Marker making: shade zones by rows (the width divided by a number) and columns (bundle end or a length) with overlaps; ▶ lays the major pieces of every bundle within one zone; all pieces are laid in one compact nest; Ctrl+click moves the major pieces of a bundle together; a major piece moved out of its zone is flagged; a column too short for a bundle is reported', async () => {
     const P = h.page;
     await h.ev(() => { const E = window.__e2e; void E.C.runCommand('marker.open'); }); await P.waitForSelector('.mk-root'); await h.settle(150);
     const done = async r => { await h.ev(() => { document.querySelector('.mk-root')?.closeMarker?.(); const E = window.__e2e; E.app.doc.transact('clear marker', s => { delete s.meta.marker; }); }); return r; };
@@ -407,14 +407,14 @@ async function nested(h, fixtures) {
       const t1 = await nest(); const b = await st(); stage = 'nest';
       // the rows of the two bundles
       const rows = await h.ev(() => { const m = window.__e2e.app.style.meta.marker, r = m.rows[0], w = r.width, by = {}; for (const [id, q] of Object.entries(r.placements)) { const k = id.split('|').slice(1, 3).join('|'); (by[k] = by[k] || []).push(q.y); } return Object.values(by).map(ys => (Math.min(...ys) < w / 2 - 200 ? 'top' : 'bottom')).join(); });
-      // picking up a major piece brings the major pieces of its bundle with it; Ctrl+click takes one piece alone; the bundle can be put down in the other zone
+      // Ctrl+click on a major piece brings the major pieces of its bundle with it; a plain click takes one piece; the bundle can be put down elsewhere
       const mp = await P.locator('.mk-part.major').first().boundingBox(), fabB = await P.locator('.mk-fabric').boundingBox();
-      await P.mouse.click(mp.x + mp.width / 2, mp.y + mp.height / 2); await h.settle(80); const together = await P.locator('.mk-part.carry').count();
+      await P.keyboard.down('Control'); await P.mouse.click(mp.x + mp.width / 2, mp.y + mp.height / 2); await P.keyboard.up('Control'); await h.settle(80); const together = await P.locator('.mk-part.carry').count();
       await P.mouse.move(fabB.x + fabB.width * 0.8, mp.y + mp.height / 2 + 4, { steps: 4 }); await P.mouse.click(fabB.x + fabB.width * 0.8, mp.y + mp.height / 2 + 4); await h.settle(200);
       const afterMove = await st();
       await h.ev(() => window.__e2e.app.doc.undo()); await h.ev(() => document.querySelector('.mk-svg').dispatchEvent(new KeyboardEvent('keydown', { key: 'f', bubbles: true }))); await P.locator('[data-mk="fit"]').click(); await h.settle(200);
       const mp2 = await P.locator('.mk-part.major').first().boundingBox();
-      await P.keyboard.down('Control'); await P.mouse.click(mp2.x + mp2.width / 2, mp2.y + mp2.height / 2); await P.keyboard.up('Control'); await h.settle(80); const alone = await P.locator('.mk-part.carry').count(); await h.key('Escape'); await h.settle(80);
+      await P.mouse.click(mp2.x + mp2.width / 2, mp2.y + mp2.height / 2); await h.settle(80); const alone = await P.locator('.mk-part.carry').count(); await h.key('Escape'); await h.settle(80);
       // move one major piece into the other row
       await h.ev(() => { const E = window.__e2e; E.app.doc.transact('move', s => { const r = s.meta.marker.rows[0], id = Object.keys(r.placements).find(k => r.placements[k].y < r.width / 2 - 200) || Object.keys(r.placements)[0]; r.placements[id].y += r.width / 2; r.placements[id].x += 3000; }); });
       await P.locator('[data-mk="fit"]').click(); await h.settle(200);
@@ -422,7 +422,7 @@ async function nested(h, fixtures) {
       await setShade({ colBy: 'length', colLength: (150 * f).toFixed(3) });
       const d0 = await st(); const t2 = await nest(); stage = 'short column';
       await setShade({ on: false }); const e = await st();
-      return done({ got: `set ${a.shade}: ${a.rowLines} row line, ${a.ov} overlap band; nest "${t1}": laid ${b.laid}/${b.parts}, bundle boxes ${b.boxes} (${b.badBoxes} bad), outside zone ${b.off}, overlapping ${b.bad}, bundles in rows ${rows}; picked up together ${together} (moved as a bundle: laid ${afterMove.laid}, outside zone ${afterMove.off}), Ctrl+click alone ${alone}; one piece moved: ${c.off} flagged, ${c.badBoxes} bad box; columns by length: ${d0.cols} column lines, nest → "${t2}"; off: ${e.rowLines} lines`,
+      return done({ got: `set ${a.shade}: ${a.rowLines} row line, ${a.ov} overlap band; nest "${t1}": laid ${b.laid}/${b.parts}, bundle boxes ${b.boxes} (${b.badBoxes} bad), outside zone ${b.off}, overlapping ${b.bad}, bundles in rows ${rows}; Ctrl+click takes the bundle's major pieces together ${together} (moved as a bundle: laid ${afterMove.laid}, outside zone ${afterMove.off}), a plain click one piece ${alone}; one piece moved: ${c.off} flagged, ${c.badBoxes} bad box; columns by length: ${d0.cols} column lines, nest → "${t2}"; off: ${e.rowLines} lines`,
         pass: /"rows":2/.test(a.shade) && /"colBy":"bundle"/.test(a.shade) && /"rowOverlap":10/.test(a.shade) && a.rowLines === 1 && a.ov === 1 && /shade row/.test(t1) && b.laid === b.parts && b.boxes === 2 && b.badBoxes === 0 && b.off === 0 && b.bad === 0 && rows.split(',').sort().join() === 'bottom,top'
           && together === 2 && afterMove.laid === afterMove.parts && afterMove.off === 0 && alone === 1
           && c.off >= 2 && c.badBoxes >= 1 && d0.cols > 2 && /longer than a shade column/.test(t2) && e.rowLines === 0 });
