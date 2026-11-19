@@ -7,7 +7,7 @@
  */
 import {
   autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placedPoly, placedPoint, polyBox, placeAt, nestJob,
-  markerDXF, markerHPGL, partLabel, markerPerimeter, DEFAULT_ANNOT, type MarkerAnnot, blockOutline, blockPart, blockBins, blockRoom, facing, borderLines, borderLayout, partTemplate, markerTemplate, DEFAULT_BLOCKSET,
+  markerDXF, markerHPGL, partLabel, markerPerimeter, DEFAULT_ANNOT, type MarkerAnnot, blockOutline, blockPart, blockBins, contourAround, cutOutline, blockRoom, facing, borderLines, borderLayout, partTemplate, markerTemplate, DEFAULT_BLOCKSET,
   type MarkerBlock, type PieceDetail, type BlockSet, type AnnotUnit, type AnnotPlace, switchMarkerMaterial, directedParts, obeyDirection, directionGroup, groupMayTurn, throwParts, type MarkerDirection, type MarkerDoc, type MarkerRow, type MarkerPart, type Placements, type Placement, type Vec,
 } from '@prowdcad/kernel';
 import type { App } from '../app';
@@ -286,7 +286,29 @@ export function openMarker(app: App) {
     const stand: Stand[] = [];
     // blocks made by hand stay as they are
     const kept = (r.blocks ?? []).filter(b => !b.auto && b.ids.every(id => r.placements[id]));
-    kept.forEach((b, i) => { const bp = blockPart('#keep' + i, parts, r.placements, b); if (bp) stand.push({ ...bp, block: b }); });
+    // married parts stay married: every married group is laid as one shape (with the hand-made blocks it shares parts with)
+    const wed = (r.marry ?? []).map(g => g.filter(id => r.placements[id])).filter(g => g.length > 1);
+    const keptMarry: string[][] = [], wedStand = new Set<string>();
+    const sets: { ids: Set<string>; blocks: MarkerBlock[] }[] = [];
+    for (const g of wed) {
+      const hit = sets.filter(x => g.some(id => x.ids.has(id))), one = { ids: new Set(g), blocks: [] as MarkerBlock[] };
+      for (const x of hit) { x.ids.forEach(id => one.ids.add(id)); sets.splice(sets.indexOf(x), 1); }
+      sets.push(one); keptMarry.push(g);
+    }
+    for (const b of kept) for (const x of sets) if (b.ids.some(id => x.ids.has(id))) { b.ids.forEach(id => x.ids.add(id)); x.blocks.push(b); }
+    for (let i = 0; i < sets.length; i++) for (let j = sets.length - 1; j > i; j--) if ([...sets[j].ids].some(id => sets[i].ids.has(id))) { sets[j].ids.forEach(id => sets[i].ids.add(id)); for (const b of sets[j].blocks) if (!sets[i].blocks.includes(b)) sets[i].blocks.push(b); sets.splice(j, 1); }
+    const inSet = new Set(sets.flatMap(x => x.blocks));
+    kept.filter(b => !inSet.has(b)).forEach((b, i) => { const bp = blockPart('#keep' + i, parts, r.placements, b); if (bp) stand.push({ ...bp, block: b }); });
+    sets.forEach((x, i) => {
+      const inB = new Set(x.blocks.flatMap(b => b.ids)), mem = parts.filter(p => x.ids.has(p.id) && r.placements[p.id]); if (!mem.length) return;
+      const polys = [...x.blocks.map(b => blockOutline(parts, r.placements, b)).filter(Boolean) as Vec[][], ...mem.filter(p => !inB.has(p.id)).map(p => cutOutline(p).map(q => placedPoint(r.placements[p.id], q)))];
+      const o = contourAround(polys, 0), bb = polyBox(o), local: Placements = {};
+      for (const p of mem) local[p.id] = { x: r.placements[p.id].x - bb.x0, y: r.placements[p.id].y - bb.y0, rot: r.placements[p.id].rot };
+      const f = mem[0], id = '#wed' + i;
+      stand.push({ part: { id, pieceId: id, name: 'Married', sizeId: f.sizeId, sizeName: f.sizeName, bundle: f.bundle, mirror: false, angles: [0], poly: o.map(q => ({ x: q.x - bb.x0, y: q.y - bb.y0 })), grain: [{ x: 0, y: 0 }, { x: 1, y: 0 }], area: mem.reduce((a, p) => a + p.area, 0), material: f.material, hold: 'block', code: '' }, local, ids: mem.map(p => p.id), block: null as unknown as MarkerBlock });
+      mem.forEach(p => wedStand.add(p.id));
+      x.blocks.forEach(b => stand.push({ part: null as unknown as MarkerPart, local: {}, ids: [], block: b })); // the blocks inside stay blocks
+    });
     const inKept = new Set(stand.flatMap(x => x.ids));
     const fuse = np.filter(p => p.fuse && !inKept.has(p.id));
     runRow = r.id; live = null; liveBlocks = null; runBest = 0; aborted = false;
@@ -311,10 +333,11 @@ export function openMarker(app: App) {
       if (aborted || !done) { if (!aborted) toast('The fuse blocks could not be filled within their limits', 'error'); draw(); return; }
       done.forEach((g, i) => { const block: MarkerBlock = { ids: g.bin.map(p => p.id), shape: set.shape, buffer: set.buffer, auto: true }; const bp = blockPart('#blk' + i, parts, g.pl, block); if (bp) stand.push({ ...bp, block }); });
     }
-    const by = new Map(stand.map(x => [x.part.id, x])), inStand = new Set(stand.flatMap(x => x.ids));
-    const items = [...np.filter(p => !inStand.has(p.id)), ...stand.map(x => x.part)];
+    const solid = stand.filter(x => x.part);
+    const by = new Map(solid.map(x => [x.part.id, x])), inStand = new Set(solid.flatMap(x => x.ids));
+    const items = [...np.filter(p => !inStand.has(p.id)), ...solid.map(x => x.part)];
     const expand = (pl: Placements): Placements => { const out: Placements = {}; for (const id in pl) { const x = by.get(id); if (!x) { out[id] = pl[id]; continue; } for (const q of x.ids) out[q] = { x: x.local[q].x + pl[id].x, y: x.local[q].y + pl[id].y, rot: x.local[q].rot }; } return out; };
-    const newBlocks: MarkerBlock[] = stand.map(x => ({ ...x.block, ids: x.ids }));
+    const newBlocks: MarkerBlock[] = stand.filter(x => x.block).map(x => (x.part ? { ...x.block, ids: x.ids } : x.block));
     const job = nestJob(items, w, { gap, name: r.name });
     try {
       run = startNest(job, m.nestSeconds, {
@@ -322,7 +345,7 @@ export function openMarker(app: App) {
         onDone: info => {
           clearInterval(runTimer); const got = live; run = null; live = null; liveBlocks = null;
           if (info.error) toast('Nester stopped: ' + info.error, 'error');
-          if (got) { const id = runRow; edit('Nest marker', d => { const x = d.rows.find(q => q.id === id); if (x) { x.placements = got; delete x.marry; if (newBlocks.length) x.blocks = newBlocks; else delete x.blocks; } }); toast(`Nested: ${fmt(runBest)} ${unitLabel()} long${newBlocks.length ? ` · ${newBlocks.length} fuse block${newBlocks.length > 1 ? 's' : ''}` : ''}${info.stopped ? ' (stopped early)' : ''}`, 'ok'); }
+          if (got) { const id = runRow; edit('Nest marker', d => { const x = d.rows.find(q => q.id === id); if (x) { x.placements = got; if (keptMarry.length) x.marry = keptMarry; else delete x.marry; if (newBlocks.length) x.blocks = newBlocks; else delete x.blocks; } }); toast(`Nested: ${fmt(runBest)} ${unitLabel()} long${newBlocks.length ? ` · ${newBlocks.length} fuse block${newBlocks.length > 1 ? 's' : ''}` : ''}${info.stopped ? ' (stopped early)' : ''}`, 'ok'); }
           else draw();
         },
       });
