@@ -26,6 +26,8 @@ export type MarkerDirection = 'bundle' | 'size' | 'all' | 'piece';
 /** One marker of the cut plan: its ratio and plies, and where its parts are laid. */
 export interface MarkerRow extends CutPlanRow {
   placements: Record<string, { x: number; y: number; rot: number }>;
+  /** fabric width of this marker (mm); absent = the default width of the marker room */
+  width?: number;
   /** married parts: groups of part ids that are picked up, thrown and turned as one */
   marry?: string[][];
 }
@@ -36,6 +38,8 @@ export interface MarkerDoc {
   width: number; gap: number; material: string; nestSeconds: number;
   /** which way the parts may face (absent = 'bundle'), and whether a bundle may be turned 180° (absent = true; only used by 'bundle') */
   direction?: MarkerDirection; rot180?: boolean;
+  /** the cut plans of the other materials (the top-level limits and rows are those of `material`), keyed by material */
+  others?: Record<string, { maxPlies: number; maxBundles: number; rows: MarkerRow[] }>;
   /** block fuse: pieces cut as a block, their outline replaced by its box grown by this margin (mm), keyed by piece id */
   block?: Record<Id, number>;
   rows: MarkerRow[];
@@ -83,6 +87,21 @@ export function planTotals(sizes: SizeId[], order: Record<SizeId, number>, rows:
   const cut: Record<SizeId, number> = {}, diff: Record<SizeId, number> = {};
   for (const s of sizes) { cut[s] = rows.reduce((a, r) => a + Math.max(0, r.ratio[s] ?? 0) * Math.max(0, r.plies), 0); diff[s] = cut[s] - Math.max(0, order[s] ?? 0); }
   return { cut, diff, garments: total(cut), ordered: total(order), plies: rows.reduce((a, r) => a + Math.max(0, r.plies), 0), exact: sizes.every(s => diff[s] === 0) };
+}
+
+/**
+ * Every material has its own cut plan (limits and markers); the order is shared. Switching the material puts the
+ * current plan away under its material and brings out the plan of the new one (an empty plan with the same limits
+ * the first time).
+ */
+export function switchMarkerMaterial(d: MarkerDoc, material: string): void {
+  if (material === d.material) return;
+  const others = { ...(d.others ?? {}) };
+  others[d.material] = { maxPlies: d.maxPlies, maxBundles: d.maxBundles, rows: d.rows };
+  const next = others[material] ?? { maxPlies: d.maxPlies, maxBundles: d.maxBundles, rows: [] };
+  delete others[material];
+  d.material = material; d.maxPlies = next.maxPlies; d.maxBundles = next.maxBundles; d.rows = next.rows;
+  d.others = others;
 }
 
 // ───────────────────────── parts ─────────────────────────
