@@ -24,7 +24,11 @@ export interface CutPlanOptions { maxPlies: number; maxBundles: number }
  */
 export type MarkerDirection = 'bundle' | 'size' | 'all' | 'piece';
 /** One marker of the cut plan: its ratio and plies, and where its parts are laid. */
-export interface MarkerRow extends CutPlanRow { placements: Record<string, { x: number; y: number; rot: number }> }
+export interface MarkerRow extends CutPlanRow {
+  placements: Record<string, { x: number; y: number; rot: number }>;
+  /** married parts: groups of part ids that are picked up, thrown and turned as one */
+  marry?: string[][];
+}
 /** Everything marker making keeps with the style. */
 export interface MarkerDoc {
   order: Record<SizeId, number>; maxPlies: number; maxBundles: number;
@@ -32,6 +36,8 @@ export interface MarkerDoc {
   width: number; gap: number; material: string; nestSeconds: number;
   /** which way the parts may face (absent = 'bundle'), and whether a bundle may be turned 180° (absent = true; only used by 'bundle') */
   direction?: MarkerDirection; rot180?: boolean;
+  /** block fuse: pieces cut as a block, their outline replaced by its box grown by this margin (mm), keyed by piece id */
+  block?: Record<Id, number>;
   rows: MarkerRow[];
 }
 
@@ -91,6 +97,8 @@ export interface MarkerPart {
   grain: [Vec, Vec];
   area: number;
   material: string;
+  /** block fuse: the piece's own outline inside the block (`poly` is then the block) */
+  inner?: Vec[];
 }
 export interface Placement { x: number; y: number; rot: number }
 export type Placements = Record<string, Placement>;
@@ -110,7 +118,7 @@ export function placeAt(part: MarkerPart, x: number, y: number, rot: number): Pl
  * ratio, once per bundle and per quantity; a piece cut as a pair (side L + R) gives a mirrored part as well.
  * `material` keeps only the pieces of that material (empty = all).
  */
-export function markerParts(doc: Document, ratio: Record<SizeId, number>, o: { material?: string } = {}): MarkerPart[] {
+export function markerParts(doc: Document, ratio: Record<SizeId, number>, o: { material?: string; block?: Record<Id, number> } = {}): MarkerPart[] {
   const out: MarkerPart[] = [];
   for (const piece of doc.style.pieces) {
     const mat = piece.order?.material ?? '';
@@ -132,10 +140,19 @@ export function markerParts(doc: Document, ratio: Record<SizeId, number>, o: { m
         const b = polyBox(pts);
         pts = pts.map(q => ({ x: q.x - b.x0, y: q.y - b.y0 }));
         if (signedArea(pts) < 0) pts.reverse();
-        const grain: [Vec, Vec] = [{ x: gl[0].x - b.x0, y: gl[0].y - b.y0 }, { x: gl[1].x - b.x0, y: gl[1].y - b.y0 }];
+        let grain: [Vec, Vec] = [{ x: gl[0].x - b.x0, y: gl[0].y - b.y0 }, { x: gl[1].x - b.x0, y: gl[1].y - b.y0 }];
+        // block fuse: the part is laid as a block (its box grown by the margin); the outline is kept for the drawing
+        const bm = Math.max(0, o.block?.[piece.id] ?? 0);
+        let inner: Vec[] | undefined;
+        if (bm > 0) {
+          const w = b.x1 - b.x0 + 2 * bm, hh = b.y1 - b.y0 + 2 * bm;
+          inner = pts.map(q => ({ x: q.x + bm, y: q.y + bm }));
+          grain = [{ x: grain[0].x + bm, y: grain[0].y + bm }, { x: grain[1].x + bm, y: grain[1].y + bm }];
+          pts = [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: hh }, { x: 0, y: hh }];
+        }
         const area = Math.abs(signedArea(pts));
         for (let bn = 1; bn <= n; bn++) for (let k = 1; k <= qty; k++) {
-          out.push({ id: [piece.id, sid, bn, k, mirror ? 'm' : 'n'].join('|'), pieceId: piece.id, name: piece.name, sizeId: sid, sizeName, bundle: bn, mirror, angles, poly: pts, grain, area, material: mat });
+          out.push({ id: [piece.id, sid, bn, k, mirror ? 'm' : 'n'].join('|'), pieceId: piece.id, name: piece.name, sizeId: sid, sizeName, bundle: bn, mirror, angles, poly: pts, grain, area, material: mat, ...(inner ? { inner } : {}) });
         }
       }
     }
@@ -203,12 +220,12 @@ export function throwParts(parts: MarkerPart[], pl: Placements, width: number, i
   const end = still.reduce((a, s) => Math.max(a, s.box.x1), 0);
   const reach = gap + tol;
   const deep = (pts: Vec[], poly: Vec[], dx: number, dy: number) => pts.some(q => { const v = { x: q.x + dx, y: q.y + dy }; return pointInPolygon(v, poly) ? distToPolygon(v, poly) > tol : gap > 0 && distToPolygon(v, poly) < gap - tol; });
-  const fits = (t: number): boolean => {
+  const fits = (t: number, cap = true): boolean => {
     const dx = d.x * t, dy = d.y * t;
     for (const m of movers) {
       const b = { x0: m.box.x0 + dx, y0: m.box.y0 + dy, x1: m.box.x1 + dx, y1: m.box.y1 + dy };
       if (b.y0 < -tol || b.y1 > width + tol || b.x0 < -tol) return false;
-      if (d.x > 0.05 && t > 0 && b.x0 > end + tol) return false; // along the fabric: not past the end of the marker
+      if (cap && d.x > 0.05 && t > 0 && b.x0 > end + tol) return false; // along the fabric: not past the end of the marker
       for (const s of still) {
         if (b.x1 < s.box.x0 - reach + tol * 2 || s.box.x1 < b.x0 - reach + tol * 2 || b.y1 < s.box.y0 - reach + tol * 2 || s.box.y1 < b.y0 - reach + tol * 2) continue;
         s.smp ??= samples(s.poly, 8);
@@ -219,7 +236,7 @@ export function throwParts(parts: MarkerPart[], pl: Placements, width: number, i
   };
   const far = 3 * (width + end) + 4000;
   let t = 0;
-  if (!fits(0)) { for (t = 5; t <= far && !fits(t); t += 5); if (t > far) return null; }
+  if (!fits(0, false)) { for (t = 5; t <= far && !fits(t, false); t += 5); if (t > far) return null; }
   for (const step of [40, 8, 1.6, 0.3, 0.05]) while (t + step <= far && fits(t + step)) t += step;
   const out: Placements = {};
   for (const m of movers) out[m.id] = { ...pl[m.id], x: pl[m.id].x + d.x * t, y: pl[m.id].y + d.y * t };
@@ -247,6 +264,10 @@ function samples(pts: Vec[], step: number): Vec[] {
     const a = pts[i], b = pts[(i + 1) % pts.length]; const L = Math.hypot(b.x - a.x, b.y - a.y), n = Math.max(1, Math.ceil(L / step));
     for (let k = 0; k < n; k++) out.push({ x: a.x + (b.x - a.x) * k / n, y: a.y + (b.y - a.y) * k / n });
   }
+  // and a few points well inside, so that a part lying exactly on top of another (no outline point inside the other) is found too
+  let cx = 0, cy = 0; for (const q of pts) { cx += q.x; cy += q.y; } cx /= pts.length; cy /= pts.length;
+  const stride = Math.max(1, Math.floor(pts.length / 8));
+  for (const q of [{ x: cx, y: cy }, ...pts.filter((_, i) => i % stride === 0).map(v => ({ x: (v.x + cx) / 2, y: (v.y + cy) / 2 }))]) if (pointInPolygon(q, pts) && distToPolygon(q, pts) > 1.5) out.push(q);
   return out;
 }
 /**
@@ -336,7 +357,8 @@ export function markerDXF(parts: MarkerPart[], pl: Placements, width: number, na
   for (const p of parts) {
     const q = pl[p.id]; if (!q) continue;
     const pts = placedPoly(p, q), b = polyBox(pts);
-    poly(pts, 'CUT', true);
+    poly(pts, p.inner ? 'BLOCK' : 'CUT', true);
+    if (p.inner) poly(p.inner.map(v => placedPoint(q, v)), 'CUT', true);
     poly([placedPoint(q, p.grain[0]), placedPoint(q, p.grain[1])], 'GRAIN', false);
     L.push(0, 'TEXT', 8, 'TEXT', 10, ((b.x0 + b.x1) / 2).toFixed(3), 20, ((b.y0 + b.y1) / 2).toFixed(3), 40, 8, 1, `${p.name} ${p.sizeName}${p.mirror ? ' (M)' : ''}`);
   }
