@@ -600,3 +600,8 @@ table.sg tr.out { display: none; }
 .mk-pl { fill: #1d2330; font: 9px var(--sans); text-anchor: middle; pointer-events: none; }
 .mk-part.wait .mk-pl { fill: #dfe3ea; }
 .mk-status { display: flex; align-items: center; padding: 0 12px; background: var(--panel); border-top: 1px solid var(--line); color: var(--dim); font: 11px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mk-tool.on { background: rgba(78,161,255,.22); border-color: var(--accent); color: var(--accent); }
+.mk-tog { cursor: pointer; color: var(--text) !important; }
+.mk-tog.off { opacity: .45; cursor: default; }
+.mk-aim line { stroke: #ff5a1f; stroke-width: 2; stroke-dasharray: 7 4; }
+.mk-aim path, .mk-aim circle { fill: #ff5a1f; }
