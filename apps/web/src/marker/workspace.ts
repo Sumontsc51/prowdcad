@@ -7,7 +7,7 @@
  */
 import {
   autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placedPoly, placedPoint, polyBox, placeAt, nestJob,
-  markerDXF, markerHPGL, directedParts, obeyDirection, directionGroup, groupMayTurn, throwParts, type MarkerDirection, type MarkerDoc, type MarkerRow, type MarkerPart, type Placements, type Vec,
+  markerDXF, markerHPGL, switchMarkerMaterial, directedParts, obeyDirection, directionGroup, groupMayTurn, throwParts, type MarkerDirection, type MarkerDoc, type MarkerRow, type MarkerPart, type Placements, type Vec,
 } from '@prowdcad/kernel';
 import type { App } from '../app';
 import { h, clear, isTyping } from '../ui/dom';
@@ -79,6 +79,8 @@ export function openMarker(app: App) {
   let run: NestRun | null = null, runRow = '', runTimer = 0, runBest = 0;
   let live: Placements | null = null;                // layout of the running nest, shown before it is kept
   const row = (): MarkerRow | undefined => M().rows.find(r => r.id === cur) ?? M().rows[0];
+  /** fabric width of a marker (default: the marker on screen); every marker has its own */
+  const wd = (r?: MarkerRow): number => (r ?? row())?.width ?? M().width;
   const pls = (): Placements => (live && row()?.id === runRow ? live : row()?.placements ?? {});
 
   // ── elements
@@ -101,7 +103,7 @@ export function openMarker(app: App) {
   function layTray() {
     tray = {};
     const p0 = pls(), wait = parts.filter(p => !p0[p.id]);
-    let x = 0, y = -60, rowH = 0; const maxX = Math.max(3000, M().width * 2.5);
+    let x = 0, y = -60, rowH = 0; const maxX = Math.max(3000, wd() * 2.5);
     for (const p of wait) {
       const b = polyBox(p.poly), w = b.x1 - b.x0, hh = b.y1 - b.y0;
       if (x > 0 && x + w > maxX) { x = 0; y -= rowH + 40; rowH = 0; }
@@ -113,11 +115,11 @@ export function openMarker(app: App) {
   const W = (x: number, y: number): Vec => ({ x: (x - view.ox) / view.k, y: (y - view.oy) / view.k });
   const evW = (e: MouseEvent) => { const r = svg.getBoundingClientRect(); return W(e.clientX - r.left, e.clientY - r.top); };
   function fit() {
-    const st = markerStats(parts, pls(), M().width);
+    const st = markerStats(parts, pls(), wd());
     const r = svg.getBoundingClientRect(); if (r.width < 50) return;
     let minY = 0; for (const id in tray) minY = Math.min(minY, tray[id].y);
     const maxX = Math.max(st.length, 1500, ...Object.values(tray).map(t => t.x + 600));
-    const k = Math.min((r.width - 150) / maxX, (r.height - 70) / (M().width - minY));
+    const k = Math.min((r.width - 150) / maxX, (r.height - 70) / (wd() - minY));
     view = { k, ox: 30, oy: 30 - minY * k };
   }
 
@@ -201,7 +203,7 @@ export function openMarker(app: App) {
     const r = row(); if (run || !r) return;
     if (carry) dropCarry(true);
     if (!parts.length) { toast('This marker has no parts: give it a ratio in the cut plan', 'warn'); return; }
-    const w = M().width;
+    const w = wd();
     const np = directedParts(parts, rule(), r180());
     const wide = np.find(p => p.angles.every(a => { const b = polyBox(placedPoly(p, { x: 0, y: 0, rot: a })); return b.y1 - b.y0 > w; }));
     if (wide) { toast(`${wide.name} (${wide.sizeName}) is wider than the fabric`, 'error'); return; }
@@ -227,12 +229,12 @@ export function openMarker(app: App) {
   const base = () => `${app.doc.style.name || 'style'}_${(row()?.name ?? 'marker').replace(/\s+/g, '_')}`;
   function report() {
     const m = M(), t = planTotals(sid(), m.order, m.rows);
-    const lines = [`Cut plan — ${app.doc.style.name}`, `Fabric width ${fmt(m.width)} ${unitLabel()} · ${m.material || 'all materials'}`, ''];
+    const lines = [`Cut plan — ${app.doc.style.name}`, `Material: ${m.material || 'all materials'}`, ''];
     let fabric = 0;
     for (const r of m.rows) {
-      const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block }), st = markerStats(ps, r.placements, m.width);
+      const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block }), st = markerStats(ps, r.placements, r.width ?? m.width);
       const done = st.placed === st.parts && st.parts > 0; if (done) fabric += st.length * r.plies;
-      lines.push(`${r.name}: ${sizes().filter(s => r.ratio[s.id]).map(s => `${s.name} ${r.ratio[s.id]}`).join(' · ') || 'no ratio'} · ${r.plies} plies · ${done ? `${fmt(st.length)} ${unitLabel()} long, ${(st.efficiency * 100).toFixed(1)} %` : `${st.placed} of ${st.parts} parts laid`}`);
+      lines.push(`${r.name}: ${sizes().filter(s => r.ratio[s.id]).map(s => `${s.name} ${r.ratio[s.id]}`).join(' · ') || 'no ratio'} · ${r.plies} plies · width ${fmt(r.width ?? m.width)} ${unitLabel()} · ${done ? `${fmt(st.length)} ${unitLabel()} long, ${(st.efficiency * 100).toFixed(1)} %` : `${st.placed} of ${st.parts} parts laid`}`);
     }
     lines.push('', `Garments: ${t.garments} cut of ${t.ordered} ordered${t.exact ? ' (exact)' : ''}`, ...sizes().filter(s => t.diff[s.id]).map(s => `  ${s.name}: ${t.diff[s.id] > 0 ? '+' : ''}${t.diff[s.id]}`),
       `Fabric for the nested markers: ${(fabric / 1000).toFixed(2)} m${t.garments ? ` · ${(fabric / 1000 / t.garments).toFixed(3)} m per garment` : ''}`);
@@ -244,10 +246,10 @@ export function openMarker(app: App) {
     const m = M(); clear(top);
     const num = (v: string, title: string, on: (t: string) => void, w = 70) => { const i = h('input.mk-in', { type: 'text', value: v, title, style: `width:${w}px` }) as HTMLInputElement; i.addEventListener('change', () => on(i.value)); i.addEventListener('keydown', e => { if (e.key === 'Enter') i.blur(); }); return i; };
     const mats = [...new Set(app.doc.style.pieces.map(p => p.order?.material ?? '').filter(Boolean))];
-    const mat = h('select.mk-in', { title: 'Lay only the pieces of this material' }, h('option', { value: '' }, 'All materials'), ...mats.map(x => h('option', { value: x, selected: x === m.material }, x))) as HTMLSelectElement;
-    mat.addEventListener('change', () => edit('Marker material', d => { d.material = mat.value; }));
+    const mat = h('select.mk-in', { 'data-mk': 'material', title: 'Every material has its own cut plan and markers; the order is the same for all' }, h('option', { value: '' }, 'All materials'), ...mats.map(x => h('option', { value: x, selected: x === m.material }, x))) as HTMLSelectElement;
+    mat.addEventListener('change', () => { if (carry) dropCarry(true); edit('Marker material', d => switchMarkerMaterial(d, mat.value)); cur = M().rows[0]?.id ?? ''; sel.clear(); partsKey = ''; draw(true); toast(`${mat.value || 'All materials'}: ${M().rows.length ? `${M().rows.length} marker${M().rows.length === 1 ? '' : 's'} in its cut plan` : 'no cut plan yet · press Auto plan'}`, 'ok'); });
     top.append(h('strong.mk-title', {}, 'Marker making'), h('span.mk-dim', {}, app.doc.style.name || ''),
-      h('label', {}, 'Fabric width', num(fmt(m.width), 'Usable fabric width', t => { const v = parseLen(t); if (Number.isFinite(v) && v > 50) edit('Fabric width', d => { d.width = v; }); else draw(); }), h('span.mk-dim', {}, unitLabel())),
+      h('label', {}, 'Fabric width', num(fmt(wd()), 'Usable fabric width of the marker on screen (every marker has its own; new markers start with the last width typed)', t => { const v = parseLen(t), id = row()?.id; if (Number.isFinite(v) && v > 50) { edit('Fabric width', d => { d.width = v; const x = d.rows.find(q => q.id === id); if (x) x.width = v; }); draw(true); } else draw(); }, 70), h('span.mk-dim', {}, unitLabel())),
       h('label', {}, 'Gap', num(fmt(m.gap), 'Smallest gap between parts', t => { const v = parseLen(t); if (Number.isFinite(v) && v >= 0) edit('Marker gap', d => { d.gap = v; }); else draw(); }, 54), h('span.mk-dim', {}, unitLabel())),
       h('label', {}, 'Material', mat),
       (() => {
@@ -273,27 +275,28 @@ export function openMarker(app: App) {
       i.addEventListener('focus', () => i.select());
       return i;
     };
-    const head = h('tr', {}, h('th', {}, ''), ...S2.map((s, k) => h('th', {}, h('span.mk-sw', { style: `background:${SIZE_COL[k % SIZE_COL.length]}` }), s.name)), h('th', {}, 'Plies'), h('th', {}, 'Total'), h('th', {}, ''));
+    const head = h('tr', {}, h('th', {}, ''), ...S2.map((s, k) => h('th', {}, h('span.mk-sw', { style: `background:${SIZE_COL[k % SIZE_COL.length]}` }), s.name)), h('th', {}, 'Plies'), h('th', {}, 'Total'), h('th', {}, `Width ${unitLabel()}`), h('th', {}, ''));
     const ordT = h('table.mk-tbl', {}, head,
-      h('tr.mk-order', {}, h('td', {}, 'Order'), ...S2.map(s => h('td', {}, int(m.order[s.id] ?? 0, `Garments ordered in ${s.name}`, n => edit('Order quantity', d => { d.order[s.id] = n; }), { 'data-mk-order': s.name }))), h('td', {}, ''), h('td.mk-tot', {}, String(t.ordered)), h('td', {}, '')));
+      h('tr.mk-order', {}, h('td', {}, 'Order'), ...S2.map(s => h('td', {}, int(m.order[s.id] ?? 0, `Garments ordered in ${s.name}`, n => edit('Order quantity', d => { d.order[s.id] = n; }), { 'data-mk-order': s.name }))), h('td', {}, ''), h('td.mk-tot', {}, String(t.ordered)), h('td', {}, ''), h('td', {}, '')));
     for (const r of m.rows) {
-      const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block }), st = markerStats(ps, r.placements, m.width);
+      const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block }), st = markerStats(ps, r.placements, r.width ?? m.width);
       const bundles = S2.reduce((a, s) => a + (r.ratio[s.id] ?? 0), 0), done = st.parts > 0 && st.placed === st.parts;
       const tr = h('tr.mk-row' + (r.id === row()?.id ? '.on' : ''), { 'data-mk-row': r.id, title: 'Click to show this marker' },
         h('td.mk-name', {}, r.name, h('span.mk-sub', {}, done ? `${fmt(st.length)} ${unitLabel()} · ${(st.efficiency * 100).toFixed(1)} %` : st.parts ? `${st.placed}/${st.parts} laid` : 'no parts')),
         ...S2.map(s => h('td', {}, int(r.ratio[s.id] ?? 0, `Bundles of ${s.name} in ${r.name}`, n => edit('Marker ratio', d => { const x = d.rows.find(q => q.id === r.id); if (x && x.ratio[s.id] !== n) { x.ratio[s.id] = n; x.placements = {}; } })))),
         h('td', {}, int(r.plies, `Plies spread for ${r.name}`, n => edit('Plies', d => { const x = d.rows.find(q => q.id === r.id); if (x) x.plies = n; }))),
         h('td.mk-tot', {}, String(bundles * r.plies)),
+        h('td', {}, (() => { const i = h('input.mk-n.mk-w', { type: 'text', value: fmt(r.width ?? m.width), title: `Fabric width of ${r.name}`, 'data-mk-width': r.id }) as HTMLInputElement; i.addEventListener('change', () => { const v = parseLen(i.value); if (Number.isFinite(v) && v > 50) edit('Fabric width', d => { const x = d.rows.find(q => q.id === r.id); if (x) x.width = v; d.width = v; }); else draw(); }); i.addEventListener('keydown', e => { if (e.key === 'Enter') i.blur(); }); i.addEventListener('focus', () => i.select()); return i; })()),
         h('td', {}, h('button.mini', { title: `Remove ${r.name}`, onclick: (e: Event) => { e.stopPropagation(); edit('Remove marker', d => { d.rows = d.rows.filter(q => q.id !== r.id); }); } }, '✕')));
       tr.addEventListener('click', e => { if ((e.target as Element).closest('input,button')) return; cur = r.id; sel.clear(); partsKey = ''; draw(true); });
       ordT.append(tr);
     }
-    ordT.append(h('tr.mk-cut', {}, h('td', {}, 'Cut'), ...S2.map(s => h('td.mk-tot', {}, String(t.cut[s.id]))), h('td.mk-tot', {}, String(t.plies)), h('td.mk-tot', {}, String(t.garments)), h('td', {}, '')),
-      h('tr.mk-diff', {}, h('td', {}, 'Over / short'), ...S2.map(s => h('td.mk-tot' + (t.diff[s.id] > 0 ? '.over' : t.diff[s.id] < 0 ? '.short' : '.ok'), {}, t.diff[s.id] === 0 ? '✓' : (t.diff[s.id] > 0 ? '+' : '') + t.diff[s.id])), h('td', {}, ''), h('td.mk-tot' + (t.exact ? '.ok' : ''), {}, t.exact ? '✓' : String(t.garments - t.ordered)), h('td', {}, '')));
+    ordT.append(h('tr.mk-cut', {}, h('td', {}, 'Cut'), ...S2.map(s => h('td.mk-tot', {}, String(t.cut[s.id]))), h('td.mk-tot', {}, String(t.plies)), h('td.mk-tot', {}, String(t.garments)), h('td', {}, ''), h('td', {}, '')),
+      h('tr.mk-diff', {}, h('td', {}, 'Over / short'), ...S2.map(s => h('td.mk-tot' + (t.diff[s.id] > 0 ? '.over' : t.diff[s.id] < 0 ? '.short' : '.ok'), {}, t.diff[s.id] === 0 ? '✓' : (t.diff[s.id] > 0 ? '+' : '') + t.diff[s.id])), h('td', {}, ''), h('td.mk-tot' + (t.exact ? '.ok' : ''), {}, t.exact ? '✓' : String(t.garments - t.ordered)), h('td', {}, ''), h('td', {}, '')));
     const auto = async () => {
       if (!t.ordered) { toast('Type the order quantities first', 'warn'); return; }
       if (m.rows.some(r => Object.keys(r.placements).length) && !(await confirmDialog('Auto plan', 'Build the cut plan again from the order? The markers of the current plan, and their nesting, are replaced (Ctrl+Z brings them back).', 'Build plan'))) return;
-      edit('Auto cut plan', d => { d.rows = autoCutPlan(sid(), d.order, { maxPlies: d.maxPlies, maxBundles: d.maxBundles }).map(r => ({ ...r, placements: {} })); });
+      edit('Auto cut plan', d => { d.rows = autoCutPlan(sid(), d.order, { maxPlies: d.maxPlies, maxBundles: d.maxBundles }).map(r => ({ ...r, placements: {}, width: d.width })); });
       cur = M().rows[0]?.id ?? ''; partsKey = ''; draw(true);
       toast(`${M().rows.length} marker${M().rows.length === 1 ? '' : 's'} planned · press ▶ to nest`, 'ok');
     };
@@ -304,7 +307,7 @@ export function openMarker(app: App) {
       // folded: the markers are tabs, one click shows a marker
       const tabs = h('div.mk-tabs', { role: 'tablist', 'aria-label': 'Markers' });
       for (const r of m.rows) {
-        const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block }), st = markerStats(ps, r.placements, m.width);
+        const ps = markerParts(app.doc, r.ratio, { material: m.material || undefined, block: m.block }), st = markerStats(ps, r.placements, r.width ?? m.width);
         const done = st.parts > 0 && st.placed === st.parts, on = r.id === row()?.id;
         const ratio = S2.filter(s => r.ratio[s.id]).map(s => `${s.name} ${r.ratio[s.id]}`).join(' · ');
         const tab = h('button.mk-tab' + (on ? '.on' : '') + (done ? '.done' : ''), { type: 'button', role: 'tab', 'aria-selected': String(on), 'data-mk-tab': r.id,
@@ -322,7 +325,7 @@ export function openMarker(app: App) {
         h('button.btn.sm.primary', { 'data-mk': 'auto', title: 'Work out the ratios and plies from the order', onclick: () => void auto() }, 'Auto plan')),
       h('div.mk-scroll', {}, ordT),
       h('div.mk-lim', {},
-        h('button.btn.sm', { 'data-mk': 'add', title: 'Add an empty marker to the plan', onclick: () => { const id = 'm' + Date.now().toString(36); edit('Add marker', d => { d.rows.push({ id, name: 'Marker ' + (d.rows.length + 1), ratio: {}, plies: 1, placements: {} }); }); cur = id; partsKey = ''; draw(true); } }, '+ Marker'),
+        h('button.btn.sm', { 'data-mk': 'add', title: 'Add an empty marker to the plan', onclick: () => { const id = 'm' + Date.now().toString(36); edit('Add marker', d => { d.rows.push({ id, name: 'Marker ' + (d.rows.length + 1), ratio: {}, plies: 1, placements: {}, width: d.width }); }); cur = id; partsKey = ''; draw(true); } }, '+ Marker'),
         h('button.btn.sm', { 'data-mk': 'report', title: 'Markers, lengths, efficiency and fabric needed', onclick: report }, 'Report')),
       h('div.mk-hint', {}, 'Type the order, press Auto plan, then ▶ to nest each marker. Ratios and plies can be changed by hand: the Over / short row shows what the plan cuts against the order.'));
   }
@@ -342,23 +345,23 @@ export function openMarker(app: App) {
       b('clear', '⌫', 'Take every part off this marker', () => { if (carry) dropCarry(true); if (Object.keys(pls()).length) keep('Clear marker', {}); }),
       h('div.mk-sep'),
       b('fit', '⤢', 'Show the whole marker (F)', () => { fit(); draw(); }),
-      b('dxf', 'DXF', 'Save this marker as DXF', () => { const r = row(); if (r) download(base() + '.dxf', new Blob([markerDXF(parts, r.placements, M().width, r.name)], { type: 'application/dxf' })); }, '.txt'),
+      b('dxf', 'DXF', 'Save this marker as DXF', () => { const r = row(); if (r) download(base() + '.dxf', new Blob([markerDXF(parts, r.placements, wd(r), r.name)], { type: 'application/dxf' })); }, '.txt'),
       b('plt', 'PLT', 'Save this marker as a plotter file (HPGL)', () => { const r = row(); if (r) download(base() + '.plt', new Blob([markerHPGL(parts, r.placements)], { type: 'application/vnd.hp-hpgl' })); }, '.txt'));
   }
   function drawStatus() {
     const r = row(), m = M();
     if (!r) { stat.textContent = 'No marker yet: type the order on the left and press Auto plan, or add a marker with + Marker.'; return; }
-    const st = markerStats(parts, pls(), m.width);
+    const st = markerStats(parts, pls(), wd());
     const el = run ? Math.min(run.seconds, (performance.now() - run.startedAt) / 1000) : 0;
     stat.textContent = [r.name, `${st.placed} of ${st.parts} parts laid`, `length ${fmt(st.length)} ${unitLabel()}`, `efficiency ${(st.efficiency * 100).toFixed(2)} %`,
       `${r.plies} plies = ${(st.length * r.plies / 1000).toFixed(2)} m of fabric`, bad.size ? `⚠ ${bad.size} part${bad.size > 1 ? 's' : ''} overlapping or off the fabric` : '',
       run ? `nesting… ${el.toFixed(0)} / ${run.seconds} s on ${run.threads} thread${run.threads > 1 ? 's' : ''}` : carry ? 'Carrying: click = put down · press and pull = aim, let go = shoot · right-click = turn 180° · Esc = put back' : 'Click a part to pick it up · press and pull = aim, let go = shoot · right-click = turn 180° · Shift+click = select more'].filter(Boolean).join('  ·  ');
   }
   function drawSvg() {
-    const m = M(), p0 = pls(), st = markerStats(parts, p0, m.width);
-    bad = run ? new Set() : markerProblems(parts, p0, m.width);
+    const p0 = pls(), fw = wd(), st = markerStats(parts, p0, fw);
+    bad = run ? new Set() : markerProblems(parts, p0, fw);
     const f = (n: number) => n.toFixed(1);
-    const len = Math.max(st.length, 1000), a = S({ x: 0, y: 0 }), b2 = S({ x: len, y: m.width });
+    const len = Math.max(st.length, 1000), a = S({ x: 0, y: 0 }), b2 = S({ x: len, y: fw });
     const sIdx = new Map(sizes().map((s, k) => [s.id, k]));
     let out = `<rect x="${f(a.x)}" y="${f(a.y)}" width="${f(b2.x - a.x + 4000 * view.k)}" height="${f(b2.y - a.y)}" class="mk-fabric"/>`;
     if (st.length > 0) { const e = S({ x: st.length, y: 0 }); out += `<line x1="${f(e.x)}" y1="${f(a.y - 8)}" x2="${f(e.x)}" y2="${f(b2.y + 8)}" class="mk-end"/><text x="${f(e.x + 5)}" y="${f(a.y - 12)}" class="mk-lab">${fmt(st.length)} ${unitLabel()} · ${(st.efficiency * 100).toFixed(1)} %</text>`; }
@@ -425,7 +428,7 @@ export function openMarker(app: App) {
   function shoot(a: { from: Vec; to: Vec }) {
     const c = carry, r = row(); if (!c || !r) return;
     const dir = { x: a.to.x - a.from.x, y: a.to.y - a.from.y };
-    const w = M().width, laid = { ...r.placements }; for (const id of c.ids) delete laid[id];
+    const w = wd(), laid = { ...r.placements }; for (const id of c.ids) delete laid[id];
     const from = carried(), start: Placements = { ...laid };
     // parts still above or below the fabric come onto it first
     let lo = Infinity, hi = -Infinity, left = Infinity;
