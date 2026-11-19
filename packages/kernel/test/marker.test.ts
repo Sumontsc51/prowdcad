@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { Document } from '../src/model/doc';
 import { makeStyle, makePiece, rectangleContour, makeContour, gradePoint } from '../src/model/factory';
-import { autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placeAt, placedPoly, polyBox, nestJob, nestResult, markerDXF, markerHPGL, simplifyClosed } from '../src/marker/marker';
+import { directedParts, obeyDirection, groupMayTurn, directionGroup, throwParts, autoCutPlan, planTotals, markerParts, markerStats, markerProblems, placeAt, placedPoly, polyBox, nestJob, nestResult, markerDXF, markerHPGL, simplifyClosed } from '../src/marker/marker';
 
 describe('cut plan', () => {
   const sizes = ['S', 'M', 'L', 'XL'];
@@ -113,5 +113,75 @@ describe('marker export', () => {
     expect(dxf).toContain('BODY M'); expect(dxf.trim().endsWith('EOF')).toBe(true);
     const plt = markerHPGL(parts, pl);
     expect((plt.match(/^PD/gm) ?? []).length).toBe(parts.length);
+  });
+});
+
+describe('marker direction rules', () => {
+  const d = style(), I = ids(d);
+  d.transact('2way', s => { for (const p of s.pieces) p.order.rotation = '2way'; });
+  const parts = markerParts(d, { [I.S]: 2, [I.M]: 1 });
+  const dirOf = (ps: typeof parts, f: (p: typeof parts[0]) => boolean) => [...new Set(ps.filter(f).map(p => p.angles.join()))].join('/');
+  it('all bundles one direction: every part faces 0°, nothing may turn', () => {
+    const a = directedParts(parts, 'all', true);
+    expect(dirOf(a, () => true)).toBe('0');
+    expect(groupMayTurn(parts, '*', 'all', true)).toBe(false);
+  });
+  it('one bundle one direction: a bundle is one direction; bundles alternate only with the 180° switch on', () => {
+    const on = directedParts(parts, 'bundle', true), off = directedParts(parts, 'bundle', false);
+    for (const g of new Set(parts.map(p => directionGroup(p, 'bundle')))) expect(dirOf(on, p => directionGroup(p, 'bundle') === g)).toMatch(/^(0|180)$/);
+    expect(new Set(on.map(p => p.angles[0])).size).toBe(2);
+    expect(dirOf(off, () => true)).toBe('0');
+    expect(groupMayTurn(parts, directionGroup(parts[0], 'bundle'), 'bundle', true)).toBe(true);
+    expect(groupMayTurn(parts, directionGroup(parts[0], 'bundle'), 'bundle', false)).toBe(false);
+  });
+  it('same size same direction: both bundles of S face the same way', () => {
+    const a = directedParts(parts, 'size', true);
+    expect(dirOf(a, p => p.sizeId === I.S)).toMatch(/^(0|180)$/);
+    expect(dirOf(a, p => p.sizeId === I.M)).toMatch(/^(0|180)$/);
+  });
+  it('a bundle with a one-way piece does not turn', () => {
+    const d2 = style(), J = ids(d2); // SLEEVE is 1-way in style()
+    const ps = markerParts(d2, { [J.M]: 2 });
+    expect(directedParts(ps, 'bundle', true).every(p => p.angles[0] === 0)).toBe(true);
+  });
+  it('placements that break the rule are taken off', () => {
+    const two = parts.filter(p => p.name === 'BODY' && p.sizeId === I.M);
+    const pl = { [two[0].id]: placeAt(two[0], 0, 0, 0), [two[1].id]: placeAt(two[1], 700, 0, 180) };
+    expect(obeyDirection(parts, pl, 'bundle', true).removed).toBe(1);
+    expect(obeyDirection(parts, pl, 'piece', true).removed).toBe(0);
+    const all = obeyDirection(parts, { [two[1].id]: pl[two[1].id] }, 'all', true);
+    expect(all.removed).toBe(1);
+  });
+});
+
+describe('throwing a part', () => {
+  const d = style(), I = ids(d);
+  const [a, b] = markerParts(d, { [I.M]: 1 }).filter(p => p.name === 'BODY'); // 620 × 420 each
+  it('travels until it touches the other part, or the fabric edge', () => {
+    const pl = { [a.id]: placeAt(a, 0, 0, 0), [b.id]: placeAt(b, 1500, 300, 0) };
+    const left = throwParts([a, b], pl, 1000, [b.id], { x: -1, y: 0 })!;
+    expect(polyBox(placedPoly(b, left[b.id])).x0).toBeCloseTo(620, 0);     // a (0…420 high) is in its way: it stops against it
+    const up = throwParts([a, b], { ...pl, [b.id]: placeAt(b, 1500, 500, 0) }, 1000, [b.id], { x: 0, y: -1 })!;
+    expect(polyBox(placedPoly(b, up[b.id])).y0).toBeCloseTo(0, 0);
+  });
+  it('stops against a part in its way and keeps the gap', () => {
+    const pl = { [a.id]: placeAt(a, 0, 0, 0), [b.id]: placeAt(b, 1500, 0, 0) };
+    const r = throwParts([a, b], pl, 1000, [b.id], { x: -1, y: 0 })!;
+    expect(polyBox(placedPoly(b, r[b.id])).x0).toBeCloseTo(620, 0);
+    const g = throwParts([a, b], pl, 1000, [b.id], { x: -1, y: 0 }, { gap: 10 })!;
+    expect(polyBox(placedPoly(b, g[b.id])).x0).toBeGreaterThan(628);
+    expect(polyBox(placedPoly(b, g[b.id])).x0).toBeLessThan(632);
+    expect(markerProblems([a, b], { ...pl, ...r }, 1000).size).toBe(0);
+  });
+  it('a part that starts on top of another travels until it is free, then on to the next stop', () => {
+    const pl = { [a.id]: placeAt(a, 0, 0, 0), [b.id]: placeAt(b, 100, 100, 0) };
+    const r = throwParts([a, b], pl, 1000, [b.id], { x: 0, y: 1 })!;
+    expect(polyBox(placedPoly(b, r[b.id])).y1).toBeCloseTo(1000, 0);
+    expect(markerProblems([a, b], { ...pl, ...r }, 1000).size).toBe(0);
+  });
+  it('thrown along the fabric it stops at the end of the marker', () => {
+    const pl = { [a.id]: placeAt(a, 0, 0, 0), [b.id]: placeAt(b, 0, 500, 0) };
+    const r = throwParts([a, b], pl, 1000, [b.id], { x: 1, y: 0 })!;
+    expect(polyBox(placedPoly(b, r[b.id])).x0).toBeLessThanOrEqual(621);
   });
 });
