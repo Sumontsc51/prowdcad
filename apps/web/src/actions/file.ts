@@ -446,21 +446,26 @@ async function commitImport(app: App, name: string, rep: ImportReport) {
   const names = (l: typeof mine) => l.sizes.map(z => z.name).join(' ');
   const differ = names(mine) !== names(theirs);
   const graded = theirs.sizes.length > 1;
+  // a fresh start (the untouched sample block): the file IS the style — its sizes are taken, the sample block goes, the style is named after the file
+  const fresh = !app.isDirty() && app.fileName === 'untitled.pcd' && app.doc.style.pieces.length === 1 && app.doc.style.pieces[0].name === 'BLOCK' && !app.doc.style.meta.marker;
   const ok = await showDialog({
-    title: `Import report — ${name}`, message: msg, okLabel: `Add ${rep.pieces.length} piece(s)`, wide: true,
-    fields: differ && graded ? [{ kind: 'select' as const, key: 'sizes', label: 'Sizes', value: 'file', remember: false, options: [
+    title: `Import report — ${name}`, message: msg, okLabel: fresh ? `Open ${rep.pieces.length} piece(s)` : `Add ${rep.pieces.length} piece(s)`, wide: true,
+    fields: differ && graded && !fresh ? [{ kind: 'select' as const, key: 'sizes', label: 'Sizes', value: 'file', remember: false, options: [
       { value: 'file', label: `Use the file's sizes for the style (${names(theirs)})` },
       { value: 'style', label: `Keep the style's sizes (${names(mine)}), match by size name` },
     ] }] : [],
   });
   if (!ok) return;
   // a file with one size has no grading: its pieces simply join the style's sizes
-  const sizes = !differ ? 'keep' : graded ? (ok.sizes === 'style' ? 'style' : 'file') : 'style';
+  const sizes = !differ ? 'keep' : fresh ? 'file' : graded ? (ok.sizes === 'style' ? 'style' : 'file') : 'style';
+  const sample = fresh ? app.doc.style.pieces[0].id : null;
   app.doc.transact(`Import ${name}`, s => {
     const added = ops.addImportToDocument(app.doc, rep, { sizes });
     if (rep.ruleLibrary) s.ruleLibraries.push(JSON.parse(JSON.stringify(rep.ruleLibrary)));
+    if (sample) { s.pieces = s.pieces.filter(p => p.id !== sample); const stem = name.split(' + ')[0].replace(/\.[^.]+$/, ''); s.name = stem.slice(0, 80) || s.name; }
     app.sel = { pieces: added.map(p => p.id), anchors: [] };
   });
+  if (sample) app.fileName = name.split(' + ')[0].replace(/\.[^.]+$/, '') + '.pcd';
   if (!app.doc.sizeLine().sizes.some(z => z.id === app.activeSize)) app.activeSize = app.baseSize();
   app.invalidate();
   toast(`Imported ${rep.pieces.length} piece(s) from ${name}${sizes === 'file' ? ` · sizes ${names(app.doc.sizeLine())}` : ''}`, 'ok');
