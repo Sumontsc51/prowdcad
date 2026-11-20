@@ -677,3 +677,12 @@ table.sg tr.out { display: none; }
 .mk-shade text { fill: #0b6f62; font: 600 10px var(--mono); }
 .mk-shade text.bad { fill: #d1242f; }
 .mk-part.shadeoff > path:first-child { stroke: #d1242f; stroke-width: 2.6; stroke-dasharray: 8 3; }
+.mk-notch { fill: none; stroke: #1d2330; stroke-width: 1.3; pointer-events: none; }
+.mk-part.wait .mk-notch { stroke: #dfe3ea; }
+.mk-part path.mk-int, .mk-part path.mk-seam, .mk-part path.mk-mline, .mk-part path.mk-notch { fill: none; }
+.mk-part path.mk-int { stroke: rgba(0,0,0,.5); stroke-width: .8; }
+.mk-part path.mk-int.cut { stroke: #b01e17; }
+.mk-part path.mk-seam { stroke: rgba(0,0,0,.45); stroke-width: .8; }
+.mk-part path.mk-mline { stroke: #b3329e; stroke-width: 1.8; }
+.mk-part path.mk-notch { stroke: #1d2330; stroke-width: 1.3; }
+.mk-part.wait path.mk-int, .mk-part.wait path.mk-seam, .mk-part.wait path.mk-notch { stroke: rgba(255,255,255,.5); }
