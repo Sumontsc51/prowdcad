@@ -211,10 +211,11 @@ void start();
 
 // expose for debugging / integrator console access
 // Every value box types in replace mode: a box that gets the focus has its whole value selected, so the first key replaces it
-// (a second click, or an arrow key, puts the cursor inside the value to change part of it).
+// (a second click, or an arrow key, puts the cursor inside the value to change part of it). No cursor is drawn in the table cells:
+// a cell is clicked and typed into.
 document.addEventListener('focusin', e => {
   const t = e.target;
   if (!(t instanceof HTMLInputElement) || t.readOnly || t.disabled || !['text', 'number', 'search', ''].includes(t.type) || t.closest('.cmdk')) return;
-  setTimeout(() => { if (document.activeElement === t) { try { t.select(); } catch { /* not selectable */ } } }, 0);
+  setTimeout(() => { if (document.activeElement === t && !t.dataset.typed) { try { t.select(); } catch { /* not selectable */ } } }, 0);
 });
 (window as unknown as { prowd: unknown }).prowd = { app, canvas, downloadSink, readInto };
