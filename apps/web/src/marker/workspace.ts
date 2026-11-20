@@ -835,6 +835,8 @@ export function openMarker(app: App) {
       const one = `<g class="${cls}" data-part="${p.id}"><path d="${pts.map((v, i) => `${i ? 'L' : 'M'}${f(v.x)} ${f(v.y)}`).join('')}Z" style="--c:${col}"/>`
         + (p.inner ? `<path class="mk-inner" d="${dl(p.inner, q, true)}" style="--c:${col}"/>` : '')
         + (an.seam && p.sew ? `<path class="mk-seam" d="${dl(p.sew, q, true)}"/>` : '')
+        + (p.notches || p.notchesDrawn ? `<path class="mk-notch" d="${[...(p.notches ?? []), ...(p.notchesDrawn ?? [])].map(n => dl(n, q, false)).join('')}"/>` : '')
+        + (p.drills ?? []).map(dr => { const c2 = S(placedPoint(q, dr.at)); return `<circle class="mk-notch" cx="${f(c2.x)}" cy="${f(c2.y)}" r="${f(Math.max(1.5, dr.d / 2 * view.k))}"/>`; }).join('')
         + (() => { const ways = (p.lines ?? []).map((_, i) => lineWay(p, i, an)), dOf = (w: string) => (p.lines ?? []).filter((_, i) => ways[i] === w).map(l => dl(l, q, false)).join('');
           const dd = dOf('draw'), dc = dOf('cut'), dm = dOf('match');
           return (dd ? `<path class="mk-int" d="${dd}"/>` : '') + (dc ? `<path class="mk-int cut" d="${dc}"/>` : '') + (dm ? `<path class="mk-mline" d="${dm}"/>` : '')
