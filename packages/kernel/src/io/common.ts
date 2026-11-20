@@ -58,7 +58,7 @@ export interface RawVertex {
 export interface RawPoly { pts: RawVertex[]; closed: boolean; type?: ContourType; mode?: 'draw' | 'cut'; name?: string }
 export type RawNotch =
   | { kind: 'line'; a: Vec; b: Vec; type?: NotchType; gradeA?: Record<SizeId, GradeInc>; gradeB?: Record<SizeId, GradeInc> }
-  | { kind: 'point'; p: Vec; type?: NotchType; grade?: Record<SizeId, GradeInc> };
+  | { kind: 'point'; p: Vec; type?: NotchType; grade?: Record<SizeId, GradeInc>; /** notch depth written with the point (AAMA: its z value) */ depth?: number };
 export interface RawText { p: Vec; text: string; h: number; rot: number; grade?: Record<SizeId, GradeInc> }
 export interface RawDrill { p: Vec; d: number; grade?: Record<SizeId, GradeInc> }
 
@@ -387,7 +387,7 @@ export function anchorNotch(piece: Piece, raw: RawNotch, line: SizeLine, cutPoly
     const hit = depth > 1e-9 ? linePolyline(outer, u, R) : null;
     onSew = hit && Math.abs(hit.t) < 100 ? hit.pt : closestPoint(R, outer).pt;
   } else {
-    onSew = closestPoint(R, raw.p).pt; depth = setup.slit.depth;
+    onSew = closestPoint(R, raw.p).pt; depth = raw.depth && raw.depth > 0.2 && raw.depth < 60 ? raw.depth : setup.slit.depth;
   }
   const cl = closestPoint(R, onSew);
   const total = r.cum[r.cum.length - 1];
@@ -479,10 +479,21 @@ export function buildPiece(g: RawGroup, opt: BuildOptions, warnings: string[], n
     if (ip.pts.length < 2) continue;
     piece.internals.push(rawToContour(ip, ip.type ?? 'internal', opt.cornerAngleDeg, opt.sparseCurves));
   }
+  let joined = 0, sewRing: Vec[] | null = null;
+  const seen: { at: Vec; type: NotchType; n: Notch }[] = [];
   for (const rn of g.notches) {
     const n = anchorNotch(piece, rn, line, cutPoly, setup);
-    if (n) piece.notches.push(n); else warnings.push(`${name}: notch could not be anchored`);
+    if (!n) { warnings.push(`${name}: notch could not be anchored`); continue; }
+    // a file that marks one notch twice, on the cut line and on the sew line: it is one notch, marked on both
+    if (rn.kind === 'point') {
+      sewRing ??= ring(resolveContour(piece.sew, line, line.baseSizeId).pts);
+      const at = closestPoint(sewRing, rn.p).pt, twin = seen.find(q => q.type === n.type && dist(q.at, at) < 2.5);
+      if (twin) { if (!piece.noSeam) twin.n.on = 'both'; joined++; continue; }
+      seen.push({ at, type: n.type, n });
+    }
+    piece.notches.push(n);
   }
+  if (joined) warnings.push(`${name}: ${joined} notch${joined > 1 ? 'es' : ''} marked on both the cut and the sew line → one notch each, marked on both`);
   for (const d of g.drills) {
     piece.drills.push({ id: newId('d'), x: d.p.x, y: d.p.y, grade: d.grade ?? {}, diameter: d.d || (opt.defaultDrillDiameter ?? 4), kind: 'drill', mode: 'draw' });
   }

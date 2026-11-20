@@ -92,7 +92,7 @@ const nums = (e: DxfEntity, code: number): number[] => e.codes.filter(q => q[0] 
 
 type Prim =
   | { k: 'poly'; layer: string; pts: RawVertex[]; closed: boolean }
-  | { k: 'point'; layer: string; p: Vec }
+  | { k: 'point'; layer: string; p: Vec; z?: number }
   | { k: 'circle'; layer: string; c: Vec; r: number }
   | { k: 'text'; layer: string; p: Vec; text: string; h: number; rot: number }
   | { k: 'attr'; tag: string; value: string };
@@ -181,7 +181,7 @@ function primitives(ents: DxfEntity[], file: DxfFile, t: Xform, unsupported: Rec
         out.push({ k: 'poly', layer: L, closed, pts: rv });
         break;
       }
-      case 'POINT': out.push({ k: 'point', layer: L, p: ap(t, { x: num(e, 10), y: num(e, 20) }) }); break;
+      case 'POINT': { const z = e.codes.some(q => q[0] === 30) ? Math.abs(num(e, 30)) : 0; out.push({ k: 'point', layer: L, p: ap(t, { x: num(e, 10), y: num(e, 20) }), ...(z > 0 ? { z } : {}) }); break; } // AAMA notch point: z = notch depth
       case 'TEXT': case 'MTEXT': case 'ATTRIB': case 'ATTDEF': {
         const useAlign = e.type === 'TEXT' && (num(e, 72) !== 0 || num(e, 73) !== 0) && e.codes.some(q => q[0] === 11);
         const p = useAlign ? { x: num(e, 11), y: num(e, 21) } : { x: num(e, 10), y: num(e, 20) };
@@ -405,7 +405,7 @@ export function importDXF(text: string, opt: DXFImportOptions = {}): ImportRepor
   const convPrim = (p: Prim): Prim => {
     switch (p.k) {
       case 'poly': return { ...p, pts: p.pts.map(v => ({ ...v, ...conv(v) })) };
-      case 'point': return { ...p, p: conv(p.p) };
+      case 'point': return { ...p, p: conv(p.p), ...(p.z ? { z: p.z * k } : {}) };
       case 'circle': return { ...p, c: conv(p.c), r: p.r * k };
       case 'text': return { ...p, p: conv(p.p), h: p.h * k, rot: p.rot * fy };
       default: return p;
@@ -590,7 +590,7 @@ function scopeToGroup(s: Scope, map: Record<string, LayerRole>, tol: number, tab
       if (p.k === 'poly' && p.pts.length >= 2) {
         const a = p.pts[0], b = p.pts[p.pts.length - 1];
         g.notches.push({ kind: 'line', a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y }, type, gradeA: a.grade, gradeB: b.grade } as RawNotch);
-      } else if (p.k === 'point') g.notches.push({ kind: 'point', p: p.p, type, grade: ruleNear(p.p, p.layer) });
+      } else if (p.k === 'point') g.notches.push({ kind: 'point', p: p.p, type, grade: ruleNear(p.p, p.layer), ...(p.z ? { depth: p.z } : {}) });
       continue;
     }
     switch (role) {
