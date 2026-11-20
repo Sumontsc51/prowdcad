@@ -363,7 +363,9 @@ table.sg tr.cur td { background: rgba(78,161,255,.10); }
 .sg-wrap.sheet table.sg td.sel { background: rgba(59,124,255,.24); box-shadow: inset 0 0 0 1px #3b7cff; }
 .sg-wrap.sheet table.sg td.fill { background: rgba(232,89,12,.16); box-shadow: inset 0 0 0 1px #e8590c; }
 .sg-wrap.sheet input.sg-in { cursor: cell; }
-.sg-wrap.sheet input.sg-in::selection { background: transparent; color: inherit; }
+.sg-wrap.sheet input.sg-in::selection { background: rgba(78,161,255,.45); color: #fff; }
+.sg-wrap.sheet input.sg-in { caret-color: #ffd43b; }
+.sg-wrap.sheet input.sg-in:focus { cursor: text; box-shadow: inset 0 0 0 1.5px #ffd43b; }
 .sg-fillh { position: absolute; width: 8px; height: 8px; background: #3b7cff; border: 1px solid #fff; border-radius: 1px; cursor: crosshair; z-index: 5; display: none; }
 table.sg tr.cur td.sg-rh { color: var(--accent); background: #26313f; }
 table.sg tr.aff td { background: rgba(255,180,84,.13); }
@@ -686,3 +688,5 @@ table.sg tr.out { display: none; }
 .mk-part path.mk-mline { stroke: #b3329e; stroke-width: 1.8; }
 .mk-part path.mk-notch { stroke: #1d2330; stroke-width: 1.3; }
 .mk-part.wait path.mk-int, .mk-part.wait path.mk-seam, .mk-part.wait path.mk-notch { stroke: rgba(255,255,255,.5); }
+input[type=text], input[type=number], input:not([type]) { caret-color: #ffd43b; }
+input[type=text]::selection, input[type=number]::selection, input:not([type])::selection { background: rgba(78,161,255,.5); color: #fff; }
