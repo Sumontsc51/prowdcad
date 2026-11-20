@@ -136,8 +136,9 @@ export function renderGrading(app: App, host: HTMLElement) {
       const other: GView = view === 'total' ? 'step' : 'total';
       const pos = () => { let v = posCache.get(p.id); if (!v) posCache.set(p.id, v = posOf(p.id)); return v; };
       cols.push(
-        { key: p.id + ':x', group: 'Position', head: 'X', get: r => pos()[r + off].x, attrs: { 'data-axis': 'x' } },
-        { key: p.id + ':y', group: 'Position', head: 'Y', get: r => pos()[r + off].y, attrs: { 'data-axis': 'y' } },
+        // the position of the point in each size can be typed too: that size (only) moves so that the point lands there
+        { key: p.id + ':x', group: 'Position', head: 'X', edit: !readOnly, side: true, title: 'Position of the point in this size: type a value and this size moves there (the base ★ is moved on the sheet, not here)', get: r => pos()[r + off].x, ro: r => r + off === b, cls: r => (r + off === b ? 'basecell' : ''), attrs: { 'data-axis': 'x' } },
+        { key: p.id + ':y', group: 'Position', head: 'Y', edit: !readOnly, side: true, title: 'Position of the point in this size: type a value and this size moves there (the base ★ is moved on the sheet, not here)', get: r => pos()[r + off].y, ro: r => r + off === b, cls: r => (r + off === b ? 'basecell' : ''), attrs: { 'data-axis': 'y' } },
         { key: p.id + ':ox', group: other === 'total' ? 'Total from base' : 'Step', head: 'dX', get: r => valOf(p, 'dx', other)[r + off], attrs: { 'data-axis': 'o' + 'dx' } },
         { key: p.id + ':oy', group: other === 'total' ? 'Total from base' : 'Step', head: 'dY', get: r => valOf(p, 'dy', other)[r + off], attrs: { 'data-axis': 'o' + 'dy' } },
       );
@@ -149,8 +150,17 @@ export function renderGrading(app: App, host: HTMLElement) {
     for (const { r: gr, c, v } of cells) {
       const r = gr + off;
       const col = cols[c]; const [pid, axis] = col.key.split(':') as [Id, 'dx' | 'dy'];
-      const p = pts.find(q => q.id === pid)!; if (!p || r === fixedRow) continue;
+      const p = pts.find(q => q.id === pid)!; if (!p) continue;
       const t = touched.get(p) ?? { dx: p.total.dx.slice(), dy: p.total.dy.slice() };
+      if ((axis as string) === 'x' || (axis as string) === 'y') {
+        // a typed position: this size alone moves by the difference, turned into the grade axis of the point
+        if (r === b) continue;
+        const was = (posCache.get(p.id) ?? posOf(p.id))[r], d = (axis as string) === 'x' ? { x: v - was.x, y: 0 } : { x: 0, y: v - was.y };
+        const an = [live.sew, ...live.internals].flatMap(k => k.points).find(q => q.id === p.id), a = -(an?.gradeAxisDeg ?? 0) * Math.PI / 180;
+        t.dx[r] += d.x * Math.cos(a) - d.y * Math.sin(a); t.dy[r] += d.x * Math.sin(a) + d.y * Math.cos(a);
+        touched.set(p, t); continue;
+      }
+      if (r === fixedRow || (axis !== 'dx' && axis !== 'dy')) continue;
       if (view === 'total') t[axis][r] = v;
       else if (view === 'inc') { const inc = incOf(t[axis]); inc[r] = v; t[axis] = totalsFromInc(inc, b); }
       else { const st = ops.outwardSteps(t[axis], b); st[r] = v; t[axis] = ops.totalsFromSteps(st, b); }

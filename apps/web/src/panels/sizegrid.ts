@@ -41,6 +41,8 @@ export interface SGCol {
   cls?(r: number): string;
   /** cell not editable in this row (e.g. base size) */
   ro?(r: number): boolean;
+  /** an extra column: Tab passes over it (it is reached with a click or the arrow keys) */
+  side?: boolean;
   /** extra attributes for the cell input / td (data-* for tests and styling) */
   attrs?: Record<string, string>;
   /** number formatter for read-only cells (default fmt) */
@@ -300,7 +302,7 @@ export function sizeGrid(o: SGOpts): SizeGrid {
     return true;
   }
 
-  function move(r: number, c: number, dr: number, dc: number) {
+  function move(r: number, c: number, dr: number, dc: number, tab = false) {
     let nr = r, nc = c;
     if (dc) {
       // next editable cell in reading order
@@ -308,7 +310,7 @@ export function sizeGrid(o: SGOpts): SizeGrid {
         nc += dc;
         if (nc >= o.cols.length) { nc = 0; nr++; } else if (nc < 0) { nc = o.cols.length - 1; nr--; }
         if (nr < 0 || nr >= o.rows.length) return;
-        if (editable(nr, nc)) break;
+        if (editable(nr, nc) && !(tab && o.cols[nc].side && !o.cols[c].side)) break;
       }
     } else {
       for (let k = 0; k < o.rows.length; k++) { nr += dr; if (nr < 0 || nr >= o.rows.length) return; if (editable(nr, nc)) break; }
@@ -358,7 +360,7 @@ export function sizeGrid(o: SGOpts): SizeGrid {
         if (k === 'Escape' && sel.size > 1) { selectOne(r, c); paintSel(); }
       }
       if (k === 'Enter') { e.preventDefault(); commitInput(inp); move(r, c, e.shiftKey ? -1 : 1, 0); return; }
-      if (k === 'Tab') { e.preventDefault(); commitInput(inp); move(r, c, 0, e.shiftKey ? -1 : 1); return; }
+      if (k === 'Tab') { e.preventDefault(); commitInput(inp); move(r, c, 0, e.shiftKey ? -1 : 1, true); return; }
       if (k === 'Escape') { e.preventDefault(); delete inp.dataset.typed; inp.value = cellText(o.cols[c], r); o.onInput?.(r, c, null); inp.blur(); return; }
       if (k === 'ArrowDown' || k === 'ArrowUp') { e.preventDefault(); commitInput(inp); move(r, c, k === 'ArrowDown' ? 1 : -1, 0); return; }
       if (k === 'ArrowLeft' || k === 'ArrowRight') {
