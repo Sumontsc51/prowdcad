@@ -348,7 +348,7 @@ async function nested(h, fixtures) {
           && n1.split(',')[0] === 'V' && n1.split(',').slice(1).every(t => t !== 'V' || n0.split(',').slice(1).includes('V')) && n2.split(',').length >= 2 && n2.split(',').every(t => t === 'U') && allBtn === 1 };
     } catch (err) { await h.ev(() => { const c = document.querySelector('[data-k="propGlobal"]'); if (c && c.checked) c.click(); }); return { got: String(err.message || err).split('\n')[0], pass: false }; }
   });
-  await T('Value boxes type in replace mode (click a filled box and type: the value is replaced); in the grading table the Position X / Y of a size can be typed and that size moves there; cells are selected and typed into with no cursor, the value shows in every selected cell at once, also after the focus was let go', async () => {
+  await T('Value boxes type in replace mode (click a filled box and type: the value is replaced); the grading table has no Position columns; cells are selected and typed into with no cursor, the value shows in every selected cell at once, also after the focus was let go', async () => {
     const P = h.page;
     const ref = await h.ev(() => { const E = window.__e2e, p = E.app.doc.style.pieces[0], a = p.sew.points.find(q => q.kind === 'grade'); E.app.doc.transact('n', s => { s.pieces[0].sew.points.find(q => q.id === a.id).name = 'OLD'; }); E.app.applySel({ k: 'point', ref: { pieceId: p.id, contourId: p.sew.id, anchorId: a.id } }, 'replace'); E.app.invalidate(); return { pid: p.id, aid: a.id }; });
     await h.settle(150);
@@ -356,11 +356,7 @@ async function nested(h, fixtures) {
     await click(P.locator('input[placeholder="e.g. 03 Hip/m"]')); await P.keyboard.type('NEW'); await P.keyboard.press('Enter'); await h.settle(150);
     const name = await h.ev(o => window.__e2e.app.doc.piece(o.pid).sew.points.find(q => q.id === o.aid).name, ref);
     const open0 = await P.locator('.gradewin').count(); if (!open0) { await h.ev(() => window.__e2e.C.runCommand('grade.table')); await h.settle(300); }
-    const X = P.locator('.gradewin input.sg-in[data-axis="x"]'), n = await X.count();
-    const pos = () => h.ev(o => { const E = window.__e2e, d = E.app.doc; return d.sizeLine().sizes.map(z => Math.round(E.ops.gradedPosition(d, o.pid, o.aid, z.id).x * 100) / 100).join(); }, ref);
-    const p0 = await pos(), shown = Number(await X.last().inputValue()) || 0, size = await X.last().getAttribute('data-size');
-    await click(X.last()); await P.keyboard.type(String(shown + 9)); await P.keyboard.press('Enter'); await h.settle(250);
-    const p1 = await pos();
+    const posCols = await P.locator('.gradewin [data-axis="x"], .gradewin [data-axis="y"]').count();
     // select two cells (drag), let the focus go, then type: the value shows in both at once and goes into both
     const ed = P.locator('.gradewin input.sg-in[data-axis="dx"], .gradewin input.sg-in[data-axis="dy"]'), nE = await ed.count();
     const m1 = await ed.nth(nE - 2).boundingBox(), m2 = await ed.nth(nE - 1).boundingBox();
@@ -373,8 +369,7 @@ async function nested(h, fixtures) {
     const kept = [await ed.nth(nE - 2).inputValue(), await ed.nth(nE - 1).inputValue()].join('|');
     await P.mouse.click(5, 5); await h.settle(80);
     if (!open0) { await h.ev(() => window.__e2e.C.runCommand('grade.table')); await h.settle(150); }
-    const a0 = p0.split(',').map(Number), a1 = p1.split(',').map(Number), moved = a1.map((v, i) => Math.round((v - a0[i]) * 100) / 100);
-    return { got: `name box: OLD → "${name}"; grading table: ${n} position cells can be typed; ${size} X ${shown} → ${shown + 9}: positions moved by ${moved.join()}; 2 cells selected, focus let go (${selN} still selected), typed 4 → shown "${both}", kept "${kept}"; cursor ${caret}`, pass: name === 'NEW' && n >= 2 && moved[moved.length - 1] === 9 && moved.slice(0, -1).every(v => v === 0) && selN === 2 && both === '4|4' && kept === '4|4' && /0\)$/.test(caret) };
+    return { got: `name box: OLD → "${name}"; grading table: ${posCols} position cells (none wanted); 2 cells selected, focus let go (${selN} still selected), typed 4 → shown "${both}", kept "${kept}"; cursor ${caret}`, pass: name === 'NEW' && posCols === 0 && selN === 2 && both === '4|4' && kept === '4|4' && /0\)$/.test(caret) };
   });
   await T('Box selection of handles: in Move Point (any mode) and in Curve / Handle a box drawn on the empty sheet selects the points inside; several points put Move Point on Group; in Curve every selected point shows its handles', async () => {
     const P = h.page;

@@ -319,7 +319,7 @@ const cases = [
     expect: h => [req(h._vals.join() === 'S-M:10,M-L:10,L-XL:10', 'small → large rows: ' + h._vals), req(h._saved === 'inc' && h._saved2 === 'step', 'the chosen view should be saved as the default: ' + h._saved + ' → ' + h._saved2),
       req(h._dsel === 2 && h._drag === '10,12,12', 'drag-select two cells and type 12 → 10,12,12: ' + h._dsel + ' cells, ' + h._drag), req(h._t.M === 0 && h._t.L === 12 && h._t.XL === 27 && h._t.S === -4, 'L-XL entry 15 → XL total 27; S-M entry 4 → S total −4; base stays: ' + JSON.stringify(h._t))] }),
   C('table-columns', {
-    title: 'Grading table: several selected points = one dX/dY column pair each; one point adds X / Y / other-view columns',
+    title: 'Grading table: several selected points = one dX/dY column pair each; one point adds the other-view columns (no position columns)',
     change: false,
     sel: async h => { await h.selectA('FRONT', 'UA'); await h.selectA('FRONT', 'SH', true); },
     invoke: async h => { await h.key('Control+g'); await h.settle(100); },
@@ -328,7 +328,7 @@ const cases = [
       await h.selectA('FRONT', 'UA'); await h.settle(80);
       h._one = await h.ev(() => [...document.querySelectorAll('.sg-wrap.gr thead tr:last-child th')].map(t => t.textContent));
     },
-    expect: h => [req(h._two.join(',') === 'dX,dY,dX,dY', 'two points: ' + h._two), req(h._one.join(',') === 'dX,dY,X,Y,dX,dY', 'one point: ' + h._one)],
+    expect: h => [req(h._two.join(',') === 'dX,dY,dX,dY', 'two points: ' + h._two), req(h._one.join(',') === 'dX,dY,dX,dY', 'one point: ' + h._one)],
   }),
 
   // ── C. grade by measurement: hem spec per size → SS_HEM + UA solved in X ──
