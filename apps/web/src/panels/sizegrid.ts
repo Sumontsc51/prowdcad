@@ -22,7 +22,7 @@ import { h, clear } from '../ui/dom';
 import { fmt, parseLen } from '../units-ui';
 import { toast } from '../ui/toast';
 import { openContextMenu } from '../ui/menu';
-import { showDialog } from '../ui/dialog';
+import { showDialog, dialogOpen } from '../ui/dialog';
 
 export interface SGRow { id: string; name: string; base?: boolean; active?: boolean; brk?: boolean }
 export interface SGCol {
@@ -48,7 +48,9 @@ export interface SGCol {
   /** number formatter for read-only cells (default fmt) */
   format?(v: number): string;
 }
-export interface SGState { scrollTop: number; focus?: { r: number; c: number } }
+export interface SGState { scrollTop: number; focus?: { r: number; c: number };
+  /** sheet mode: the selected cells are kept here, so they survive when the table is drawn again */
+  selSet?: Set<string>; selSig?: string; selAnchor?: { r: number; c: number } | null; selEnd?: { r: number; c: number } | null; armed?: boolean }
 export interface SGOpts {
   rows: SGRow[];
   cols: SGCol[];
@@ -117,8 +119,10 @@ export function sizeGrid(o: SGOpts): SizeGrid {
   };
 
   // ───── sheet mode: selection ─────
-  const sel = new Set<string>();
-  let anchor: { r: number; c: number } | null = null, selEnd: { r: number; c: number } | null = null;
+  const sig = o.cols.map(c => c.key).join('|') + '#' + o.rows.length;
+  if (st.selSig !== sig || !st.selSet) { st.selSet = new Set(); st.selAnchor = null; st.selEnd = null; st.armed = false; st.selSig = sig; }
+  const sel = st.selSet;
+  let anchor: { r: number; c: number } | null = st.selAnchor ?? null, selEnd: { r: number; c: number } | null = st.selEnd ?? null;
   let dragging = false, filling = false, fillTo = -1;
   const K = (r: number, c: number) => r + ':' + c;
   const cellsOf = () => [...sel].map(k => { const [r, c] = k.split(':').map(Number); return { r, c }; }).filter(x => editable(x.r, x.c));
@@ -143,6 +147,7 @@ export function sizeGrid(o: SGOpts): SizeGrid {
   }
   function paintSel() {
     if (!sheet) return;
+    st.selAnchor = anchor; st.selEnd = selEnd;
     const fc = new Set(filling ? fillCells().map(x => K(x.r, x.c)) : []);
     let last: HTMLElement | null = null, lr = -1, lc = -1;
     for (const [k, inp] of inputs) {
@@ -284,8 +289,11 @@ export function sizeGrid(o: SGOpts): SizeGrid {
     });
   }, { passive: true });
 
+  /** cells that only showed what was being typed elsewhere go back to their own value */
+  function unmirror() { for (const [k, i] of inputs) if (i.dataset.mirror) { delete i.dataset.mirror; const [r2, c2] = k.split(':').map(Number); i.value = cellText(o.cols[c2], r2); } }
   function commitInput(inp: HTMLInputElement): boolean {
     if (!inp.dataset.typed) return true;
+    unmirror();
     delete inp.dataset.typed;
     const r = +inp.dataset.r!, c = +inp.dataset.c!;
     const txt = inp.value.trim();
@@ -323,11 +331,13 @@ export function sizeGrid(o: SGOpts): SizeGrid {
   function wire(inp: HTMLInputElement, r: number, c: number) {
     inp.addEventListener('input', () => {
       inp.dataset.typed = '1';
+      // several cells selected: what is typed shows in every one of them at once (it is kept with Enter, or by leaving the cell)
+      if (sheet && sel.size > 1 && sel.has(K(r, c))) for (const x of cellsOf()) { const o2 = inputs.get(K(x.r, x.c)); if (o2 && o2 !== inp) { o2.value = inp.value; o2.dataset.mirror = '1'; } }
       const v = parseLen(inp.value.trim());
       o.onInput?.(r, c, inp.value.trim() && Number.isFinite(v) ? v : null);
     });
     // select the text once focused; select() also FOCUSES, so only when the cell still has focus (else two cells ping-pong)
-    inp.addEventListener('focus', () => { st.focus = { r, c }; if (sheet && !sel.has(K(r, c))) selectOne(r, c); if (sheet) setTimeout(paintSel, 0); o.onFocus?.(r, c); setTimeout(() => { if (document.activeElement === inp) try { inp.select(); } catch { /* */ } }, 0); });
+    inp.addEventListener('focus', () => { st.focus = { r, c }; if (sheet && !sel.has(K(r, c))) selectOne(r, c); if (sheet) setTimeout(paintSel, 0); o.onFocus?.(r, c); setTimeout(() => { if (document.activeElement === inp && !inp.dataset.typed) try { inp.select(); } catch { /* */ } }, 0); });
     inp.addEventListener('blur', () => { commitInput(inp); if (sheet) setTimeout(paintSel, 0); });
     if (sheet) {
       inp.addEventListener('mousedown', e => {
@@ -351,17 +361,19 @@ export function sizeGrid(o: SGOpts): SizeGrid {
       e.stopPropagation();
       const k = e.key;
       if (sheet) {
-        if (e.shiftKey && (k === 'ArrowDown' || k === 'ArrowUp') && anchor) {
+        if (e.shiftKey && (k === 'ArrowDown' || k === 'ArrowUp' || k === 'ArrowLeft' || k === 'ArrowRight') && anchor && !inp.dataset.typed) {
           e.preventDefault();
-          const end = selEnd ?? anchor, nr = Math.max(0, Math.min(o.rows.length - 1, end.r + (k === 'ArrowDown' ? 1 : -1)));
-          setRange(anchor, { r: nr, c: end.c }); paintSel(); return;
+          const end = selEnd ?? anchor, nr = Math.max(0, Math.min(o.rows.length - 1, end.r + (k === 'ArrowDown' ? 1 : k === 'ArrowUp' ? -1 : 0)));
+          let nc = end.c; const dc = k === 'ArrowRight' ? 1 : k === 'ArrowLeft' ? -1 : 0;
+          if (dc) for (let q = end.c + dc; q >= 0 && q < o.cols.length; q += dc) if (o.cols[q].edit) { nc = q; break; }
+          setRange(anchor, { r: nr, c: nc }); paintSel(); return;
         }
         if ((k === 'Delete' || k === 'Backspace') && sel.size > 1 && !inp.dataset.typed) { e.preventDefault(); calcSel(() => 0); return; }
         if (k === 'Escape' && sel.size > 1) { selectOne(r, c); paintSel(); }
       }
       if (k === 'Enter') { e.preventDefault(); commitInput(inp); move(r, c, e.shiftKey ? -1 : 1, 0); return; }
       if (k === 'Tab') { e.preventDefault(); commitInput(inp); move(r, c, 0, e.shiftKey ? -1 : 1, true); return; }
-      if (k === 'Escape') { e.preventDefault(); delete inp.dataset.typed; inp.value = cellText(o.cols[c], r); o.onInput?.(r, c, null); inp.blur(); return; }
+      if (k === 'Escape') { e.preventDefault(); unmirror(); delete inp.dataset.typed; inp.value = cellText(o.cols[c], r); o.onInput?.(r, c, null); inp.blur(); return; }
       if (k === 'ArrowDown' || k === 'ArrowUp') { e.preventDefault(); commitInput(inp); move(r, c, k === 'ArrowDown' ? 1 : -1, 0); return; }
       if (k === 'ArrowLeft' || k === 'ArrowRight') {
         const atEdge = !inp.dataset.typed || (k === 'ArrowLeft' ? inp.selectionStart === 0 && inp.selectionEnd === 0 : inp.selectionStart === inp.value.length);
@@ -435,6 +447,30 @@ export function sizeGrid(o: SGOpts): SizeGrid {
     else if (virt) renderBody();
     if (!st.scrollTop) { const cur = o.rows.findIndex(x => x.active); if (cur > 0 && virt) { wrap.scrollTop = Math.max(0, cur * ROW_H - 3 * ROW_H); st.scrollTop = wrap.scrollTop; renderBody(); } }
   });
+  if (sheet) {
+    // Select, then type: cells stay selected when the focus has gone elsewhere (a click on the window frame, a button), and the
+    // next typed character still goes into them. A click outside the table lets the selection go.
+    const onKey = (e: KeyboardEvent) => {
+      if (!wrap.isConnected) { window.removeEventListener('keydown', onKey, true); document.removeEventListener('pointerdown', onDown, true); return; }
+      if (!st.armed || !sel.size || e.ctrlKey || e.metaKey || e.altKey || dialogOpen()) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      const first = cellsOf().sort((a, b2) => a.r - b2.r || a.c - b2.c)[0]; if (!first) return;
+      const at = anchor && sel.has(K(anchor.r, anchor.c)) && editable(anchor.r, anchor.c) ? anchor : first;
+      const inp = inputs.get(K(at.r, at.c)); if (!inp) return;
+      const ch = e.key.length === 1 ? e.key : e.key === 'Backspace' || e.key === 'Delete' ? '' : null; if (ch === null) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      const keep = new Set(sel);
+      inp.focus({ preventScroll: true });
+      sel.clear(); keep.forEach(k => sel.add(k));        // the focus must not shrink the selection to one cell
+      inp.value = ch; try { inp.setSelectionRange(ch.length, ch.length); } catch { /* */ }
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+      paintSel();
+    };
+    const onDown = (e: Event) => { if (!wrap.isConnected) { document.removeEventListener('pointerdown', onDown, true); return; } const t = e.target as Element | null; if (t?.closest?.('.ctx-menu, .dlg-overlay')) return; st.armed = wrap.contains(t); }; // a menu or a dialog of the table is part of it
+    window.addEventListener('keydown', onKey, true); document.addEventListener('pointerdown', onDown, true);
+    setTimeout(paintSel, 0); // show a selection that was kept from before the table was drawn again
+  }
   return { el: wrap, refresh, focusCell, table: tbl };
 }
 
