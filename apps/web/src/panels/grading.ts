@@ -1,7 +1,7 @@
 /**
  * Grading table — ROWS = sizes (1…80+, virtualised), COLUMNS = the selected point(s): dX / dY per
- * point (several points = one column pair each; one point = extra read-only columns X / Y position
- * and the total from base). No point selected = every grade point of the selected piece.
+ * point (several points = one column pair each; one point = extra read-only columns with the other
+ * view of the same grading). No point selected = every grade point of the selected piece.
  *
  * Three views of the same grading:
  *   “Step into this size”   — the step from the neighbouring size toward the base ★ (AccuMark incremental:
@@ -99,15 +99,12 @@ export function renderGrading(app: App, host: HTMLElement) {
     };
   });
   const pts: PtCol[] = build(rowsK);
-  const posOf = (id: Id) => sizes.map(s => { try { return ops.gradedPosition(app.doc, live.id, id, s.id); } catch { return { x: NaN, y: NaN }; } });
-  const posCache = new Map<Id, { x: number; y: number }[]>();
   /** re-read the grading after a commit (the grid keeps focus, so the panel is not rebuilt) */
   const reload = () => {
     try {
       const t2 = ops.gradingTable(app.doc, live.id, { view: 'absolute', all: true, internals: true });
       const fresh = build(pts.map(p => t2.rows.find(r => r.id === p.id)).filter(Boolean) as typeof rowsK);
       fresh.forEach(f => { const p = pts.find(q => q.id === f.id); if (p) { p.total = f.total; p.ruleLabel = f.ruleLabel; } });
-      posCache.clear();
     } catch { /* */ }
   };
   const readOnly = live.locked;
@@ -134,11 +131,7 @@ export function renderGrading(app: App, host: HTMLElement) {
     }
     if (pts.length === 1) {
       const other: GView = view === 'total' ? 'step' : 'total';
-      const pos = () => { let v = posCache.get(p.id); if (!v) posCache.set(p.id, v = posOf(p.id)); return v; };
       cols.push(
-        // the position of the point in each size can be typed too: that size (only) moves so that the point lands there
-        { key: p.id + ':x', group: 'Position', head: 'X', edit: !readOnly, side: true, title: 'Position of the point in this size: type a value and this size moves there (the base ★ is moved on the sheet, not here)', get: r => pos()[r + off].x, ro: r => r + off === b, cls: r => (r + off === b ? 'basecell' : ''), attrs: { 'data-axis': 'x' } },
-        { key: p.id + ':y', group: 'Position', head: 'Y', edit: !readOnly, side: true, title: 'Position of the point in this size: type a value and this size moves there (the base ★ is moved on the sheet, not here)', get: r => pos()[r + off].y, ro: r => r + off === b, cls: r => (r + off === b ? 'basecell' : ''), attrs: { 'data-axis': 'y' } },
         { key: p.id + ':ox', group: other === 'total' ? 'Total from base' : 'Step', head: 'dX', get: r => valOf(p, 'dx', other)[r + off], attrs: { 'data-axis': 'o' + 'dx' } },
         { key: p.id + ':oy', group: other === 'total' ? 'Total from base' : 'Step', head: 'dY', get: r => valOf(p, 'dy', other)[r + off], attrs: { 'data-axis': 'o' + 'dy' } },
       );
@@ -152,14 +145,6 @@ export function renderGrading(app: App, host: HTMLElement) {
       const col = cols[c]; const [pid, axis] = col.key.split(':') as [Id, 'dx' | 'dy'];
       const p = pts.find(q => q.id === pid)!; if (!p) continue;
       const t = touched.get(p) ?? { dx: p.total.dx.slice(), dy: p.total.dy.slice() };
-      if ((axis as string) === 'x' || (axis as string) === 'y') {
-        // a typed position: this size alone moves by the difference, turned into the grade axis of the point
-        if (r === b) continue;
-        const was = (posCache.get(p.id) ?? posOf(p.id))[r], d = (axis as string) === 'x' ? { x: v - was.x, y: 0 } : { x: 0, y: v - was.y };
-        const an = [live.sew, ...live.internals].flatMap(k => k.points).find(q => q.id === p.id), a = -(an?.gradeAxisDeg ?? 0) * Math.PI / 180;
-        t.dx[r] += d.x * Math.cos(a) - d.y * Math.sin(a); t.dy[r] += d.x * Math.sin(a) + d.y * Math.cos(a);
-        touched.set(p, t); continue;
-      }
       if (r === fixedRow || (axis !== 'dx' && axis !== 'dy')) continue;
       if (view === 'total') t[axis][r] = v;
       else if (view === 'inc') { const inc = incOf(t[axis]); inc[r] = v; t[axis] = totalsFromInc(inc, b); }
