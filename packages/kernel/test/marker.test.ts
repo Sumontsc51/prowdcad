@@ -536,3 +536,24 @@ describe('shade zones', () => {
     expect(sp.y1).toBeCloseTo(480, 6); expect(Math.abs(signedArea(columnHull(polys, { x0: 43, x1: 387, y0: 0, y1: 480 })))).toBeGreaterThan(344 * 480 * 0.99);
   });
 });
+
+describe('notches and drill holes on the marker', () => {
+  it('are carried with the part, cut in the plot and on their own DXF layers', () => {
+    const d = style(), I = ids(d), body = d.style.pieces[0];
+    addNotchAtPoint(d, d.style.pieces[0], { x: 200, y: 0 }); addNotchAtPoint(d, d.style.pieces[0], { x: 400, y: 300 });
+    d.transact('drill', st => { st.pieces[0].drills.push({ id: 'dr1', x: 200, y: 300, grade: {}, diameter: 4, kind: 'drill', mode: 'cut' }); st.pieces[0].notches[1].mode = 'draw'; });
+    const p = markerParts(d, { [I.M]: 1 }).find(q => q.name === 'BODY')!;
+    expect(p.notches!.length).toBe(1); expect(p.notchesDrawn!.length).toBe(1); expect(p.drills!.length).toBe(1);
+    // a notch starts on the cut line of the part and goes inward
+    const n = p.notches![0]; expect(distToPolygon(n[0], p.poly)).toBeLessThan(0.01); expect(pointInPolygon(n[n.length - 1], p.poly)).toBe(true);
+    expect(pointInPolygon(p.drills![0].at, p.poly)).toBe(true);
+    const pl = { [p.id]: placeAt(p, 0, 0, 180) };
+    const plt = markerHPGL([p], pl, 1000, { annot: { border: false, grain: false, piece: false, size: false, bundle: false, internals: 'none' } });
+    const [cut, drawn] = plt.split('SP2;');
+    expect((cut.match(/^PD/gm) ?? []).length).toBe(3);        // outline, one notch, the drill hole
+    expect((drawn.match(/^PD/gm) ?? []).length).toBe(1);      // the drawn notch
+    const dxf = markerDXF([p], pl, 1000);
+    for (const layer of ['NOTCH', 'NOTCHDRAW', 'DRILL']) expect(dxf).toContain(`POLYLINE\n8\n${layer}\n`);
+    void body;
+  });
+});
