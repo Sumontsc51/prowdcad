@@ -10,6 +10,8 @@ import type { Vec } from '../geom/vec';
 import { signedArea, pointInPolygon, distToPolygon, offsetOutward } from '../geom/poly';
 import type { Document } from '../model/doc';
 import type { Id, SizeId } from '../model/types';
+import { resolveNotches } from '../ops/notches';
+import { drillPosition } from '../ops/drills';
 
 // ───────────────────────── cut plan ─────────────────────────
 
@@ -200,6 +202,10 @@ export interface MarkerPart {
   sew?: Vec[]; lines?: Vec[][]; uses?: string[];
   /** match lines (to the fabric, or piece to piece) */
   match?: MatchLine[];
+  /** notch marks (each a small polyline from the cut line inward): cut, or drawn */
+  notches?: Vec[][]; notchesDrawn?: Vec[][];
+  /** drill holes, buttons and buttonholes: place, diameter, cut or drawn */
+  drills?: { at: Vec; d: number; cut: boolean }[];
   /** piece description, and the bundle code (size and bundle number) */
   desc?: string; code: string;
 }
@@ -268,10 +274,15 @@ export function markerParts(doc: Document, ratio: Record<SizeId, number>, o: { m
         const uses = kept.map(x => x.use);
         const match: MatchLine[] = [];
         kept.forEach((x, i) => { if (!/^[MP]\d+$/.test(x.use)) return; const l = lines[i], a = l[0], b = l[l.length - 1]; match.push({ code: x.use, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, dir: { x: b.x - a.x, y: b.y - a.y } }); });
+        // notches and drill holes of the piece in this size. Only a notch mark that starts on the cut line is cut: a mark on the
+        // sew line lies inside the piece and is drawn
+        const effP = doc.effectivePiece(piece.id, true), notches: Vec[][] = [], notchesDrawn: Vec[][] = [];
+        try { for (const rn of resolveNotches(doc, effP, sid)) { const mode = effP.notches.find(q => q.id === rn.notchId)?.mode ?? 'cut'; for (const g of rn.cutGeometry) if (g.length > 1) (mode === 'draw' || distToPolygon(g[0], src) > 0.5 ? notchesDrawn : notches).push(g.map(T)); } } catch { /* a notch that cannot be resolved is left out */ }
+        const drills = effP.drills.map(dr => { try { return { at: T(drillPosition(doc, effP, dr, sid)), d: dr.diameter, cut: dr.mode === 'cut' }; } catch { return null; } }).filter((x): x is { at: Vec; d: number; cut: boolean } => !!x);
         const desc = piece.description?.trim() || undefined;
         const area = Math.abs(signedArea(pts));
         for (let bn = 1; bn <= n; bn++) for (let k = 1; k <= qty; k++) {
-          out.push({ id: [piece.id, sid, bn, k, mirror ? 'm' : 'n'].join('|'), pieceId: piece.id, name: piece.name, sizeId: sid, sizeName, bundle: bn, mirror, angles, poly: pts, grain, area, material: mat, code: `${sizeName}-${bn}`, ...(inner ? { inner, hold } : {}), ...(sew ? { sew } : {}), ...(lines.length ? { lines } : {}), ...(uses.some(u => u !== 'draw') ? { uses } : {}), ...(match.length ? { match } : {}), ...(desc ? { desc } : {}), ...(tilt ? { tilt } : {}), ...(det.major ? { major: true } : {}), ...(fuse ? { fuse: true } : {}) });
+          out.push({ id: [piece.id, sid, bn, k, mirror ? 'm' : 'n'].join('|'), pieceId: piece.id, name: piece.name, sizeId: sid, sizeName, bundle: bn, mirror, angles, poly: pts, grain, area, material: mat, code: `${sizeName}-${bn}`, ...(inner ? { inner, hold } : {}), ...(sew ? { sew } : {}), ...(lines.length ? { lines } : {}), ...(uses.some(u => u !== 'draw') ? { uses } : {}), ...(match.length ? { match } : {}), ...(notches.length ? { notches } : {}), ...(notchesDrawn.length ? { notchesDrawn } : {}), ...(drills.length ? { drills } : {}), ...(desc ? { desc } : {}), ...(tilt ? { tilt } : {}), ...(det.major ? { major: true } : {}), ...(fuse ? { fuse: true } : {}) });
         }
       }
     }
@@ -625,6 +636,8 @@ export function nestResult(sol: string | { strip_width: number; layout: { placed
 
 /** The outline that is cut for a part: its own outline (without the buffer around it). */
 export function cutOutline(p: MarkerPart): Vec[] { return p.hold === 'buffer' && p.inner ? p.inner : p.poly; }
+/** A small circle as a closed outline (drill holes). */
+const circle = (c: Vec, r: number): Vec[] => Array.from({ length: 16 }, (_, i) => ({ x: c.x + Math.max(r, 0.5) * Math.cos(i * Math.PI / 8), y: c.y + Math.max(r, 0.5) * Math.sin(i * Math.PI / 8) }));
 /** Total length cut on the marker: the cut outlines of every laid part, and the outlines of the fuse blocks (mm). */
 export function markerPerimeter(parts: MarkerPart[], pl: Placements, blocks?: MarkerBlock[]): number {
   let L = 0;
@@ -704,6 +717,9 @@ export function markerDXF(parts: MarkerPart[], pl: Placements, width: number, na
     poly(cutOutline(p).map(at), 'CUT', true);
     if (a.seam && p.sew) poly(p.sew.map(at), 'SEAM', true);
     (p.lines ?? []).forEach((ln, i) => { const w = lineWay(p, i, a); if (w) poly(ln.map(at), w === 'cut' ? 'INTCUT' : w === 'match' ? 'MATCH' : 'INTERNAL', false); });
+    for (const n of p.notches ?? []) poly(n.map(at), 'NOTCH', false);
+    for (const n of p.notchesDrawn ?? []) poly(n.map(at), 'NOTCHDRAW', false);
+    for (const dr of p.drills ?? []) poly(circle(at(dr.at), dr.d / 2), dr.cut ? 'DRILL' : 'DRILLDRAW', true);
     if (a.grain) poly([at(p.grain[0]), at(p.grain[1])], 'GRAIN', false);
     partLabel(p, a, o.styleName).forEach((t, i) => text({ x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 + i * th * 1.4 }, th, t));
   }
@@ -738,6 +754,9 @@ export function markerHPGL(parts: MarkerPart[], pl: Placements, width = 0, o: Ma
     cut.push(...path(cutOutline(p).map(at), true));
     (p.lines ?? []).forEach((ln, i) => { const w = lineWay(p, i, a); if (w) (w === 'cut' ? cut : draw).push(...path(ln.map(at), false)); });
     if (a.seam && p.sew) draw.push(...path(p.sew.map(at), true));
+    for (const n of p.notches ?? []) cut.push(...path(n.map(at), false));
+    for (const n of p.notchesDrawn ?? []) draw.push(...path(n.map(at), false));
+    for (const dr of p.drills ?? []) (dr.cut ? cut : draw).push(...path(circle(at(dr.at), dr.d / 2), true));
     if (a.grain) draw.push(...path([at(p.grain[0]), at(p.grain[1])], false));
     partLabel(p, a, o.styleName).forEach((t, i) => draw.push(...label({ x: b.x0 + (b.x1 - b.x0) * 0.25, y: (b.y0 + b.y1) / 2 + th + i * th * 1.5 }, th, t)));
   }
